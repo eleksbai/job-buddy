@@ -1,7 +1,11 @@
 import asyncio
 import json
+import os
+import re
 import shutil
 import sys
+import tempfile
+from urllib import error, parse, request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -80,6 +84,26 @@ class BossDoctorResult:
     error: dict | None = None
 
 
+@dataclass
+class CdpStatusResult:
+    running: bool
+    port: int
+    cdp_url: str
+    browser: str | None = None
+    websocket_url: str | None = None
+    pid: int | None = None
+    message: str = ""
+
+
+DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+BROWSER_CANDIDATES = [
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+]
+
+
 class BossDoctorRunner:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -147,3 +171,149 @@ class BossDoctorRunner:
             "error": {"code": "invalid_output", "message": stdout_text},
             "hints": {"next_actions": ["检查 boss doctor 输出格式是否发生变化"]},
         }
+
+
+class CdpBrowserController:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    @property
+    def cdp_url(self) -> str:
+        return self.settings.boss_cdp_url or DEFAULT_CDP_URL
+
+    @property
+    def port(self) -> int:
+        parsed = parse.urlparse(self.cdp_url)
+        if parsed.port:
+            return parsed.port
+        return 9222
+
+    async def get_status(self) -> CdpStatusResult:
+        payload = await asyncio.to_thread(self._probe_cdp)
+        pid = await self._find_listener_pid() if payload else None
+        return CdpStatusResult(
+            running=payload is not None,
+            port=self.port,
+            cdp_url=self.cdp_url,
+            browser=payload.get("Browser") if payload else None,
+            websocket_url=payload.get("webSocketDebuggerUrl") if payload else None,
+            pid=pid,
+            message="CDP 在线" if payload else "CDP 未运行",
+        )
+
+    async def start_browser(self) -> CdpStatusResult:
+        current = await self.get_status()
+        if current.running:
+            current.message = "浏览器已运行"
+            return current
+
+        browser_bin = self._find_browser_executable()
+        if not browser_bin:
+            return CdpStatusResult(
+                running=False,
+                port=self.port,
+                cdp_url=self.cdp_url,
+                message="未找到可用的 Chrome/Chromium 浏览器",
+            )
+
+        profile_dir = os.path.join(tempfile.gettempdir(), f"job-buddy-chrome-{self.port}")
+        process = await asyncio.create_subprocess_exec(
+            browser_bin,
+            f"--remote-debugging-port={self.port}",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "about:blank",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        process.returncode
+
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            status = await self.get_status()
+            if status.running:
+                status.message = "浏览器已启动"
+                return status
+
+        return CdpStatusResult(
+            running=False,
+            port=self.port,
+            cdp_url=self.cdp_url,
+            message="浏览器已启动，但 CDP 尚未就绪",
+        )
+
+    async def stop_browser(self) -> CdpStatusResult:
+        current = await self.get_status()
+        if not current.running:
+            current.message = "浏览器未运行"
+            return current
+
+        pid = current.pid or await self._find_listener_pid()
+        if pid is None:
+            current.message = "未能定位监听默认 CDP 端口的浏览器进程"
+            return current
+
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            status = await self.get_status()
+            if not status.running:
+                status.message = "浏览器已关闭"
+                return status
+
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass
+
+        for _ in range(6):
+            await asyncio.sleep(0.5)
+            status = await self.get_status()
+            if not status.running:
+                status.message = "浏览器已强制关闭"
+                return status
+
+        status = await self.get_status()
+        status.message = "浏览器关闭失败"
+        return status
+
+    def _probe_cdp(self) -> dict[str, Any] | None:
+        try:
+            with request.urlopen(f"{self.cdp_url}/json/version", timeout=1.5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                if isinstance(payload, dict) and payload.get("webSocketDebuggerUrl"):
+                    return payload
+        except (error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            return None
+        return None
+
+    async def _find_listener_pid(self) -> int | None:
+        process = await asyncio.create_subprocess_exec(
+            "ss",
+            "-ltnp",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await process.communicate()
+        output = stdout.decode("utf-8", errors="replace")
+        port_marker = f":{self.port}"
+        for line in output.splitlines():
+            if port_marker not in line:
+                continue
+            match = re.search(r"pid=(\d+)", line)
+            if match:
+                return int(match.group(1))
+        return None
+
+    def _find_browser_executable(self) -> str | None:
+        for candidate in BROWSER_CANDIDATES:
+            path = shutil.which(candidate)
+            if path:
+                return path
+        return None

@@ -1,7 +1,7 @@
 from fastapi import Depends, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from job_buddy.core.boss import BossClientProtocol, BossDoctorRunner
+from job_buddy.core.boss import BossClientProtocol, BossDoctorRunner, CdpBrowserController
 from job_buddy.core.config import Settings
 from job_buddy.modules.conversations import ConversationService
 from job_buddy.modules.dashboard import DashboardService
@@ -53,4 +53,4 @@ def get_dashboard_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> D
 
 
 def get_system_service(settings: Settings = Depends(get_settings)) -> SystemService:
-    return SystemService(BossDoctorRunner(settings))
+    return SystemService(BossDoctorRunner(settings), CdpBrowserController(settings))

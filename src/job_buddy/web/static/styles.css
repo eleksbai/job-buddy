@@ -128,6 +128,23 @@ table {
   color: var(--muted);
 }
 
+.doctor-summary pre {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+}
+
+#cdpSummary {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
+.button-disabled {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;

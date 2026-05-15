@@ -15,6 +15,10 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
+let cdpState = null;
+let cdpBusy = false;
+let cdpPollHandle = null;
+
 function renderTable(containerId, columns, rows) {
   const container = document.getElementById(containerId);
   if (!rows.length) {
@@ -49,6 +53,52 @@ async function loadSummary() {
 
 function renderStatusBadge(status) {
   return `<span class="status-badge status-${status}">${status}</span>`;
+}
+
+function setButtonBusy(buttonId, busy) {
+  const button = document.getElementById(buttonId);
+  button.disabled = busy;
+  button.classList.toggle("button-disabled", busy);
+}
+
+function renderCdpSummary(status) {
+  const button = document.getElementById("cdpToggleButton");
+  button.textContent = status.running ? "关闭浏览器" : "启动浏览器";
+
+  document.getElementById("cdpSummary").innerHTML = [
+    `<div><strong>状态：</strong>${status.running ? renderStatusBadge("ok") : renderStatusBadge("warn")}</div>`,
+    `<div><strong>端口：</strong>${status.port}</div>`,
+    `<div><strong>CDP 地址：</strong>${status.cdp_url}</div>`,
+    `<div><strong>浏览器：</strong>${status.browser || "-"}</div>`,
+    `<div><strong>WebSocket：</strong>${status.websocket_url || "-"}</div>`,
+    `<div><strong>提示：</strong>${status.message || "-"}</div>`,
+  ].join("");
+}
+
+async function loadCdpStatus() {
+  const status = await fetchJson("/api/system/cdp");
+  cdpState = status;
+  renderCdpSummary(status);
+}
+
+async function toggleCdpBrowser() {
+  if (cdpBusy) {
+    return;
+  }
+
+  cdpBusy = true;
+  setButtonBusy("cdpToggleButton", true);
+
+  try {
+    const endpoint = cdpState?.running ? "/api/system/cdp/stop" : "/api/system/cdp/start";
+    const status = await fetchJson(endpoint, { method: "POST" });
+    cdpState = status;
+    renderCdpSummary(status);
+    await loadDoctor();
+  } finally {
+    cdpBusy = false;
+    setButtonBusy("cdpToggleButton", false);
+  }
 }
 
 async function loadDoctor() {
@@ -144,7 +194,7 @@ async function loadConversations() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadDoctor(), loadTargets(), loadJobs(), loadTasks(), loadConversations()]);
+  await Promise.all([loadSummary(), loadDoctor(), loadCdpStatus(), loadTargets(), loadJobs(), loadTasks(), loadConversations()]);
 }
 
 async function createDemoTarget() {
@@ -192,9 +242,14 @@ async function syncConversations() {
 
 document.getElementById("refreshButton").addEventListener("click", () => refreshAll().catch(console.error));
 document.getElementById("doctorButton").addEventListener("click", () => loadDoctor().catch(console.error));
+document.getElementById("cdpToggleButton").addEventListener("click", () => toggleCdpBrowser().catch(console.error));
 document.getElementById("seedTargetButton").addEventListener("click", () => createDemoTarget().catch(console.error));
 document.getElementById("searchButton").addEventListener("click", () => triggerSearch().catch(console.error));
 document.getElementById("greetButton").addEventListener("click", () => triggerGreeting().catch(console.error));
 document.getElementById("syncConversationsButton").addEventListener("click", () => syncConversations().catch(console.error));
+
+cdpPollHandle = window.setInterval(() => {
+  loadCdpStatus().catch(console.error);
+}, 1000);
 
 refreshAll().catch(console.error);

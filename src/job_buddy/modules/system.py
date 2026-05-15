@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from job_buddy.core.boss import BossDoctorRunner
+from job_buddy.core.boss import BossDoctorRunner, CdpBrowserController
 
 
 class DoctorCheckResponse(BaseModel):
@@ -34,9 +34,24 @@ class HealthResponse(BaseModel):
     boss_client: str
 
 
+class CdpStatusResponse(BaseModel):
+    running: bool
+    port: int
+    cdp_url: str
+    browser: str | None = None
+    websocket_url: str | None = None
+    pid: int | None = None
+    message: str
+
+
+class BrowserControlResponse(CdpStatusResponse):
+    pass
+
+
 class SystemService:
-    def __init__(self, doctor_runner: BossDoctorRunner) -> None:
+    def __init__(self, doctor_runner: BossDoctorRunner, cdp_controller: CdpBrowserController) -> None:
         self.doctor_runner = doctor_runner
+        self.cdp_controller = cdp_controller
 
     async def run_doctor(self) -> DoctorResponse:
         result = await self.doctor_runner.run()
@@ -50,3 +65,15 @@ class SystemService:
             exit_code=result.exit_code,
             error=DoctorErrorResponse(**result.error) if result.error else None,
         )
+
+    async def get_cdp_status(self) -> CdpStatusResponse:
+        status = await self.cdp_controller.get_status()
+        return CdpStatusResponse(**status.__dict__)
+
+    async def start_cdp_browser(self) -> BrowserControlResponse:
+        status = await self.cdp_controller.start_browser()
+        return BrowserControlResponse(**status.__dict__)
+
+    async def stop_cdp_browser(self) -> BrowserControlResponse:
+        status = await self.cdp_controller.stop_browser()
+        return BrowserControlResponse(**status.__dict__)
