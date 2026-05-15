@@ -1,0 +1,24 @@
+from fastapi import APIRouter, Depends, Query, status
+
+from job_buddy.deps import get_conversation_service
+from job_buddy.modules.conversations import ConversationRecordRead, ConversationService, ConversationSyncResponse
+
+router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+@router.get("", response_model=list[ConversationRecordRead], operation_id="list_conversations")
+async def list_conversations(
+    limit: int = Query(default=100, le=200),
+    service: ConversationService = Depends(get_conversation_service),
+) -> list[ConversationRecordRead]:
+    conversations = await service.list_conversations(limit=limit)
+    return [ConversationRecordRead(**item.model_dump()) for item in conversations]
+
+
+@router.post("/sync", response_model=ConversationSyncResponse, status_code=status.HTTP_202_ACCEPTED, operation_id="sync_conversations")
+async def sync_conversations(
+    limit: int = Query(default=20, le=100),
+    service: ConversationService = Depends(get_conversation_service),
+) -> ConversationSyncResponse:
+    count = await service.sync_conversations(limit=limit)
+    return ConversationSyncResponse(count=count)

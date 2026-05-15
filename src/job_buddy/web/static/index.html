@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job Buddy 求职助手</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <h1>Job Buddy</h1>
+        <p>本地求职操作台</p>
+        <nav>
+          <a href="#dashboard">总览</a>
+          <a href="#doctor">环境诊断</a>
+          <a href="#targets">目标岗位</a>
+          <a href="#jobs">职位线索</a>
+          <a href="#tasks">任务记录</a>
+          <a href="#conversations">沟通记录</a>
+        </nav>
+      </aside>
+      <main class="content">
+        <section class="hero">
+          <div>
+            <span class="eyebrow">FastAPI + FastMCP + MongoDB</span>
+            <h2>以手动触发为主的求职工作流</h2>
+            <p>通过这个管理台查看环境状态、维护目标岗位、采集职位、触发打招呼，并回看沟通记录。</p>
+          </div>
+          <button id="refreshButton">刷新全部</button>
+        </section>
+
+        <section id="dashboard" class="panel">
+          <h3>总览</h3>
+          <div id="summaryCards" class="cards"></div>
+        </section>
+
+        <section id="doctor" class="panel">
+          <div class="panel-header">
+            <h3>环境诊断</h3>
+            <button id="doctorButton">运行 boss doctor</button>
+          </div>
+          <div id="doctorSummary"></div>
+          <div id="doctorActions"></div>
+          <div id="doctorChecks"></div>
+        </section>
+
+        <section id="targets" class="panel">
+          <div class="panel-header">
+            <h3>目标岗位</h3>
+            <button id="seedTargetButton">创建示例目标</button>
+          </div>
+          <div id="targetsTable"></div>
+        </section>
+
+        <section id="jobs" class="panel">
+          <div class="panel-header">
+            <h3>职位线索</h3>
+            <button id="searchButton">触发采集</button>
+          </div>
+          <div id="jobsTable"></div>
+        </section>
+
+        <section id="tasks" class="panel">
+          <div class="panel-header">
+            <h3>任务记录</h3>
+            <button id="greetButton">触发打招呼</button>
+          </div>
+          <div id="tasksTable"></div>
+        </section>
+
+        <section id="conversations" class="panel">
+          <div class="panel-header">
+            <h3>沟通记录</h3>
+            <button id="syncConversationsButton">同步会话</button>
+          </div>
+          <div id="conversationsTable"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

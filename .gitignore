@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.env
 
 # Local runtime data
 data/
@@ -17,3 +18,10 @@ logs/
 
 # Node dependencies
 node_modules/
+
+.codex/
+.claude/
+docs/superpowers/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
