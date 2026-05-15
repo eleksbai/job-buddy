@@ -1,12 +1,12 @@
 from fastapi import Depends, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from job_buddy.core.boss import BossClientProtocol, BossDoctorRunner, CdpBrowserController
+from job_buddy.core.boss import BossAuthGateway, BossClientProtocol, BossDoctorRunner, CdpBrowserController
 from job_buddy.core.config import Settings
 from job_buddy.modules.conversations import ConversationService
 from job_buddy.modules.dashboard import DashboardService
 from job_buddy.modules.jobs import JobCollectionService
-from job_buddy.modules.system import SystemService
+from job_buddy.modules.system import AuthStateRepository, SystemService
 from job_buddy.modules.targets import TargetProfileService
 from job_buddy.modules.tasks import GreetingService
 
@@ -52,5 +52,13 @@ def get_dashboard_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> D
     return DashboardService(db)
 
 
-def get_system_service(settings: Settings = Depends(get_settings)) -> SystemService:
-    return SystemService(BossDoctorRunner(settings), CdpBrowserController(settings))
+def get_system_service(
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> SystemService:
+    return SystemService(
+        BossDoctorRunner(settings),
+        CdpBrowserController(settings),
+        BossAuthGateway(settings),
+        AuthStateRepository(db),
+    )

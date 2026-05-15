@@ -140,6 +140,13 @@ table {
   color: var(--muted);
 }
 
+#authSummary {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
 .button-disabled {
   opacity: 0.65;
   pointer-events: none;

@@ -39,3 +39,11 @@ def test_fake_cdp_controller_toggles_status():
     assert stopped.running is False
     assert started.running is True
     assert stopped_again.running is False
+
+
+def test_fake_cdp_controller_ensure_running():
+    controller = FakeController()
+
+    ensured = asyncio.run(controller.ensure_running())
+
+    assert ensured.running is True

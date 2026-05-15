@@ -18,6 +18,8 @@ async function fetchJson(url, options = {}) {
 let cdpState = null;
 let cdpBusy = false;
 let cdpPollHandle = null;
+let authState = null;
+let authBusy = false;
 
 function renderTable(containerId, columns, rows) {
   const container = document.getElementById(containerId);
@@ -81,6 +83,29 @@ async function loadCdpStatus() {
   renderCdpSummary(status);
 }
 
+function renderAuthSummary(status) {
+  authState = status;
+  const button = document.getElementById("authActionButton");
+  button.textContent = status.logged_in ? "退出登录" : "登录";
+
+  document.getElementById("authSummary").innerHTML = [
+    `<div><strong>状态：</strong>${status.logged_in ? renderStatusBadge("ok") : renderStatusBadge("warn")}</div>`,
+    `<div><strong>用户名：</strong>${status.user_name || "-"}</div>`,
+    `<div><strong>登录方式：</strong>${status.login_method || "-"}</div>`,
+    `<div><strong>CDP 状态：</strong>${status.cdp_running ? "在线" : "未运行"}</div>`,
+    `<div><strong>CDP 地址：</strong>${status.cdp_url}</div>`,
+    `<div><strong>最近登录：</strong>${status.last_login_at ? new Date(status.last_login_at).toLocaleString() : "-"}</div>`,
+    `<div><strong>最近退出：</strong>${status.last_logout_at ? new Date(status.last_logout_at).toLocaleString() : "-"}</div>`,
+    `<div><strong>提示：</strong>${status.message || "-"}</div>`,
+    `<div><strong>错误：</strong>${status.last_error || "-"}</div>`,
+  ].join("");
+}
+
+async function loadAuthStatus() {
+  const status = await fetchJson("/api/system/auth");
+  renderAuthSummary(status);
+}
+
 async function toggleCdpBrowser() {
   if (cdpBusy) {
     return;
@@ -98,6 +123,25 @@ async function toggleCdpBrowser() {
   } finally {
     cdpBusy = false;
     setButtonBusy("cdpToggleButton", false);
+  }
+}
+
+async function toggleAuth() {
+  if (authBusy) {
+    return;
+  }
+
+  authBusy = true;
+  setButtonBusy("authActionButton", true);
+
+  try {
+    const endpoint = authState?.logged_in ? "/api/system/auth/logout" : "/api/system/auth/login";
+    const status = await fetchJson(endpoint, { method: "POST" });
+    renderAuthSummary(status);
+    await loadCdpStatus();
+  } finally {
+    authBusy = false;
+    setButtonBusy("authActionButton", false);
   }
 }
 
@@ -194,7 +238,16 @@ async function loadConversations() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadDoctor(), loadCdpStatus(), loadTargets(), loadJobs(), loadTasks(), loadConversations()]);
+  await Promise.all([
+    loadSummary(),
+    loadDoctor(),
+    loadAuthStatus(),
+    loadCdpStatus(),
+    loadTargets(),
+    loadJobs(),
+    loadTasks(),
+    loadConversations(),
+  ]);
 }
 
 async function createDemoTarget() {
@@ -242,6 +295,7 @@ async function syncConversations() {
 
 document.getElementById("refreshButton").addEventListener("click", () => refreshAll().catch(console.error));
 document.getElementById("doctorButton").addEventListener("click", () => loadDoctor().catch(console.error));
+document.getElementById("authActionButton").addEventListener("click", () => toggleAuth().catch(console.error));
 document.getElementById("cdpToggleButton").addEventListener("click", () => toggleCdpBrowser().catch(console.error));
 document.getElementById("seedTargetButton").addEventListener("click", () => createDemoTarget().catch(console.error));
 document.getElementById("searchButton").addEventListener("click", () => triggerSearch().catch(console.error));
@@ -250,6 +304,6 @@ document.getElementById("syncConversationsButton").addEventListener("click", () 
 
 cdpPollHandle = window.setInterval(() => {
   loadCdpStatus().catch(console.error);
-}, 1000);
+}, 3000);
 
 refreshAll().catch(console.error);
