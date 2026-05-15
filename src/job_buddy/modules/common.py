@@ -95,4 +95,3 @@ class BaseRepository(Generic[ModelT]):
 
     async def count(self, filters: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(filters or {})
-

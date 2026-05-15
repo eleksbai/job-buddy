@@ -38,4 +38,3 @@ async def database_lifespan(manager: MongoManager) -> AsyncIterator[AsyncIOMotor
         yield database
     finally:
         await manager.disconnect()
-

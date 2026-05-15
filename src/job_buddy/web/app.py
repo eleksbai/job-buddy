@@ -23,4 +23,3 @@ def register_web(app: FastAPI) -> None:
         if asset_candidate.is_file():
             return FileResponse(asset_candidate)
         return FileResponse(STATIC_ROOT / "index.html")
-

@@ -82,4 +82,3 @@ class TargetProfileService:
         deleted = await self.repository.delete(target_id)
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target profile not found.")
-

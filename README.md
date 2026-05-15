@@ -30,6 +30,12 @@ uv venv --seed
 uv sync
 ```
 
+如需同时安装开发工具（包含 `pre-commit`），使用：
+
+```bash
+uv sync --extra dev
+```
+
 3. 配置环境变量
 
 ```bash
@@ -47,6 +53,41 @@ docker compose up -d mongodb
 ```bash
 uv run uvicorn job_buddy.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## 测试与提交检查
+
+日常开发建议在提交前执行下面两步：
+
+1. 运行自动化测试
+
+```bash
+uv run pytest
+```
+
+或使用项目脚本：
+
+```bash
+bash scripts/test.sh
+```
+
+2. 安装并执行 `pre-commit` 检查
+
+首次启用：
+
+```bash
+uv run pre-commit install
+```
+
+手动检查全部文件：
+
+```bash
+uv run pre-commit run --all-files
+```
+
+当前仓库的 `pre-commit` 会执行：
+
+- 基础文本检查：尾随空格、文件结尾换行、YAML 格式、冲突标记
+- `pytest` 回归测试，确保提交前至少通过一轮自动化测试
 
 ## 项目约定
 

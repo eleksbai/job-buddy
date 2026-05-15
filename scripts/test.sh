@@ -2,4 +2,3 @@
 set -euo pipefail
 
 uv run pytest
-
