@@ -133,11 +133,27 @@ table {
   white-space: pre-wrap;
 }
 
-#cdpSummary {
+.form-grid {
   display: grid;
-  gap: 0.45rem;
-  margin-top: 1rem;
-  color: var(--muted);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.9rem;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.form-grid input,
+.form-grid select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
 }
 
 #authSummary {

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from job_buddy.modules.conversations import ConversationRepository
-from job_buddy.modules.jobs import GreetingTaskRepository, JobLeadRepository
+from job_buddy.modules.jobs import GreetingTaskRepository, JobCollectionRecordRepository, JobLeadRepository
 from job_buddy.modules.targets import TargetProfileRepository
 
 
@@ -19,6 +19,12 @@ def build_mcp_server(app: FastAPI):
     @mcp.tool
     async def list_jobs(limit: int = 100) -> list[dict]:
         repository = JobLeadRepository(app.state.db)
+        items = await repository.list(limit=limit)
+        return [item.model_dump() for item in items]
+
+    @mcp.tool
+    async def list_job_collection_records(limit: int = 100) -> list[dict]:
+        repository = JobCollectionRecordRepository(app.state.db)
         items = await repository.list(limit=limit)
         return [item.model_dump() for item in items]
 
@@ -42,7 +48,7 @@ def build_mcp_server(app: FastAPI):
 
     @mcp.tool
     async def get_system_status() -> dict:
-        client_status = await app.state.boss_client.healthcheck()
+        client_status = await app.state.runtime.healthcheck()
         return {
             "status": "ok",
             "mongodb": app.state.settings.mongodb_db,

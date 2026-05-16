@@ -1,15 +1,15 @@
+import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from job_buddy.deps import get_system_service
 from job_buddy.modules.system import (
     AuthStatusResponse,
-    BrowserControlResponse,
-    CdpStatusResponse,
     DoctorCheckResponse,
     DoctorResponse,
+    SearchOptionsResponse,
 )
 from job_buddy.routers import build_api_router
+from tests.api._client import api_client
 
 
 class FakeSystemService:
@@ -19,31 +19,18 @@ class FakeSystemService:
             summary="healthy",
             data_dir="/tmp/boss",
             checks=[DoctorCheckResponse(name="python", status="ok", detail="Python 3.13")],
-            next_actions=["boss status"],
+            next_actions=["确认已登录 BOSS 直聘后再执行搜索"],
             stderr=None,
             exit_code=0,
             error=None,
-        )
-
-    async def get_cdp_status(self) -> CdpStatusResponse:
-        return CdpStatusResponse(
-            running=True,
-            port=9222,
-            cdp_url="http://127.0.0.1:9222",
-            browser="Chrome",
-            websocket_url="ws://127.0.0.1:9222/devtools/browser/demo",
-            pid=1234,
-            message="CDP 在线",
         )
 
     async def get_auth_status(self) -> AuthStatusResponse:
         return AuthStatusResponse(
             logged_in=True,
             user_name="Alice",
-            login_method="cdp",
-            cdp_running=True,
-            cdp_url="http://127.0.0.1:9222",
-            browser="Chrome",
+            login_method="patchright",
+            browser="Patchright Chromium",
             last_login_at=None,
             last_logout_at=None,
             message="已登录",
@@ -59,8 +46,6 @@ class FakeSystemService:
             logged_in=False,
             user_name=None,
             login_method=None,
-            cdp_running=False,
-            cdp_url="http://127.0.0.1:9222",
             browser=None,
             last_login_at=None,
             last_logout_at=None,
@@ -68,97 +53,80 @@ class FakeSystemService:
             last_error=None,
         )
 
-    async def start_cdp_browser(self) -> BrowserControlResponse:
-        return BrowserControlResponse(
-            running=True,
-            port=9222,
-            cdp_url="http://127.0.0.1:9222",
-            browser="Chrome",
-            websocket_url="ws://127.0.0.1:9222/devtools/browser/demo",
-            pid=1234,
-            message="浏览器已启动",
-        )
-
-    async def stop_cdp_browser(self) -> BrowserControlResponse:
-        return BrowserControlResponse(
-            running=False,
-            port=9222,
-            cdp_url="http://127.0.0.1:9222",
-            browser=None,
-            websocket_url=None,
-            pid=None,
-            message="浏览器已关闭",
+    async def get_search_options(self) -> SearchOptionsResponse:
+        return SearchOptionsResponse(
+            cities=["上海", "北京"],
+            salary_ranges=["20-30K"],
+            experience_levels=["3-5年"],
+            education_levels=["本科"],
+            industries=["互联网"],
+            scales=["100-499人"],
+            stages=["A轮"],
+            job_types=["全职"],
         )
 
 
-def test_run_boss_doctor():
+@pytest.mark.asyncio
+async def test_run_boss_doctor():
     app = FastAPI()
     app.include_router(build_api_router())
     app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
 
-    with TestClient(app) as client:
-        response = client.get("/api/system/doctor")
+    async with api_client(app) as client:
+        response = await client.get("/api/system/doctor")
 
     assert response.status_code == 200
     assert response.json()["summary"] == "healthy"
 
 
-def test_get_cdp_status():
+@pytest.mark.asyncio
+async def test_get_auth_status():
     app = FastAPI()
     app.include_router(build_api_router())
     app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
 
-    with TestClient(app) as client:
-        response = client.get("/api/system/cdp")
-
-    assert response.status_code == 200
-    assert response.json()["running"] is True
-
-
-def test_get_auth_status():
-    app = FastAPI()
-    app.include_router(build_api_router())
-    app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
-
-    with TestClient(app) as client:
-        response = client.get("/api/system/auth")
+    async with api_client(app) as client:
+        response = await client.get("/api/system/auth")
 
     assert response.status_code == 200
     assert response.json()["logged_in"] is True
     assert response.json()["user_name"] == "Alice"
 
 
-def test_logout_auth():
+@pytest.mark.asyncio
+async def test_logout_auth():
     app = FastAPI()
     app.include_router(build_api_router())
     app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
 
-    with TestClient(app) as client:
-        response = client.post("/api/system/auth/logout")
+    async with api_client(app) as client:
+        response = await client.post("/api/system/auth/logout")
 
     assert response.status_code == 200
     assert response.json()["logged_in"] is False
 
 
-def test_login_auth():
+@pytest.mark.asyncio
+async def test_login_auth():
     app = FastAPI()
     app.include_router(build_api_router())
     app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
 
-    with TestClient(app) as client:
-        response = client.post("/api/system/auth/login")
+    async with api_client(app) as client:
+        response = await client.post("/api/system/auth/login")
 
     assert response.status_code == 200
-    assert response.json()["login_method"] == "cdp"
+    assert response.json()["login_method"] == "patchright"
 
 
-def test_stop_cdp_browser():
+@pytest.mark.asyncio
+async def test_get_search_options():
     app = FastAPI()
     app.include_router(build_api_router())
     app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
 
-    with TestClient(app) as client:
-        response = client.post("/api/system/cdp/stop")
+    async with api_client(app) as client:
+        response = await client.get("/api/system/search-options")
 
     assert response.status_code == 200
-    assert response.json()["running"] is False
+    assert "上海" in response.json()["cities"]

@@ -5,7 +5,7 @@
 - `FastAPI` 提供 Web 管理台和 REST API
 - `FastMCP` 提供只读 MCP 工具
 - `MongoDB` 存储目标岗位、职位线索、任务记录和会话摘要
-- BOSS 直聘网站操控能力基于 [`boss-agent-cli`](https://github.com/can4hou6joeng4/boss-agent-cli) 项目
+- BOSS 直聘网站操控能力当前基于 `Patchright` 实现，README 中声明参考了 [`boss-agent-cli`](https://github.com/can4hou6joeng4/boss-agent-cli) 项目
 
 ## 功能范围
 
@@ -51,7 +51,15 @@ docker compose up -d mongodb
 5. 启动应用
 
 ```bash
-uv run uvicorn job_buddy.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn job_buddy.main:app \
+  --reload \
+  --reload-dir src \
+  --reload-dir tests \
+  --reload-exclude 'logs/*' \
+  --reload-exclude 'data/*' \
+  --reload-exclude '.venv/*' \
+  --host 0.0.0.0 \
+  --port 8000
 ```
 
 ## 测试与提交检查
@@ -110,16 +118,8 @@ web/src/          前端源码占位
 scripts/          本地脚本
 ```
 
-## 第三方 BOSS 模块接入
+## 参考项目
 
-当前项目中的 BOSS 直聘网站操控能力基于 [`boss-agent-cli`](https://github.com/can4hou6joeng4/boss-agent-cli)。
+当前项目的 BOSS 直聘页面协议理解与字段设计参考了 [`boss-agent-cli`](https://github.com/can4hou6joeng4/boss-agent-cli)，但运行时代码已经不再依赖该项目。
 
-目前已经真实接通的是环境诊断链路，即通过 `boss --json doctor` 检查本地运行环境、依赖和登录条件，并在网页页面中展示诊断结果。
-
-搜索、打招呼、会话同步等其它 BOSS 业务能力本轮未调整，仍沿用当前项目内部既有抽象。
-
-当前保留了项目内部的 BOSS 抽象和本地 stub，用于测试和开发占位；BOSS CLI 相关环境变量如下：
-
-- `BOSS_CLI_BIN=boss`
-- `BOSS_DATA_DIR=`
-- `BOSS_CDP_URL=`
+当前搜索与登录链路由项目内的 `Patchright` 实现承担，协议常量和字段映射也已内置在仓库代码中。

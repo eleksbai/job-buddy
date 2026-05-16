@@ -17,14 +17,15 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_log_level: str = Field(default="INFO", alias="APP_LOG_LEVEL")
+    app_log_dir: str = Field(default="logs", alias="APP_LOG_DIR")
+    app_log_file: str = Field(default="job-buddy.log", alias="APP_LOG_FILE")
+    app_log_max_bytes: int = Field(default=10 * 1024 * 1024, alias="APP_LOG_MAX_BYTES")
+    app_log_backup_count: int = Field(default=5, alias="APP_LOG_BACKUP_COUNT")
 
     mongodb_uri: str = Field(default="mongodb://localhost:27017", alias="MONGODB_URI")
     mongodb_db: str = Field(default="job_buddy", alias="MONGODB_DB")
 
-    boss_client_class: str | None = Field(default=None, alias="BOSS_CLIENT_CLASS")
-    boss_cli_bin: str = Field(default="boss", alias="BOSS_CLI_BIN")
-    boss_data_dir: str | None = Field(default=None, alias="BOSS_DATA_DIR")
-    boss_cdp_url: str | None = Field(default=None, alias="BOSS_CDP_URL")
+    collector_config_path: str = Field(default="config/collector_engines.json", alias="COLLECTOR_CONFIG_PATH")
 
 
 @lru_cache(maxsize=1)

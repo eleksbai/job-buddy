@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
-from job_buddy.core.boss import BossClientProtocol
+from job_buddy.core.boss import map_boss_operation_error, BossClientProtocol
 from job_buddy.modules.common import BaseRepository, DocumentModel, TaskStatus, TaskTriggerResponse, TimestampedSchema, utc_now
 from job_buddy.modules.jobs import GreetingTask, GreetingTaskRepository, JobLeadRepository
 from job_buddy.modules.targets import TargetProfile
@@ -30,8 +30,8 @@ class GreetingTaskRead(TimestampedSchema):
     input_payload: dict[str, Any]
     result_summary: dict[str, Any]
     error_message: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class GreetingRecord(DocumentModel):
@@ -100,14 +100,17 @@ class GreetingService:
 
         for job in jobs:
             try:
-                response = await self.boss_client.greet_job(
-                    {
-                        "source_job_id": job.source_job_id,
-                        "title": job.title,
-                        "company": job.company,
-                    },
-                    message=default_message,
-                )
+                try:
+                    response = await self.boss_client.greet_job(
+                        {
+                            "source_job_id": job.source_job_id,
+                            "title": job.title,
+                            "company": job.company,
+                        },
+                        message=default_message,
+                    )
+                except Exception as exc:
+                    raise map_boss_operation_error(exc) from exc
                 await self.records.create(
                     GreetingRecord(
                         task_id=task.id,

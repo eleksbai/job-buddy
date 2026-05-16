@@ -1,7 +1,12 @@
 import asyncio
 
-from job_buddy.core.boss import BossAuthStatusResult, BossDoctorResult, CdpStatusResult
+from job_buddy.core.boss import BossDoctorResult, BossOperationError
+from job_buddy.core.engines.models import LoginResult
 from job_buddy.modules.system import AuthState, SystemService
+
+
+class AuthRequired(Exception):
+    pass
 
 
 class FakeDoctorRunner:
@@ -11,80 +16,41 @@ class FakeDoctorRunner:
             summary="healthy",
             data_dir="/tmp/boss",
             checks=[{"name": "python", "status": "ok", "detail": "Python 3.13", "hint": None}],
-            next_actions=["boss status"],
+            next_actions=["确认已登录 BOSS 直聘后再执行搜索"],
             stderr="",
             exit_code=0,
             error=None,
         )
 
 
-class FakeCdpController:
+class FakeRuntime:
     def __init__(self) -> None:
-        self.running = True
-        self.ensure_called = False
-        self.stop_managed_called = False
-        self.clear_profile_called = False
-
-    async def get_status(self) -> CdpStatusResult:
-        return CdpStatusResult(
-            running=self.running,
-            port=9222,
-            cdp_url="http://127.0.0.1:9222",
-            browser="Chrome" if self.running else None,
-            websocket_url="ws://127.0.0.1:9222/devtools/browser/demo" if self.running else None,
-            pid=1234 if self.running else None,
-            message="CDP 在线" if self.running else "CDP 未运行",
-        )
-
-    async def start_browser(self) -> CdpStatusResult:
-        self.running = True
-        return await self.get_status()
-
-    async def stop_browser(self) -> CdpStatusResult:
-        self.running = False
-        return await self.get_status()
-
-    async def ensure_running(self) -> CdpStatusResult:
-        self.ensure_called = True
-        self.running = True
-        return await self.get_status()
-
-    async def stop_managed_browser(self) -> CdpStatusResult:
-        self.stop_managed_called = True
-        self.running = False
-        return await self.get_status()
-
-    def clear_profile(self) -> None:
-        self.clear_profile_called = True
-
-    @property
-    def cdp_url(self) -> str:
-        return "http://127.0.0.1:9222"
-
-
-class FakeAuthGateway:
-    def __init__(self) -> None:
-        self.local_status = BossAuthStatusResult(logged_in=False, message="未登录")
+        self.local_status = LoginResult(logged_in=False, message="未登录")
         self.login_called = False
         self.logout_called = False
+        self.login_error: Exception | None = None
 
-    async def get_status(self) -> BossAuthStatusResult:
+    async def get_auth_status(self) -> LoginResult:
         return self.local_status
 
-    async def login(self, timeout: int = 120) -> BossAuthStatusResult:
-        _ = timeout
+    async def login(self, request) -> LoginResult:
+        _ = request
+        if self.login_error is not None:
+            raise self.login_error
         self.login_called = True
-        self.local_status = BossAuthStatusResult(
+        self.local_status = LoginResult(
             logged_in=True,
             user_name="Alice",
-            login_method="cdp",
-            message="登录成功（CDP 扫码）",
+            login_method="patchright",
+            message="登录成功（扫码登录）",
+            browser="Patchright Chromium",
         )
         return self.local_status
 
-    async def logout(self) -> None:
+    async def logout(self) -> LoginResult:
         self.logout_called = True
-        self.local_status = BossAuthStatusResult(logged_in=False, message="已退出登录")
+        self.local_status = LoginResult(logged_in=False, message="已退出登录")
+        return self.local_status
 
 
 class FakeAuthStateRepository:
@@ -101,7 +67,7 @@ class FakeAuthStateRepository:
 
 
 def test_run_doctor_returns_structured_response():
-    service = SystemService(FakeDoctorRunner(), FakeCdpController(), FakeAuthGateway(), FakeAuthStateRepository())
+    service = SystemService(FakeDoctorRunner(), FakeRuntime(), FakeAuthStateRepository())
 
     result = asyncio.run(service.run_doctor())
 
@@ -110,48 +76,67 @@ def test_run_doctor_returns_structured_response():
     assert result.checks[0].name == "python"
 
 
-def test_get_cdp_status_returns_structured_response():
-    service = SystemService(FakeDoctorRunner(), FakeCdpController(), FakeAuthGateway(), FakeAuthStateRepository())
-
-    result = asyncio.run(service.get_cdp_status())
-
-    assert result.running is True
-    assert result.port == 9222
-
-
 def test_login_persists_auth_state():
-    cdp_controller = FakeCdpController()
-    auth_gateway = FakeAuthGateway()
+    runtime = FakeRuntime()
     auth_states = FakeAuthStateRepository()
-    service = SystemService(FakeDoctorRunner(), cdp_controller, auth_gateway, auth_states)
+    service = SystemService(FakeDoctorRunner(), runtime, auth_states)
 
     result = asyncio.run(service.login())
 
-    assert cdp_controller.ensure_called is True
-    assert auth_gateway.login_called is True
+    assert runtime.login_called is True
     assert result.logged_in is True
     assert result.user_name == "Alice"
+    assert result.browser == "Patchright Chromium"
     assert auth_states.state is not None
-    assert auth_states.state.login_method == "cdp"
+    assert auth_states.state.login_method == "patchright"
 
 
-def test_logout_clears_auth_state_and_profile():
-    cdp_controller = FakeCdpController()
-    auth_gateway = FakeAuthGateway()
+def test_logout_clears_auth_state():
+    runtime = FakeRuntime()
     auth_states = FakeAuthStateRepository()
     auth_states.state = AuthState(
-        cdp_url="http://127.0.0.1:9222",
         logged_in=True,
         user_name="Alice",
-        login_method="cdp",
+        login_method="patchright",
+        browser="Patchright Chromium",
     )
-    service = SystemService(FakeDoctorRunner(), cdp_controller, auth_gateway, auth_states)
+    service = SystemService(FakeDoctorRunner(), runtime, auth_states)
 
     result = asyncio.run(service.logout())
 
-    assert auth_gateway.logout_called is True
-    assert cdp_controller.stop_managed_called is True
-    assert cdp_controller.clear_profile_called is True
+    assert runtime.logout_called is True
     assert result.logged_in is False
     assert auth_states.state is not None
     assert auth_states.state.logged_in is False
+
+
+def test_get_auth_status_hides_historical_identity_when_logged_out():
+    runtime = FakeRuntime()
+    auth_states = FakeAuthStateRepository()
+    auth_states.state = AuthState(
+        logged_in=True,
+        user_name="Alice",
+        login_method="patchright",
+        browser="Patchright Chromium",
+    )
+    service = SystemService(FakeDoctorRunner(), runtime, auth_states)
+
+    result = asyncio.run(service.get_auth_status())
+
+    assert result.logged_in is False
+    assert result.user_name is None
+    assert result.login_method is None
+
+
+def test_login_maps_auth_errors():
+    runtime = FakeRuntime()
+    runtime.login_error = AuthRequired()
+    service = SystemService(FakeDoctorRunner(), runtime, FakeAuthStateRepository())
+
+    try:
+        asyncio.run(service.login())
+    except BossOperationError as exc:
+        assert exc.code == "AUTH_REQUIRED"
+        assert exc.message == "未登录，请先点击页面右上角登录"
+    else:
+        raise AssertionError("expected BossOperationError")

@@ -3,7 +3,7 @@ from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
-from job_buddy.core.boss import BossClientProtocol
+from job_buddy.core.boss import BossClientProtocol, map_boss_operation_error
 from job_buddy.modules.common import BaseRepository, DocumentModel, TimestampedSchema
 
 
@@ -46,7 +46,10 @@ class ConversationService:
         return await self.conversations.list(limit=limit)
 
     async def sync_conversations(self, limit: int = 20) -> int:
-        raw_conversations = await self.boss_client.list_conversations(limit=limit)
+        try:
+            raw_conversations = await self.boss_client.list_conversations(limit=limit)
+        except Exception as exc:
+            raise map_boss_operation_error(exc) from exc
         synced = 0
         for item in raw_conversations:
             await self.conversations.create(

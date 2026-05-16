@@ -1,20 +1,24 @@
-from fastapi.testclient import TestClient
+import pytest
+from fastapi import FastAPI
 
-from job_buddy.main import create_app
+from job_buddy.routers import build_api_router
+from tests.api._client import api_client
 
 
-class FakeBossClient:
+class FakeRuntime:
     async def healthcheck(self) -> dict:
         return {"status": "ok"}
 
 
-def test_health_endpoint():
-    app = create_app()
-    app.state.boss_client = FakeBossClient()
+@pytest.mark.asyncio
+async def test_health_endpoint():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    app.state.runtime = FakeRuntime()
     app.state.db = None
 
-    with TestClient(app) as client:
-        response = client.get("/api/health")
+    async with api_client(app) as client:
+        response = await client.get("/api/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"

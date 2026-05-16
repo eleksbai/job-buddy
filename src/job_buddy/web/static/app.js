@@ -5,7 +5,8 @@ async function fetchJson(url, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    const message = await response.text();
+    throw new Error(`${response.status} ${response.statusText}${message ? ` - ${message}` : ""}`);
   }
 
   if (response.status === 204) {
@@ -15,11 +16,11 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
-let cdpState = null;
-let cdpBusy = false;
-let cdpPollHandle = null;
 let authState = null;
 let authBusy = false;
+let searchOptions = null;
+const SEARCH_FORM_STORAGE_KEY = "job_buddy.search_form";
+let searchFormCacheApplied = false;
 
 function renderTable(containerId, columns, rows) {
   const container = document.getElementById(containerId);
@@ -63,24 +64,134 @@ function setButtonBusy(buttonId, busy) {
   button.classList.toggle("button-disabled", busy);
 }
 
-function renderCdpSummary(status) {
-  const button = document.getElementById("cdpToggleButton");
-  button.textContent = status.running ? "关闭浏览器" : "启动浏览器";
-
-  document.getElementById("cdpSummary").innerHTML = [
-    `<div><strong>状态：</strong>${status.running ? renderStatusBadge("ok") : renderStatusBadge("warn")}</div>`,
-    `<div><strong>端口：</strong>${status.port}</div>`,
-    `<div><strong>CDP 地址：</strong>${status.cdp_url}</div>`,
-    `<div><strong>浏览器：</strong>${status.browser || "-"}</div>`,
-    `<div><strong>WebSocket：</strong>${status.websocket_url || "-"}</div>`,
-    `<div><strong>提示：</strong>${status.message || "-"}</div>`,
-  ].join("");
+function showPageError(message) {
+  const panel = document.getElementById("pageErrorPanel");
+  const box = document.getElementById("pageErrorMessage");
+  panel.hidden = false;
+  box.innerHTML = `<div><strong>错误：</strong>${message}</div>`;
 }
 
-async function loadCdpStatus() {
-  const status = await fetchJson("/api/system/cdp");
-  cdpState = status;
-  renderCdpSummary(status);
+function clearPageError() {
+  const panel = document.getElementById("pageErrorPanel");
+  const box = document.getElementById("pageErrorMessage");
+  panel.hidden = true;
+  box.innerHTML = "";
+}
+
+function buildSelectOptions(selectId, values) {
+  const select = document.getElementById(selectId);
+  const options = ['<option value="">不限</option>']
+    .concat(values.map((item) => `<option value="${item}">${item}</option>`))
+    .join("");
+  select.innerHTML = options;
+}
+
+function getSearchFormElements() {
+  return {
+    keywords: document.getElementById("searchKeywordsInput"),
+    city: document.getElementById("searchCitySelect"),
+    salary: document.getElementById("searchSalarySelect"),
+    experience: document.getElementById("searchExperienceSelect"),
+    education: document.getElementById("searchEducationSelect"),
+    industry: document.getElementById("searchIndustrySelect"),
+    scale: document.getElementById("searchScaleSelect"),
+    stage: document.getElementById("searchStageSelect"),
+    jobType: document.getElementById("searchJobTypeSelect"),
+    welfare: document.getElementById("searchWelfareInput"),
+    page: document.getElementById("searchPageInput"),
+  };
+}
+
+function readSearchFormState() {
+  const elements = getSearchFormElements();
+  return {
+    keywords: elements.keywords.value.trim(),
+    city: elements.city.value || "",
+    salary: elements.salary.value || "",
+    experience: elements.experience.value || "",
+    education: elements.education.value || "",
+    industry: elements.industry.value || "",
+    scale: elements.scale.value || "",
+    stage: elements.stage.value || "",
+    job_type: elements.jobType.value || "",
+    welfare: elements.welfare.value.trim(),
+    page: elements.page.value || "1",
+  };
+}
+
+function persistSearchFormState() {
+  window.localStorage.setItem(SEARCH_FORM_STORAGE_KEY, JSON.stringify(readSearchFormState()));
+}
+
+function loadCachedSearchFormState() {
+  try {
+    const raw = window.localStorage.getItem(SEARCH_FORM_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyCachedSearchFormState() {
+  if (searchFormCacheApplied) {
+    return;
+  }
+
+  const cached = loadCachedSearchFormState();
+  if (!cached) {
+    searchFormCacheApplied = true;
+    return;
+  }
+
+  const elements = getSearchFormElements();
+  elements.keywords.value = cached.keywords || "";
+  elements.welfare.value = cached.welfare || "";
+  elements.page.value = cached.page || "1";
+
+  const selectMappings = [
+    [elements.city, cached.city],
+    [elements.salary, cached.salary],
+    [elements.experience, cached.experience],
+    [elements.education, cached.education],
+    [elements.industry, cached.industry],
+    [elements.scale, cached.scale],
+    [elements.stage, cached.stage],
+    [elements.jobType, cached.job_type],
+  ];
+
+  selectMappings.forEach(([element, value]) => {
+    if (!value) {
+      element.value = "";
+      return;
+    }
+    const hasOption = Array.from(element.options).some((option) => option.value === value);
+    element.value = hasOption ? value : "";
+  });
+  searchFormCacheApplied = true;
+}
+
+function bindSearchFormPersistence() {
+  const elements = Object.values(getSearchFormElements());
+  elements.forEach((element) => {
+    element.addEventListener("change", persistSearchFormState);
+    if (element.tagName === "INPUT") {
+      element.addEventListener("input", persistSearchFormState);
+    }
+  });
+}
+
+async function loadSearchOptions() {
+  const options = await fetchJson("/api/system/search-options");
+  searchOptions = options;
+  buildSelectOptions("searchCitySelect", options.cities || []);
+  buildSelectOptions("searchSalarySelect", options.salary_ranges || []);
+  buildSelectOptions("searchExperienceSelect", options.experience_levels || []);
+  buildSelectOptions("searchEducationSelect", options.education_levels || []);
+  buildSelectOptions("searchIndustrySelect", options.industries || []);
+  buildSelectOptions("searchScaleSelect", options.scales || []);
+  buildSelectOptions("searchStageSelect", options.stages || []);
+  buildSelectOptions("searchJobTypeSelect", options.job_types || []);
+  applyCachedSearchFormState();
 }
 
 function renderAuthSummary(status) {
@@ -92,8 +203,7 @@ function renderAuthSummary(status) {
     `<div><strong>状态：</strong>${status.logged_in ? renderStatusBadge("ok") : renderStatusBadge("warn")}</div>`,
     `<div><strong>用户名：</strong>${status.user_name || "-"}</div>`,
     `<div><strong>登录方式：</strong>${status.login_method || "-"}</div>`,
-    `<div><strong>CDP 状态：</strong>${status.cdp_running ? "在线" : "未运行"}</div>`,
-    `<div><strong>CDP 地址：</strong>${status.cdp_url}</div>`,
+    `<div><strong>浏览器：</strong>${status.browser || "-"}</div>`,
     `<div><strong>最近登录：</strong>${status.last_login_at ? new Date(status.last_login_at).toLocaleString() : "-"}</div>`,
     `<div><strong>最近退出：</strong>${status.last_logout_at ? new Date(status.last_logout_at).toLocaleString() : "-"}</div>`,
     `<div><strong>提示：</strong>${status.message || "-"}</div>`,
@@ -104,26 +214,6 @@ function renderAuthSummary(status) {
 async function loadAuthStatus() {
   const status = await fetchJson("/api/system/auth");
   renderAuthSummary(status);
-}
-
-async function toggleCdpBrowser() {
-  if (cdpBusy) {
-    return;
-  }
-
-  cdpBusy = true;
-  setButtonBusy("cdpToggleButton", true);
-
-  try {
-    const endpoint = cdpState?.running ? "/api/system/cdp/stop" : "/api/system/cdp/start";
-    const status = await fetchJson(endpoint, { method: "POST" });
-    cdpState = status;
-    renderCdpSummary(status);
-    await loadDoctor();
-  } finally {
-    cdpBusy = false;
-    setButtonBusy("cdpToggleButton", false);
-  }
 }
 
 async function toggleAuth() {
@@ -138,7 +228,7 @@ async function toggleAuth() {
     const endpoint = authState?.logged_in ? "/api/system/auth/logout" : "/api/system/auth/login";
     const status = await fetchJson(endpoint, { method: "POST" });
     renderAuthSummary(status);
-    await loadCdpStatus();
+    await loadDoctor();
   } finally {
     authBusy = false;
     setButtonBusy("authActionButton", false);
@@ -203,6 +293,10 @@ async function loadJobs() {
       { label: "公司", render: (row) => row.company },
       { label: "城市", render: (row) => row.city || "-" },
       { label: "薪资", render: (row) => row.salary || "-" },
+      {
+        label: "跳转",
+        render: (row) => (row.job_url ? `<a href="${row.job_url}" target="_blank" rel="noreferrer">查看职位</a>` : "-"),
+      },
       { label: "状态", render: (row) => `${row.match_status}${row.greeted ? " / 已打招呼" : ""}` },
     ],
     items,
@@ -217,6 +311,7 @@ async function loadTasks() {
       { label: "类型", render: (row) => row.task_type },
       { label: "状态", render: (row) => row.status },
       { label: "结果摘要", render: (row) => JSON.stringify(row.result_summary || {}) },
+      { label: "错误信息", render: (row) => row.error_message || "-" },
       { label: "更新时间", render: (row) => new Date(row.updated_at).toLocaleString() },
     ],
     items,
@@ -238,16 +333,22 @@ async function loadConversations() {
 }
 
 async function refreshAll() {
-  await Promise.all([
+  clearPageError();
+  const results = await Promise.allSettled([
     loadSummary(),
     loadDoctor(),
     loadAuthStatus(),
-    loadCdpStatus(),
+    loadSearchOptions(),
     loadTargets(),
     loadJobs(),
     loadTasks(),
     loadConversations(),
   ]);
+
+  const failed = results.find((item) => item.status === "rejected");
+  if (failed) {
+    showPageError(failed.reason?.message || "页面数据加载失败");
+  }
 }
 
 async function createDemoTarget() {
@@ -256,7 +357,7 @@ async function createDemoTarget() {
     body: JSON.stringify({
       name: "Python Backend",
       keywords: ["Python", "FastAPI"],
-      city: "Shanghai",
+      city: "上海",
       salary: "20-30K",
       greeting_template: "你好，我有 Python 后端开发经验，希望进一步了解这个岗位。",
     }),
@@ -264,18 +365,47 @@ async function createDemoTarget() {
   await refreshAll();
 }
 
+function collectSearchFormPayload() {
+  persistSearchFormState();
+  const keywordsText = document.getElementById("searchKeywordsInput").value.trim();
+  const keywords = keywordsText
+    .split(/[\s,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!keywords.length) {
+    throw new Error("请先填写至少一个搜索关键词");
+  }
+
+  const payload = {
+    keywords,
+    city: document.getElementById("searchCitySelect").value || null,
+    salary: document.getElementById("searchSalarySelect").value || null,
+    experience: document.getElementById("searchExperienceSelect").value || null,
+    education: document.getElementById("searchEducationSelect").value || null,
+    industry: document.getElementById("searchIndustrySelect").value || null,
+    scale: document.getElementById("searchScaleSelect").value || null,
+    stage: document.getElementById("searchStageSelect").value || null,
+    job_type: document.getElementById("searchJobTypeSelect").value || null,
+    welfare: document.getElementById("searchWelfareInput").value.trim() || null,
+    page: Number(document.getElementById("searchPageInput").value || 1),
+  };
+
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== null && value !== ""));
+}
+
 async function triggerSearch() {
-  const targets = await fetchJson("/api/targets");
-  const firstTarget = targets[0];
-  await fetchJson("/api/tasks/search", {
-    method: "POST",
-    body: JSON.stringify(
-      firstTarget
-        ? { target_profile_id: firstTarget.id }
-        : { query_override: { keywords: ["Python"], city: "Shanghai" } },
-    ),
-  });
-  await refreshAll();
+  clearPageError();
+  try {
+    await fetchJson("/api/tasks/search", {
+      method: "POST",
+      body: JSON.stringify({ query_override: collectSearchFormPayload() }),
+    });
+    await refreshAll();
+  } catch (error) {
+    showPageError(error.message || "触发采集失败");
+    throw error;
+  }
 }
 
 async function triggerGreeting() {
@@ -293,17 +423,13 @@ async function syncConversations() {
   await refreshAll();
 }
 
-document.getElementById("refreshButton").addEventListener("click", () => refreshAll().catch(console.error));
-document.getElementById("doctorButton").addEventListener("click", () => loadDoctor().catch(console.error));
-document.getElementById("authActionButton").addEventListener("click", () => toggleAuth().catch(console.error));
-document.getElementById("cdpToggleButton").addEventListener("click", () => toggleCdpBrowser().catch(console.error));
-document.getElementById("seedTargetButton").addEventListener("click", () => createDemoTarget().catch(console.error));
-document.getElementById("searchButton").addEventListener("click", () => triggerSearch().catch(console.error));
-document.getElementById("greetButton").addEventListener("click", () => triggerGreeting().catch(console.error));
-document.getElementById("syncConversationsButton").addEventListener("click", () => syncConversations().catch(console.error));
+document.getElementById("refreshButton").addEventListener("click", () => refreshAll().catch((error) => showPageError(error.message)));
+document.getElementById("doctorButton").addEventListener("click", () => loadDoctor().catch((error) => showPageError(error.message)));
+document.getElementById("authActionButton").addEventListener("click", () => toggleAuth().catch((error) => showPageError(error.message)));
+document.getElementById("seedTargetButton").addEventListener("click", () => createDemoTarget().catch((error) => showPageError(error.message)));
+document.getElementById("searchButton").addEventListener("click", () => triggerSearch().catch(() => {}));
+document.getElementById("greetButton").addEventListener("click", () => triggerGreeting().catch((error) => showPageError(error.message)));
+document.getElementById("syncConversationsButton").addEventListener("click", () => syncConversations().catch((error) => showPageError(error.message)));
+bindSearchFormPersistence();
 
-cdpPollHandle = window.setInterval(() => {
-  loadCdpStatus().catch(console.error);
-}, 3000);
-
-refreshAll().catch(console.error);
+refreshAll().catch((error) => showPageError(error.message));

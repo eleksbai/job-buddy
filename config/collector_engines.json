@@ -1,0 +1,20 @@
+{
+  "engines": {
+    "patchright": {
+      "enabled": true,
+      "params": {}
+    }
+  },
+  "bindings": {
+    "login": "patchright",
+    "search": "patchright"
+  },
+  "retry_policy": {
+    "login": {
+      "max_retries": 0
+    },
+    "search": {
+      "max_retries": 0
+    }
+  }
+}

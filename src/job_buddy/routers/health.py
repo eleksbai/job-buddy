@@ -1,15 +1,15 @@
 from fastapi import APIRouter, Depends
 
-from job_buddy.deps import get_boss_client
-from job_buddy.core.boss import BossClientProtocol
+from job_buddy.deps import get_runtime
+from job_buddy.core.engines.runtime import EngineRuntimeManager
 from job_buddy.modules.system import HealthResponse
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse, operation_id="get_health")
-async def get_health(boss_client: BossClientProtocol = Depends(get_boss_client)) -> HealthResponse:
-    client_status = await boss_client.healthcheck()
+async def get_health(runtime: EngineRuntimeManager = Depends(get_runtime)) -> HealthResponse:
+    client_status = await runtime.healthcheck()
     return HealthResponse(
         status="ok",
         mongodb="connected",

@@ -30,6 +30,11 @@
           <button id="refreshButton">刷新全部</button>
         </section>
 
+        <section id="pageErrorPanel" class="panel" hidden>
+          <h3>错误提示</h3>
+          <div id="pageErrorMessage" class="doctor-summary"></div>
+        </section>
+
         <section id="dashboard" class="panel">
           <h3>总览</h3>
           <div id="summaryCards" class="cards"></div>
@@ -38,7 +43,7 @@
         <section id="doctor" class="panel">
           <div class="panel-header">
             <h3>环境诊断</h3>
-            <button id="doctorButton">运行 boss doctor</button>
+            <button id="doctorButton">运行环境检查</button>
           </div>
           <div id="authCard" class="doctor-summary">
             <div class="panel-header">
@@ -46,13 +51,6 @@
               <button id="authActionButton">检查中</button>
             </div>
             <div id="authSummary"></div>
-          </div>
-          <div id="cdpControl" class="doctor-summary">
-            <div class="panel-header">
-              <strong>CDP 浏览器控制</strong>
-              <button id="cdpToggleButton">检查中</button>
-            </div>
-            <div id="cdpSummary"></div>
           </div>
           <div id="doctorSummary"></div>
           <div id="doctorActions"></div>
@@ -71,6 +69,54 @@
           <div class="panel-header">
             <h3>职位线索</h3>
             <button id="searchButton">触发采集</button>
+          </div>
+          <div id="searchForm" class="doctor-summary">
+            <div class="form-grid">
+              <label>
+                关键词
+                <input id="searchKeywordsInput" type="text" placeholder="如 Python FastAPI" />
+              </label>
+              <label>
+                城市
+                <select id="searchCitySelect"></select>
+              </label>
+              <label>
+                薪资
+                <select id="searchSalarySelect"></select>
+              </label>
+              <label>
+                经验
+                <select id="searchExperienceSelect"></select>
+              </label>
+              <label>
+                学历
+                <select id="searchEducationSelect"></select>
+              </label>
+              <label>
+                行业
+                <select id="searchIndustrySelect"></select>
+              </label>
+              <label>
+                规模
+                <select id="searchScaleSelect"></select>
+              </label>
+              <label>
+                阶段
+                <select id="searchStageSelect"></select>
+              </label>
+              <label>
+                职位类型
+                <select id="searchJobTypeSelect"></select>
+              </label>
+              <label>
+                福利
+                <input id="searchWelfareInput" type="text" placeholder="如 双休,五险一金" />
+              </label>
+              <label>
+                页码
+                <input id="searchPageInput" type="number" min="1" value="1" />
+              </label>
+            </div>
           </div>
           <div id="jobsTable"></div>
         </section>
