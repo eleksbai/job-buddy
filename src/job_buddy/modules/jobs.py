@@ -29,6 +29,8 @@ class JobLead(DocumentModel):
     match_status: str = "new"
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     last_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    search_count: int = 1
+    last_searched_at: datetime = Field(default_factory=utc_now)
     greeted: bool = False
 
 
@@ -43,6 +45,9 @@ class JobLeadRead(TimestampedSchema):
     experience: str | None = None
     job_url: str | None = None
     match_status: str
+    search_count: int
+    last_searched_at: datetime | None = None
+    last_seen_at: datetime
     greeted: bool
     raw_payload: dict[str, Any]
 
@@ -264,6 +269,8 @@ class JobCollectionService:
                             job_url=item.job_url,
                             match_status="matched" if target else "new",
                             raw_payload=item.raw_payload,
+                            search_count=1,
+                            last_searched_at=utc_now(),
                         )
                     )
                     dedup_created += 1
@@ -280,6 +287,8 @@ class JobCollectionService:
                             "job_url": item.job_url,
                             "raw_payload": item.raw_payload,
                             "last_seen_at": utc_now(),
+                            "last_searched_at": utc_now(),
+                            "search_count": max(1, existing.search_count) + 1,
                         },
                     )
                     dedup_updated += 1

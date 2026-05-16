@@ -3,7 +3,11 @@ services:
     image: mongo:7
     container_name: job-buddy-mongodb
     restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "27017:27017"
     volumes:
       - ./data/mongodb:/data/db
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro

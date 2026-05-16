@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi import FastAPI
 
@@ -6,6 +8,8 @@ from job_buddy.modules.system import (
     AuthStatusResponse,
     DoctorCheckResponse,
     DoctorResponse,
+    LogsResponse,
+    LogLineResponse,
     SearchOptionsResponse,
 )
 from job_buddy.routers import build_api_router
@@ -63,6 +67,18 @@ class FakeSystemService:
             scales=["100-499人"],
             stages=["A轮"],
             job_types=["全职"],
+        )
+
+    async def get_logs(self, limit: int = 200) -> LogsResponse:
+        _ = limit
+        return LogsResponse(
+            lines=[
+                LogLineResponse(text="2026-05-16 21:00:00 INFO [app.py:1] ready", level_hint="info"),
+                LogLineResponse(text="2026-05-16 21:00:01 ERROR [app.py:2] failed", level_hint="error"),
+            ],
+            truncated=False,
+            source="job-buddy.log",
+            updated_at=datetime.fromisoformat("2026-05-16T21:00:01+08:00"),
         )
 
 
@@ -130,3 +146,18 @@ async def test_get_search_options():
 
     assert response.status_code == 200
     assert "上海" in response.json()["cities"]
+
+
+@pytest.mark.asyncio
+async def test_get_logs():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
+
+    async with api_client(app) as client:
+        response = await client.get("/api/system/logs?limit=50")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "job-buddy.log"
+    assert payload["lines"][1]["level_hint"] == "error"

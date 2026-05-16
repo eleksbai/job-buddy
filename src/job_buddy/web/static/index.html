@@ -7,70 +7,101 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
-    <div class="shell">
-      <aside class="sidebar">
-        <h1>Job Buddy</h1>
-        <p>本地求职操作台</p>
-        <nav>
-          <a href="#dashboard">总览</a>
-          <a href="#doctor">环境诊断</a>
-          <a href="#targets">目标岗位</a>
-          <a href="#jobs">职位线索</a>
-          <a href="#tasks">任务记录</a>
-          <a href="#conversations">沟通记录</a>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="eyebrow">Patchright Workflow Console</span>
+          <h1>Job Buddy</h1>
+          <p>单页求职工作台</p>
+        </div>
+        <nav class="topnav" aria-label="主导航">
+          <button class="nav-link" data-view-target="dashboard">总览</button>
+          <button class="nav-link" data-view-target="search">搜索</button>
+          <button class="nav-link" data-view-target="jobs">职位</button>
+          <button class="nav-link" data-view-target="tasks">任务</button>
+          <button class="nav-link" data-view-target="conversations">沟通</button>
+          <button class="nav-link" data-view-target="doctor">诊断</button>
+          <button class="nav-link" data-view-target="logs">日志</button>
         </nav>
-      </aside>
-      <main class="content">
-        <section class="hero">
-          <div>
-            <span class="eyebrow">FastAPI + FastMCP + MongoDB</span>
-            <h2>以手动触发为主的求职工作流</h2>
-            <p>通过这个管理台查看环境状态、维护目标岗位、采集职位、触发打招呼，并回看沟通记录。</p>
+        <div class="auth-strip">
+          <div id="authStripSummary" class="auth-strip-summary">
+            <span class="status-badge status-warn">检查中</span>
+            <strong>未获取登录状态</strong>
+            <span>-</span>
           </div>
-          <button id="refreshButton">刷新全部</button>
-        </section>
-
-        <section id="pageErrorPanel" class="panel" hidden>
-          <h3>错误提示</h3>
-          <div id="pageErrorMessage" class="doctor-summary"></div>
-        </section>
-
-        <section id="dashboard" class="panel">
-          <h3>总览</h3>
-          <div id="summaryCards" class="cards"></div>
-        </section>
-
-        <section id="doctor" class="panel">
-          <div class="panel-header">
-            <h3>环境诊断</h3>
-            <button id="doctorButton">运行环境检查</button>
+          <div class="topbar-actions">
+            <button id="refreshCurrentButton" class="button-secondary">刷新当前页</button>
+            <button id="authActionButton">检查中</button>
           </div>
-          <div id="authCard" class="doctor-summary">
-            <div class="panel-header">
-              <strong>BOSS 登录</strong>
-              <button id="authActionButton">检查中</button>
+        </div>
+      </header>
+
+      <main class="content-shell">
+        <section id="pageNoticePanel" class="flash-panel flash-success" hidden>
+          <div id="pageNoticeMessage"></div>
+        </section>
+
+        <section id="pageErrorPanel" class="flash-panel flash-error" hidden>
+          <div id="pageErrorMessage"></div>
+        </section>
+
+        <section id="dashboardView" class="view-panel" data-view="dashboard">
+          <div class="view-hero">
+            <div>
+              <span class="eyebrow">Overview</span>
+              <h2>今日工作台</h2>
+              <p>用短首页看关键状态，再进入具体板块处理搜索、任务、沟通、诊断与日志。</p>
             </div>
-            <div id="authSummary"></div>
+            <div class="hero-actions">
+              <button class="button-secondary" data-view-target="search">去搜索职位</button>
+              <button class="button-secondary" data-view-target="tasks">查看任务</button>
+              <button class="button-secondary" data-view-target="logs">查看日志</button>
+            </div>
           </div>
-          <div id="doctorSummary"></div>
-          <div id="doctorActions"></div>
-          <div id="doctorChecks"></div>
+
+          <div id="summaryCards" class="cards"></div>
+
+          <div class="dashboard-grid">
+            <article class="panel-card">
+              <div class="panel-card-header">
+                <h3>登录状态</h3>
+                <button class="button-link" data-view-target="doctor">环境详情</button>
+              </div>
+              <div id="dashboardAuthSummary" class="stack-list"></div>
+            </article>
+
+            <article class="panel-card">
+              <div class="panel-card-header">
+                <h3>诊断摘要</h3>
+                <button id="dashboardDoctorRefreshButton" class="button-link">刷新诊断</button>
+              </div>
+              <div id="dashboardDoctorSummary" class="stack-list"></div>
+            </article>
+
+            <article class="panel-card panel-card-wide">
+              <div class="panel-card-header">
+                <h3>最近任务</h3>
+                <button class="button-link" data-view-target="tasks">全部任务</button>
+              </div>
+              <div id="dashboardTasksTable"></div>
+            </article>
+          </div>
         </section>
 
-        <section id="targets" class="panel">
+        <section id="searchView" class="view-panel" data-view="search" hidden>
           <div class="panel-header">
-            <h3>目标岗位</h3>
-            <button id="seedTargetButton">创建示例目标</button>
+            <div>
+              <h2>搜索板块</h2>
+              <p>配置搜索条件并触发采集，下面展示最近一次搜索得到的当前结果。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="searchButton">触发搜索任务</button>
+              <button id="nextPageSearchButton" class="button-secondary">下一页搜索</button>
+              <button id="refreshSearchButton" class="button-secondary">刷新搜索结果</button>
+            </div>
           </div>
-          <div id="targetsTable"></div>
-        </section>
 
-        <section id="jobs" class="panel">
-          <div class="panel-header">
-            <h3>职位线索</h3>
-            <button id="searchButton">触发采集</button>
-          </div>
-          <div id="searchForm" class="doctor-summary">
+          <div id="searchForm" class="panel-card">
             <div class="form-grid">
               <label>
                 关键词
@@ -118,23 +149,128 @@
               </label>
             </div>
           </div>
-          <div id="jobsTable"></div>
+
+          <div id="searchUpdateNotice" class="search-update-banner" hidden></div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>最近搜索</h3>
+              <div id="latestSearchMeta" class="hint-text"></div>
+            </div>
+            <div id="searchResultsTable"></div>
+          </div>
         </section>
 
-        <section id="tasks" class="panel">
+        <section id="jobsView" class="view-panel" data-view="jobs" hidden>
           <div class="panel-header">
-            <h3>任务记录</h3>
-            <button id="greetButton">触发打招呼</button>
+            <div>
+              <h2>职位板块</h2>
+              <p>展示去重后的全部职位，并记录搜索次数和最近搜索时间。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="refreshJobsButton" class="button-secondary">刷新职位</button>
+            </div>
           </div>
-          <div id="tasksTable"></div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>全部职位</h3>
+              <span class="hint-text">默认展示最近更新的去重职位记录</span>
+            </div>
+            <div id="jobsTable"></div>
+          </div>
         </section>
 
-        <section id="conversations" class="panel">
+        <section id="tasksView" class="view-panel" data-view="tasks" hidden>
           <div class="panel-header">
-            <h3>沟通记录</h3>
-            <button id="syncConversationsButton">同步会话</button>
+            <div>
+              <h2>任务中心</h2>
+              <p>统一查看搜索任务和打招呼任务，也从这里触发打招呼与会话同步。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="greetButton">触发打招呼</button>
+              <button id="syncConversationsButton" class="button-secondary">同步会话</button>
+              <button id="refreshTasksButton" class="button-secondary">刷新任务</button>
+            </div>
           </div>
-          <div id="conversationsTable"></div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>任务记录</h3>
+              <span class="hint-text">当前仅持久化搜索与打招呼任务</span>
+            </div>
+            <div id="tasksTable"></div>
+          </div>
+        </section>
+
+        <section id="conversationsView" class="view-panel" data-view="conversations" hidden>
+          <div class="panel-header">
+            <div>
+              <h2>沟通记录</h2>
+              <p>查看已同步的会话信息和最近消息。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="refreshConversationsButton" class="button-secondary">刷新会话</button>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div id="conversationsTable"></div>
+          </div>
+        </section>
+
+        <section id="doctorView" class="view-panel" data-view="doctor" hidden>
+          <div class="panel-header">
+            <div>
+              <h2>环境诊断</h2>
+              <p>检查 Patchright 运行环境、登录状态和系统建议。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="doctorButton">运行环境检查</button>
+            </div>
+          </div>
+
+          <div class="dashboard-grid">
+            <article class="panel-card">
+              <div class="panel-card-header">
+                <h3>BOSS 登录</h3>
+                <span class="hint-text">顶栏状态在这里展开</span>
+              </div>
+              <div id="authSummary" class="stack-list"></div>
+            </article>
+
+            <article class="panel-card panel-card-wide">
+              <div class="panel-card-header">
+                <h3>诊断结果</h3>
+              </div>
+              <div id="doctorSummary" class="stack-list"></div>
+              <div id="doctorActions"></div>
+            </article>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>检查项</h3>
+            </div>
+            <div id="doctorChecks"></div>
+          </div>
+        </section>
+
+        <section id="logsView" class="view-panel" data-view="logs" hidden>
+          <div class="panel-header">
+            <div>
+              <h2>应用日志</h2>
+              <p>查看当前日志文件最近输出，快速定位接口和采集问题。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="refreshLogsButton">刷新日志</button>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div id="logsMeta" class="stack-list compact-list"></div>
+            <div id="logsViewer" class="logs-viewer"></div>
+          </div>
         </section>
       </main>
     </div>

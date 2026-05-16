@@ -60,6 +60,7 @@ async def get_system_service(
 ) -> SystemService:
     return SystemService(
         BossDoctorRunner(settings),
+        settings,
         runtime,
         AuthStateRepository(db),
     )

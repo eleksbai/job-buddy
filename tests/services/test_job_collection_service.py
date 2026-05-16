@@ -199,6 +199,8 @@ def test_search_jobs_writes_collection_records_and_deduped_leads():
     assert len(jobs.items) == 1
     assert jobs.items["job-1"].salary == "25-35K"
     assert jobs.items["job-1"].job_url == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
+    assert jobs.items["job-1"].search_count == 2
+    assert jobs.items["job-1"].last_searched_at is not None
     assert traces.items[0].request_url == "https://www.zhipin.com/wapi/zpgeek/search/joblist.json?query=Python"
     assert traces.items[0].browser == "Patchright Chromium"
 

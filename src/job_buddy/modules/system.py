@@ -1,4 +1,6 @@
+from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -6,6 +8,7 @@ from job_buddy.core.boss import (
     BossDoctorRunner,
     map_boss_operation_error,
 )
+from job_buddy.core.config import Settings
 from job_buddy.core.engines.models import LoginRequest, LoginResult
 from job_buddy.core.engines.runtime import EngineRuntimeManager
 from job_buddy.core.zhipin_api import (
@@ -113,14 +116,28 @@ class SearchOptionsResponse(BaseModel):
     job_types: list[str]
 
 
+class LogLineResponse(BaseModel):
+    text: str
+    level_hint: str = "info"
+
+
+class LogsResponse(BaseModel):
+    lines: list[LogLineResponse]
+    truncated: bool
+    source: str
+    updated_at: datetime
+
+
 class SystemService:
     def __init__(
         self,
         doctor_runner: BossDoctorRunner,
+        settings: Settings,
         runtime: EngineRuntimeManager,
         auth_states: AuthStateRepository,
     ) -> None:
         self.doctor_runner = doctor_runner
+        self.settings = settings
         self.runtime = runtime
         self.auth_states = auth_states
 
@@ -177,6 +194,26 @@ class SystemService:
             job_types=sorted(JOB_TYPE_CODES.keys()),
         )
 
+    async def get_logs(self, limit: int = 200) -> LogsResponse:
+        log_file = Path(self.settings.app_log_dir).expanduser() / self.settings.app_log_file
+        lines: deque[str] = deque(maxlen=limit)
+        truncated = False
+
+        if log_file.exists():
+            total_lines = 0
+            with log_file.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    total_lines += 1
+                    lines.append(line.rstrip("\n"))
+            truncated = total_lines > limit
+
+        return LogsResponse(
+            lines=[LogLineResponse(text=line, level_hint=_detect_log_level(line)) for line in lines],
+            truncated=truncated,
+            source=log_file.name,
+            updated_at=utc_now(),
+        )
+
     async def _sync_auth_state(
         self,
         local: LoginResult,
@@ -231,3 +268,14 @@ class SystemService:
             message=local.message,
             last_error=local.last_error or state.last_error,
         )
+
+
+def _detect_log_level(line: str) -> str:
+    upper_line = line.upper()
+    if " ERROR " in upper_line:
+        return "error"
+    if " WARNING " in upper_line or " WARN " in upper_line:
+        return "warn"
+    if " DEBUG " in upper_line:
+        return "debug"
+    return "info"

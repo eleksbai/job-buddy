@@ -53,6 +53,8 @@ async def test_list_jobs_includes_job_url():
 
     assert response.status_code == 200
     assert response.json()[0]["job_url"] == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
+    assert response.json()[0]["search_count"] == 1
+    assert response.json()[0]["last_searched_at"] is not None
 
 
 @pytest.mark.asyncio
