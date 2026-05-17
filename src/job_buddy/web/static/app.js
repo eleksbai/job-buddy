@@ -998,7 +998,7 @@ async function loadConversations() {
       { label: "未读", render: (row) => renderUnreadBadge(row.unread_count) },
       { label: "状态", render: (row) => renderReadStatus(row.raw_payload) },
       { label: "最近消息", render: (row) => escapeHtml(row.last_message || "-") },
-      { label: "最近时间", render: (row) => escapeHtml(formatDate(row.last_message_at)) },
+      { label: "最近时间", render: (row) => escapeHtml(row.last_message_at || "-") },
       { label: "操作", render: (row) => renderChatHistoryAction(row) },
     ],
     items,

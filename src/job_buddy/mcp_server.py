@@ -251,11 +251,11 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
 
 
 @mcp.tool
-async def list_conversations(limit: int = 100) -> list[dict[str, Any]]:
-    """列出同步的对话记录。"""
+async def list_conversations() -> list[dict[str, Any]]:
+    """列出全部同步的对话记录。"""
     async with _client() as client:
         try:
-            resp = await client.get("/api/conversations", params={"limit": str(limit)})
+            resp = await client.get("/api/conversations")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:

@@ -354,22 +354,29 @@ class PatchrightEngine:
         friends = zp_data.get("result") or zp_data.get("friendList") or []
         if not isinstance(friends, list):
             return []
-        return [
-            {
-                "friend_id": str(f.get("encryptFriendId") or f.get("uid") or ""),
-                "gid": str(f.get("uid") or ""),
-                "name": str(f.get("name") or ""),
-                "title": str(f.get("title") or ""),
-                "company": str(f.get("brandName") or f.get("company") or ""),
-                "avatar": f.get("avatar"),
-                "last_message": f.get("lastMessage"),
-                "last_message_at": f.get("lastMessageTime"),
-                "unread_count": f.get("unreadCount", 0),
-                "security_id": str(f.get("securityId") or "") or None,
-                "raw_payload": f,
-            }
-            for f in friends
-        ]
+        lmi = lambda f: f.get("lastMessageInfo") or {}
+
+        return sorted(
+            [
+                {
+                    "friend_id": str(f.get("encryptFriendId") or f.get("uid") or ""),
+                    "gid": str(f.get("uid") or ""),
+                    "name": str(f.get("name") or ""),
+                    "title": str(f.get("title") or ""),
+                    "company": str(f.get("brandName") or f.get("company") or ""),
+                    "avatar": f.get("avatar"),
+                    "last_message": f.get("lastMsg") or lmi(f).get("content"),
+                    "last_message_at": f.get("lastTime") or lmi(f).get("createTime"),
+                    "last_message_ts": f.get("lastTS") or lmi(f).get("createTime"),
+                    "unread_count": f.get("unreadCount", 0),
+                    "security_id": str(f.get("securityId") or "") or None,
+                    "raw_payload": f,
+                }
+                for f in friends
+            ],
+            key=lambda x: x["last_message_ts"] or "",
+            reverse=True,
+        )
 
     async def chat_history(self, request: ChatHistoryRequest) -> dict[str, Any]:
         await self.check_page_health()
@@ -676,5 +683,5 @@ class PatchrightEngine:
         raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get("profile_dir") or DEFAULT_PROFILE_DIR
         path = Path(str(raw)).expanduser()
         if not path.is_absolute():
-            path = Path.cwd() / path
+            path = self.settings.project_root / path
         return path.resolve()

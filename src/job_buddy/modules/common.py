@@ -70,9 +70,11 @@ class BaseRepository(Generic[ModelT]):
     def __init__(self, database: AsyncIOMotorDatabase) -> None:
         self.collection: AsyncIOMotorCollection = database[self.collection_name]
 
-    async def list(self, filters: dict[str, Any] | None = None, limit: int = 100) -> list[ModelT]:
-        cursor = self.collection.find(filters or {}).sort("updated_at", -1).limit(limit)
-        return [self.model_cls.from_mongo(item) for item in await cursor.to_list(length=limit)]
+    async def list(self, filters: dict[str, Any] | None = None, limit: int = 0, sort_by: str = "updated_at") -> list[ModelT]:
+        cursor = self.collection.find(filters or {}).sort(sort_by, -1)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        return [self.model_cls.from_mongo(item) for item in await cursor.to_list(length=limit or None)]
 
     async def get(self, entity_id: str) -> ModelT | None:
         payload = await self.collection.find_one({"_id": ObjectId(entity_id)})

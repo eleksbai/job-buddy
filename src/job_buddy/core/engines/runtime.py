@@ -206,7 +206,7 @@ class EngineRuntimeManager:
     def _load_config(self) -> dict[str, Any]:
         path = Path(self.settings.collector_config_path).expanduser()
         if not path.is_absolute():
-            path = Path.cwd() / path
+            path = self.settings.project_root / path
         if not path.exists():
             return {
                 "engines": {

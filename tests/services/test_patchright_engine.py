@@ -82,12 +82,10 @@ class FakeStarter:
         return self.playwright
 
 
-def test_patchright_uses_resolved_profile_dir_by_default(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-
+def test_patchright_uses_resolved_profile_dir_by_default():
     engine = PatchrightEngine(Settings())
 
-    assert engine.profile_dir == (tmp_path / "data" / "chrome_profile").resolve()
+    assert engine.profile_dir == (Settings().project_root / "data" / "chrome_profile").resolve()
 
 
 def test_patchright_expands_env_profile_dir(monkeypatch):

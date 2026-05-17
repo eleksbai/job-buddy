@@ -1,12 +1,16 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 项目根目录：.env 文件所在目录，不受启动位置影响
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=f"{_PROJECT_ROOT}/.env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -26,6 +30,10 @@ class Settings(BaseSettings):
     mongodb_db: str = Field(default="job_buddy", alias="MONGODB_DB")
 
     collector_config_path: str = Field(default="config/collector_engines.json", alias="COLLECTOR_CONFIG_PATH")
+
+    @property
+    def project_root(self) -> Path:
+        return _PROJECT_ROOT
 
 
 @lru_cache(maxsize=1)

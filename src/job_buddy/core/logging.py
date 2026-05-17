@@ -8,6 +8,8 @@ from job_buddy.core.config import Settings
 def configure_logging(settings: Settings) -> None:
     level = getattr(logging, settings.app_log_level.upper(), logging.INFO)
     log_dir = Path(settings.app_log_dir).expanduser()
+    if not log_dir.is_absolute():
+        log_dir = settings.project_root / log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / settings.app_log_file
 

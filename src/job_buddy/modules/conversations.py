@@ -1,10 +1,30 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from job_buddy.core.boss import BossClientProtocol, map_boss_operation_error
 from job_buddy.modules.common import BaseRepository, DocumentModel, TimestampedSchema, utc_now
+
+_CST = timezone(timedelta(hours=8))
+
+
+def _format_last_time(ts_ms: float) -> str:
+    """从毫秒时间戳推导中文显示文本：今天 14:30 / 昨天 09:15 / 前天 18:00 / 5月3日 10:00"""
+    dt = datetime.fromtimestamp(ts_ms / 1000, tz=_CST)
+    now = datetime.now(tz=_CST)
+    today = now.date()
+    date = dt.date()
+    hm = dt.strftime("%H:%M")
+    if date == today:
+        return f"今天 {hm}"
+    if date == today - timedelta(days=1):
+        return f"昨天 {hm}"
+    if date == today - timedelta(days=2):
+        return f"前天 {hm}"
+    if date.year == today.year:
+        return f"{date.month}月{date.day}日 {hm}"
+    return f"{date.year}年{date.month}月{date.day}日 {hm}"
 
 
 class ConversationRecord(DocumentModel):
@@ -18,7 +38,8 @@ class ConversationRecord(DocumentModel):
     avatar: str | None = None
     last_message: str | None = None
     unread_count: int = 0
-    last_message_at: datetime | None = None
+    last_message_at: str | None = None
+    last_message_ts: float | None = None
     raw_payload: dict = Field(default_factory=dict)
 
 
@@ -34,6 +55,7 @@ class ConversationRecordRead(TimestampedSchema):
     last_message: str | None = None
     unread_count: int
     last_message_at: str | None = None
+    last_message_ts: float | None = None
     raw_payload: dict = Field(default_factory=dict)
 
 
@@ -86,8 +108,8 @@ class ConversationService:
         self.messages = ChatMessageRepository(database)
         self.boss_client = boss_client
 
-    async def list_conversations(self, limit: int = 100) -> list[ConversationRecord]:
-        return await self.conversations.list(limit=limit)
+    async def list_conversations(self) -> list[ConversationRecord]:
+        return await self.conversations.list(sort_by="last_message_ts")
 
     async def get_chat_history(
         self, gid: str, security_id: str, page: int = 1, count: int = 20
@@ -139,12 +161,14 @@ class ConversationService:
             if not source_conversation_id:
                 continue
 
-            last_message_at = None
-            if item.get("last_message_at"):
+            last_message_ts = None
+            if item.get("last_message_ts"):
                 try:
-                    last_message_at = datetime.fromisoformat(str(item["last_message_at"]))
+                    last_message_ts = float(item["last_message_ts"])
                 except (ValueError, TypeError):
                     pass
+
+            last_message_at = _format_last_time(last_message_ts) if last_message_ts else None
 
             coll = self.conversations.collection
             if gid:
@@ -165,6 +189,7 @@ class ConversationService:
                         "unread_count": item.get("unread_count", 0),
                         "security_id": item.get("security_id"),
                         "last_message_at": last_message_at,
+                        "last_message_ts": last_message_ts,
                         "raw_payload": item.get("raw_payload", item),
                         "updated_at": utc_now(),
                     }}
@@ -182,6 +207,7 @@ class ConversationService:
                         last_message=item.get("last_message"),
                         unread_count=item.get("unread_count", 0),
                         last_message_at=last_message_at,
+                        last_message_ts=last_message_ts,
                         raw_payload=item.get("raw_payload", item),
                     )
                 )

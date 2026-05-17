@@ -13,10 +13,9 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 @router.get("", response_model=list[ConversationRecordRead], operation_id="list_conversations")
 async def list_conversations(
-    limit: int = Query(default=100, le=200),
     service: ConversationService = Depends(get_conversation_service),
 ) -> list[ConversationRecordRead]:
-    conversations = await service.list_conversations(limit=limit)
+    conversations = await service.list_conversations()
     return [ConversationRecordRead(**item.model_dump()) for item in conversations]
 
 
