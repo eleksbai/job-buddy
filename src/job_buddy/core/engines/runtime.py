@@ -92,8 +92,8 @@ class EngineRuntimeManager:
         assert isinstance(result, list)
         return result
 
-    async def get_chat_history(self, gid: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
-        result = await self._execute("chat_history", ChatHistoryRequest(gid=gid, security_id=security_id, page=page, count=count), "chat_history")
+    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
+        result = await self._execute("chat_history", ChatHistoryRequest(boss_id=boss_id, security_id=security_id, page=page, count=count), "chat_history")
         assert isinstance(result, dict)
         return result
 

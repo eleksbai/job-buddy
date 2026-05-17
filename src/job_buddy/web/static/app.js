@@ -14,7 +14,6 @@ const state = {
   jobDetailSourceJobId: null,
   jobs: [],
   chatHistoryGid: null,
-  chatHistorySecurityId: null,
   chatHistoryPage: 1,
   chatHistoryName: "",
   chatHistoryFriendId: null,
@@ -909,17 +908,16 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
     .join("");
 }
 
-async function loadChatHistory(gid, securityId, page) {
+async function loadChatHistory(jobId, page) {
   return await fetchJson(
-    `/api/conversations/${encodeURIComponent(gid)}/messages?security_id=${encodeURIComponent(securityId)}&page=${page || 1}&count=20`
+    `/api/conversations/${encodeURIComponent(jobId)}/messages?page=${page || 1}&count=20`
   );
 }
 
-async function openConversationChat(gid, securityId, name, friendId) {
-  if (!gid || !securityId) return;
+async function openConversationChat(jobId, name, friendId) {
+  if (!jobId) return;
   clearError();
-  state.chatHistoryGid = gid;
-  state.chatHistorySecurityId = securityId;
+  state.chatHistoryGid = jobId;
   state.chatHistoryPage = 1;
   state.chatHistoryName = name;
   state.chatHistoryFriendId = friendId;
@@ -927,7 +925,7 @@ async function openConversationChat(gid, securityId, name, friendId) {
   renderChatHistoryDrawerLoading(name);
 
   try {
-    const payload = await loadChatHistory(gid, securityId, 1);
+    const payload = await loadChatHistory(jobId, 1);
     renderChatHistoryDrawer(payload);
   } catch (error) {
     renderChatHistoryDrawerError(error.message || "聊天记录获取失败");
@@ -961,13 +959,13 @@ function renderChatHistoryDrawer(payload) {
 async function goChatHistoryPage(delta) {
   const nextPage = state.chatHistoryPage + delta;
   if (nextPage < 1) return;
-  const { chatHistoryGid, chatHistorySecurityId, chatHistoryName } = state;
-  if (!chatHistoryGid || !chatHistorySecurityId) return;
+  const { chatHistoryGid, chatHistoryName } = state;
+  if (!chatHistoryGid) return;
 
   setButtonBusy("chatHistoryPrevPageButton", true, "加载中");
   setButtonBusy("chatHistoryNextPageButton", true, "加载中");
   try {
-    const payload = await loadChatHistory(chatHistoryGid, chatHistorySecurityId, nextPage);
+    const payload = await loadChatHistory(chatHistoryGid, nextPage);
     state.chatHistoryPage = nextPage;
     renderChatHistoryDrawer(payload);
   } catch (error) {
@@ -979,7 +977,6 @@ async function goChatHistoryPage(delta) {
 
 function closeChatHistoryDrawer() {
   state.chatHistoryGid = null;
-  state.chatHistorySecurityId = null;
   state.chatHistoryPage = 1;
   state.chatHistoryName = "";
   state.chatHistoryFriendId = null;
@@ -988,6 +985,7 @@ function closeChatHistoryDrawer() {
 
 async function loadConversations() {
   const items = await fetchJson("/api/conversations");
+  document.getElementById("conversationsCount").textContent = `共 ${items.length} 条`;
   renderTable(
     "conversationsTable",
     [
@@ -1027,12 +1025,11 @@ function renderReadStatus(rawPayload) {
 }
 
 function renderChatHistoryAction(row) {
-  const gid = row.gid;
-  const securityId = row.security_id;
-  if (!gid || !securityId) return "-";
+  const jobId = row.job_id;
+  if (!jobId) return "-";
   const name = row.name || "";
   const friendId = row.source_conversation_id || "";
-  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(gid)}|${escapeHtml(securityId)}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
+  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(String(jobId))}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
 }
 
 function renderLogs(payload) {
@@ -1194,7 +1191,7 @@ async function syncConversations() {
   try {
     const result = await fetchJson("/api/conversations/sync", { method: "POST" });
     await Promise.all([loadConversations(), loadSummaryCards()]);
-    showNotice(`已同步 ${result.count} 条会话`);
+    showNotice(`已同步 ${result.count} 条会话`, 5000);
   } finally {
     setButtonBusy("syncConversationsButton", false);
   }
@@ -1265,7 +1262,7 @@ function bindEvents() {
     if (chatButton) {
       event.preventDefault();
       const parts = chatButton.dataset.chatHistory.split("|");
-      openConversationChat(parts[0], parts[1], decodeURIComponent(parts[2] || ""), parts[3] || "").catch(
+      openConversationChat(parts[0], decodeURIComponent(parts[1] || ""), parts[2] || "").catch(
         (error) => showError(error.message || "聊天历史获取失败")
       );
       return;

@@ -47,6 +47,20 @@ LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
 
 
+def _extract_message_content(m: dict) -> str:
+    """从 BOSS 消息 payload 提取可显示的文本内容。"""
+    body = m.get("body")
+    if isinstance(body, str):
+        return body
+    if isinstance(body, dict):
+        # 招呼消息 (type=8) 包含 jobDesc.content
+        job_desc = body.get("jobDesc") or {}
+        if isinstance(job_desc, dict):
+            return str(job_desc.get("content") or body.get("headTitle") or "")
+        return str(body.get("headTitle") or "")
+    return ""
+
+
 class PatchrightEngine:
     name = "patchright"
 
@@ -361,14 +375,17 @@ class PatchrightEngine:
                 {
                     "friend_id": str(f.get("encryptFriendId") or f.get("uid") or ""),
                     "gid": str(f.get("uid") or ""),
+                    "job_id": f.get("jobId"),
+                    "encrypt_job_id": str(f.get("encryptJobId") or "") or None,
+                    "encrypt_boss_id": f.get("encryptBossId"),
                     "name": str(f.get("name") or ""),
                     "title": str(f.get("title") or ""),
                     "company": str(f.get("brandName") or f.get("company") or ""),
                     "avatar": f.get("avatar"),
-                    "last_message": f.get("lastMsg") or lmi(f).get("content"),
+                    "last_message": f.get("lastMsg") or lmi(f).get("showText"),
                     "last_message_at": f.get("lastTime") or lmi(f).get("createTime"),
-                    "last_message_ts": f.get("lastTS") or lmi(f).get("createTime"),
-                    "unread_count": f.get("unreadCount", 0),
+                    "last_message_ts": f.get("lastTS") or lmi(f).get("msgTime"),
+                    "unread_count": f.get("unreadMsgCount", 0),
                     "security_id": str(f.get("securityId") or "") or None,
                     "raw_payload": f,
                 }
@@ -391,7 +408,7 @@ class PatchrightEngine:
                 boss_side=True,
             )
 
-        url = f"{CHAT_HISTORY_URL}?gid={request.gid}&securityId={request.security_id}&page={request.page}&c={request.count}&src=0"
+        url = f"{CHAT_HISTORY_URL}?bossId={request.boss_id}&maxMsgId=0&c={request.count}&page={request.page}&src=0&securityId={request.security_id}"
         payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "聊天历史获取失败")
@@ -408,19 +425,19 @@ class PatchrightEngine:
         if not isinstance(messages, list):
             messages = []
         return {
-            "gid": request.gid,
+            "boss_id": request.boss_id,
             "security_id": request.security_id,
             "page": request.page,
             "count": request.count,
             "has_more": bool(zp_data.get("hasMore", False)),
-            "total": zp_data.get("totalCount", len(messages)),
+            "total": len(messages),
             "messages": [
                 {
-                    "message_id": str(m.get("msgId") or ""),
-                    "from_id": str(m.get("fromId") or ""),
-                    "content": str(m.get("content") or ""),
-                    "type": m.get("msgType"),
-                    "created_at": m.get("createTime"),
+                    "message_id": str(m.get("mid") or ""),
+                    "from_id": str((m.get("from") or {}).get("uid") or ""),
+                    "content": _extract_message_content(m),
+                    "type": m.get("type"),
+                    "created_at": m.get("time"),
                     "raw_payload": m,
                 }
                 for m in messages

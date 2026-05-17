@@ -42,4 +42,5 @@ testpaths = ["tests"]
 [dependency-groups]
 dev = [
     "ipython>=9.13.0",
+    "mitmproxy>=11.0.2",
 ]

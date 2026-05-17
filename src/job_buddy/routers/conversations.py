@@ -21,19 +21,17 @@ async def list_conversations(
 
 @router.post("/sync", response_model=ConversationSyncResponse, status_code=status.HTTP_202_ACCEPTED, operation_id="sync_conversations")
 async def sync_conversations(
-    limit: int = Query(default=20, le=100),
     service: ConversationService = Depends(get_conversation_service),
 ) -> ConversationSyncResponse:
-    count = await service.sync_conversations(limit=limit)
+    count = await service.sync_conversations()
     return ConversationSyncResponse(count=count)
 
 
-@router.get("/{gid}/messages", response_model=ChatHistoryResponse, operation_id="get_chat_history")
+@router.get("/{job_id}/messages", response_model=ChatHistoryResponse, operation_id="get_chat_history")
 async def get_chat_history(
-    gid: str,
-    security_id: str = Query(...),
+    job_id: int,
     page: int = Query(default=1, ge=1),
     count: int = Query(default=20, le=100),
     service: ConversationService = Depends(get_conversation_service),
 ) -> ChatHistoryResponse:
-    return await service.get_chat_history(gid=gid, security_id=security_id, page=page, count=count)
+    return await service.get_chat_history(job_id=job_id, page=page, count=count)

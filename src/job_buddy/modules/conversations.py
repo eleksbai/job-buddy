@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
-from job_buddy.core.boss import BossClientProtocol, map_boss_operation_error
+from job_buddy.core.boss import BossClientProtocol, BossOperationError, map_boss_operation_error
 from job_buddy.modules.common import BaseRepository, DocumentModel, TimestampedSchema, utc_now
 
 _CST = timezone(timedelta(hours=8))
@@ -32,6 +32,9 @@ class ConversationRecord(DocumentModel):
     source_conversation_id: str  # friend_id or gid
     gid: str = ""
     security_id: str | None = None
+    job_id: int | None = None
+    encrypt_job_id: str | None = None
+    encrypt_boss_id: str | None = None
     title: str
     name: str = ""
     company: str | None = None
@@ -48,6 +51,9 @@ class ConversationRecordRead(TimestampedSchema):
     source_conversation_id: str
     gid: str
     security_id: str | None = None
+    job_id: int | None = None
+    encrypt_job_id: str | None = None
+    encrypt_boss_id: str | None = None
     title: str
     name: str
     company: str | None = None
@@ -65,7 +71,7 @@ class ChatMessage(DocumentModel):
     from_id: str
     content: str = ""
     msg_type: int | None = None
-    sent_at: str | None = None  # BOSS 消息发送时间
+    sent_at: int | None = None  # BOSS 消息发送时间（毫秒时间戳）
     raw_payload: dict = Field(default_factory=dict)
 
 
@@ -75,7 +81,7 @@ class ChatMessageRead(TimestampedSchema):
     from_id: str
     content: str
     msg_type: int | None = None
-    sent_at: str | None = None
+    sent_at: int | None = None
 
 
 class ChatHistoryResponse(BaseModel):
@@ -109,14 +115,31 @@ class ConversationService:
         self.boss_client = boss_client
 
     async def list_conversations(self) -> list[ConversationRecord]:
-        return await self.conversations.list(sort_by="last_message_ts")
+        now_cst = datetime.now(tz=_CST)
+        today_start = now_cst.replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_start = today_start + timedelta(days=1)
+        filters = {"updated_at": {"$gte": today_start, "$lt": tomorrow_start}}
+        return await self.conversations.list(filters=filters, sort_by="last_message_ts")
 
     async def get_chat_history(
-        self, gid: str, security_id: str, page: int = 1, count: int = 20
+        self, job_id: int, page: int = 1, count: int = 20
     ) -> ChatHistoryResponse:
+        conv = await self.conversations.collection.find_one({"job_id": job_id})
+        if not conv:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=f"未找到 job_id={job_id} 的会话记录",
+                recoverable=False,
+                status_code=404,
+            )
+
+        gid = conv.get("gid", "")
+        security_id = conv.get("security_id")
+        boss_id = conv.get("encrypt_boss_id")
+
         try:
             result = await self.boss_client.get_chat_history(
-                gid=gid, security_id=security_id, page=page, count=count
+                boss_id=boss_id, security_id=security_id, page=page, count=count
             )
         except Exception as exc:
             raise map_boss_operation_error(exc) from exc
@@ -139,8 +162,8 @@ class ConversationService:
                 )
 
         return ChatHistoryResponse(
-            gid=result["gid"],
-            security_id=result.get("security_id"),
+            gid=gid,
+            security_id=security_id,
             page=result["page"],
             count=result["count"],
             has_more=result["has_more"],
@@ -148,17 +171,18 @@ class ConversationService:
             messages=messages,
         )
 
-    async def sync_conversations(self, limit: int = 20) -> int:
+    async def sync_conversations(self) -> int:
         try:
             friends = await self.boss_client.list_friends(page=1)
         except Exception as exc:
             raise map_boss_operation_error(exc) from exc
 
+        coll = self.conversations.collection
         synced = 0
-        for item in friends[:limit]:
-            gid = item.get("gid", "")
-            source_conversation_id = item.get("friend_id") or gid
-            if not source_conversation_id:
+        for item in friends:
+            job_id = item.get("job_id")
+            friend_id = item.get("friend_id") or item.get("gid", "")
+            if not job_id and not friend_id:
                 continue
 
             last_message_ts = None
@@ -170,46 +194,29 @@ class ConversationService:
 
             last_message_at = _format_last_time(last_message_ts) if last_message_ts else None
 
-            coll = self.conversations.collection
-            if gid:
-                existing = await coll.find_one({"gid": gid})
-            else:
-                existing = await coll.find_one({"source_conversation_id": source_conversation_id})
+            filter_doc = {"job_id": job_id} if job_id else {"source_conversation_id": friend_id}
 
-            if existing:
-                await coll.update_one(
-                    {"_id": existing["_id"]},
-                    {"$set": {
-                        "source_conversation_id": source_conversation_id,
-                        "name": item.get("name", ""),
-                        "title": item.get("title", ""),
-                        "company": item.get("company"),
-                        "avatar": item.get("avatar"),
-                        "last_message": item.get("last_message"),
-                        "unread_count": item.get("unread_count", 0),
-                        "security_id": item.get("security_id"),
-                        "last_message_at": last_message_at,
-                        "last_message_ts": last_message_ts,
-                        "raw_payload": item.get("raw_payload", item),
-                        "updated_at": utc_now(),
-                    }}
-                )
-            else:
-                await self.conversations.create(
-                    ConversationRecord(
-                        source_conversation_id=source_conversation_id,
-                        gid=gid,
-                        security_id=item.get("security_id"),
-                        name=item.get("name", ""),
-                        title=item.get("title", ""),
-                        company=item.get("company"),
-                        avatar=item.get("avatar"),
-                        last_message=item.get("last_message"),
-                        unread_count=item.get("unread_count", 0),
-                        last_message_at=last_message_at,
-                        last_message_ts=last_message_ts,
-                        raw_payload=item.get("raw_payload", item),
-                    )
-                )
+            await coll.update_one(
+                filter_doc,
+                {"$set": {
+                    "source_conversation_id": friend_id,
+                    "gid": item.get("gid", ""),
+                    "job_id": job_id,
+                    "encrypt_job_id": item.get("encrypt_job_id"),
+                    "encrypt_boss_id": item.get("encrypt_boss_id"),
+                    "security_id": item.get("security_id"),
+                    "name": item.get("name", ""),
+                    "title": item.get("title", ""),
+                    "company": item.get("company"),
+                    "avatar": item.get("avatar"),
+                    "last_message": item.get("last_message"),
+                    "unread_count": item.get("unread_count", 0),
+                    "last_message_at": last_message_at,
+                    "last_message_ts": last_message_ts,
+                    "raw_payload": item.get("raw_payload", item),
+                    "updated_at": utc_now(),
+                }},
+                upsert=True,
+            )
             synced += 1
         return synced

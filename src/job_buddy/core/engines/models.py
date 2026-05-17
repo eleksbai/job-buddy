@@ -43,7 +43,7 @@ class FriendListRequest:
 
 @dataclass
 class ChatHistoryRequest:
-    gid: str
+    boss_id: str
     security_id: str
     page: int = 1
     count: int = 20
