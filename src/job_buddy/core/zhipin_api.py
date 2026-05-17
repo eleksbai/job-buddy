@@ -5,6 +5,7 @@ from typing import Any
 BASE_URL = "https://www.zhipin.com"
 WEB_GEEK_JOB_URL = f"{BASE_URL}/web/geek/job"
 SEARCH_URL = f"{BASE_URL}/wapi/zpgeek/search/joblist.json"
+DETAIL_URL = f"{BASE_URL}/wapi/zpgeek/job/detail.json"
 
 
 def build_job_url(job_id: str | None, security_id: str | None = None) -> str | None:
@@ -14,6 +15,12 @@ def build_job_url(job_id: str | None, security_id: str | None = None) -> str | N
     if security_id:
         return f"{url}?securityId={security_id}"
     return url
+
+
+def build_job_detail_url(security_id: str | None) -> str | None:
+    if not security_id:
+        return None
+    return f"{DETAIL_URL}?securityId={security_id}"
 
 CITY_CODES = {
     "北京": "101010100",
@@ -153,4 +160,79 @@ def normalize_job(raw: dict[str, Any]) -> dict[str, Any]:
         "experience": raw.get("jobExperience"),
         "job_url": raw.get("jobUrl") or build_job_url(job_id, security_id),
         "raw_payload": raw,
+    }
+
+
+def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = dict(raw)
+    zp_data = payload.get("zpData") if isinstance(payload.get("zpData"), dict) else {}
+    job_info = dict(zp_data.get("jobInfo") or {})
+    brand_info = dict(zp_data.get("brandComInfo") or {})
+    boss_info = dict(zp_data.get("bossInfo") or {})
+    fallback = dict(fallback or {})
+
+    job_id = str(job_info.get("encryptId") or fallback.get("job_id") or "")
+    security_id = str(job_info.get("securityId") or fallback.get("security_id") or "") or None
+    job_url = build_job_url(job_id, security_id) or fallback.get("job_url")
+
+    job = {
+        "job_id": job_id,
+        "security_id": security_id,
+        "title": str(job_info.get("jobName") or fallback.get("title") or ""),
+        "salary": str(job_info.get("salaryDesc") or fallback.get("salary") or "") or None,
+        "experience": str(job_info.get("experienceName") or job_info.get("jobExperience") or fallback.get("experience") or "") or None,
+        "degree": str(job_info.get("degreeName") or job_info.get("jobDegree") or "") or None,
+        "city": str(job_info.get("locationName") or fallback.get("city") or "") or None,
+        "address": str(job_info.get("address") or "") or None,
+        "skills": list(job_info.get("showSkills") or job_info.get("skills") or []),
+        "description": str(job_info.get("postDescription") or job_info.get("description") or "") or None,
+        "status": str(job_info.get("jobStatusDesc") or "") or None,
+        "job_url": job_url,
+    }
+    company = {
+        "name": str(brand_info.get("brandName") or fallback.get("company") or ""),
+        "stage": str(brand_info.get("stageName") or brand_info.get("brandStageName") or "") or None,
+        "scale": str(brand_info.get("scaleName") or brand_info.get("brandScaleName") or "") or None,
+        "industry": str(brand_info.get("industryName") or brand_info.get("brandIndustry") or "") or None,
+        "intro": str(brand_info.get("introduce") or brand_info.get("companyDesc") or "") or None,
+    }
+    boss = {
+        "name": str(boss_info.get("name") or boss_info.get("bossName") or "") or None,
+        "title": str(boss_info.get("title") or boss_info.get("bossTitle") or "") or None,
+    }
+
+    detail_text_parts = []
+    for label, value in [
+        ("职位名称", job.get("title")),
+        ("薪资", job.get("salary")),
+        ("经验", job.get("experience")),
+        ("学历", job.get("degree")),
+        ("城市", job.get("city")),
+        ("地址", job.get("address")),
+        ("职位状态", job.get("status")),
+        ("技能", "、".join(job["skills"]) if job["skills"] else None),
+        ("公司", company.get("name")),
+        ("公司阶段", company.get("stage")),
+        ("公司规模", company.get("scale")),
+        ("行业", company.get("industry")),
+        ("BOSS", boss.get("name")),
+        ("BOSS 职位", boss.get("title")),
+        ("职位描述", job.get("description")),
+        ("公司介绍", company.get("intro")),
+    ]:
+        if value:
+            detail_text_parts.append(f"{label}：{value}")
+
+    return {
+        "job_id": job_id,
+        "security_id": security_id,
+        "job_url": job_url,
+        "detail_payload": {
+            "job": job,
+            "company": company,
+            "boss": boss,
+            "raw_payload": payload,
+        },
+        "detail_text": "\n".join(detail_text_parts),
+        "detail_raw_payload": payload,
     }

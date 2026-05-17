@@ -23,6 +23,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   color: var(--ink);
   background:
@@ -413,6 +414,121 @@ a {
   color: #d8b4fe;
 }
 
+.detail-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: 1fr minmax(360px, 560px);
+  overflow: hidden;
+}
+
+.detail-drawer-backdrop {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: transparent;
+  cursor: default;
+  background: rgba(10, 12, 16, 0.46);
+}
+
+.detail-drawer-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: rgba(255, 252, 246, 0.98);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 40px rgba(44, 37, 29, 0.16);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-drawer-header {
+  padding: 1.2rem 1.25rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.detail-drawer-body {
+  overflow: auto;
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.detail-summary {
+  display: grid;
+  gap: 1rem;
+}
+
+.detail-summary h3 {
+  margin: 0.35rem 0 0.2rem;
+}
+
+.detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.detail-summary-grid div,
+.detail-list div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.detail-summary-grid strong,
+.detail-list strong {
+  color: var(--ink);
+}
+
+.detail-summary-grid span,
+.detail-list span {
+  color: var(--muted);
+}
+
+.detail-panel {
+  padding: 1rem;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.detail-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.detail-panel h4 {
+  margin: 0 0 0.8rem;
+}
+
+.detail-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.detail-loading {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem 0;
+}
+
 @media (max-width: 1180px) {
   .topbar {
     grid-template-columns: 1fr;
@@ -442,5 +558,21 @@ a {
   .panel-card-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .detail-drawer {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-drawer-panel {
+    border-left: 0;
+  }
+
+  .detail-drawer-backdrop {
+    display: none;
+  }
+
+  .detail-summary-grid {
+    grid-template-columns: 1fr;
   }
 }

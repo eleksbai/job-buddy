@@ -7,7 +7,15 @@ from typing import Any
 
 from job_buddy.core.boss import BossOperationError, map_boss_operation_error
 from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import EngineConfig, EngineState, LoginRequest, LoginResult, SearchRequest, SearchResult
+from job_buddy.core.engines.models import (
+    EngineConfig,
+    EngineState,
+    JobDetailRequest,
+    LoginRequest,
+    LoginResult,
+    SearchRequest,
+    SearchResult,
+)
 from job_buddy.core.engines.patchright import PatchrightEngine
 
 
@@ -50,6 +58,11 @@ class EngineRuntimeManager:
     async def search(self, request: SearchRequest) -> SearchResult:
         result = await self._execute("search", request, "search")
         assert isinstance(result, SearchResult)
+        return result
+
+    async def detail(self, request: JobDetailRequest) -> dict[str, Any]:
+        result = await self._execute("detail", request, "detail")
+        assert isinstance(result, dict)
         return result
 
     async def healthcheck(self) -> dict[str, Any]:
@@ -193,8 +206,8 @@ class EngineRuntimeManager:
                 "engines": {
                     "patchright": {"enabled": True, "params": {}},
                 },
-                "bindings": {"login": "patchright", "search": "patchright"},
-                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}},
+                "bindings": {"login": "patchright", "search": "patchright", "detail": "patchright"},
+                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}, "detail": {"max_retries": 0}},
             }
         return json.loads(path.read_text(encoding="utf-8"))
 

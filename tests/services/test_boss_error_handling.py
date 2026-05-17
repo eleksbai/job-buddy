@@ -35,6 +35,10 @@ class FakeTaskRepository:
         self.task = task
         return task
 
+    async def get(self, entity_id: str):
+        _ = entity_id
+        return self.task
+
     async def update(self, task_id: str, updates: dict):
         _ = task_id
         for key, value in updates.items():

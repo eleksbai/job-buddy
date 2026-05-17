@@ -168,7 +168,9 @@ class SystemService:
         try:
             local = await self.runtime.login(LoginRequest(timeout=timeout))
         except Exception as exc:
-            raise map_boss_operation_error(exc) from exc
+            mapped = map_boss_operation_error(exc)
+            await self._persist_login_error(mapped.message)
+            raise mapped from exc
         stored = await self.auth_states.get_current()
         state = await self._sync_auth_state(local, stored, mark_login=local.logged_in)
         return self._build_auth_response(local, state)
@@ -234,7 +236,7 @@ class SystemService:
             browser=local.browser,
             last_login_at=local.last_login_at or current.last_login_at,
             last_logout_at=local.last_logout_at or current.last_logout_at,
-            last_error=local.last_error,
+            last_error=local.last_error if local.last_error is not None else current.last_error,
             created_at=current.created_at,
             updated_at=now,
         )
@@ -250,6 +252,13 @@ class SystemService:
             payload.login_method = None
 
         return await self.auth_states.upsert_current(payload)
+
+    async def _persist_login_error(self, message: str) -> None:
+        stored = await self.auth_states.get_current()
+        current = stored or AuthState()
+        current.last_error = message
+        current.updated_at = utc_now()
+        await self.auth_states.upsert_current(current)
 
     def _build_auth_response(
         self,

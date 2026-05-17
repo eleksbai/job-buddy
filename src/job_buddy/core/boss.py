@@ -31,6 +31,7 @@ class BossOperationError(Exception):
     recoverable: bool = True
     recovery_action: str | None = None
     status_code: int = 502
+    boss_side: bool = False  # True: BOSS 网站返回的错误，非应用 bug
 
     def __str__(self) -> str:
         return self.message
@@ -54,6 +55,7 @@ def map_boss_operation_error(exc: Exception) -> BossOperationError:
             recoverable=True,
             recovery_action="login",
             status_code=401,
+            boss_side=True,
         )
 
     if exc_name == "TokenRefreshFailed":
@@ -63,6 +65,7 @@ def map_boss_operation_error(exc: Exception) -> BossOperationError:
             recoverable=True,
             recovery_action="login",
             status_code=401,
+            boss_side=True,
         )
 
     if exc_name == "AccountRiskError":
@@ -72,6 +75,7 @@ def map_boss_operation_error(exc: Exception) -> BossOperationError:
             recoverable=False,
             recovery_action="联系 BOSS 直聘客服解除风控限制",
             status_code=409,
+            boss_side=True,
         )
 
     return BossOperationError(

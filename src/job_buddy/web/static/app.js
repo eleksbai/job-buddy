@@ -9,6 +9,10 @@ const state = {
   searchOptionsLoaded: false,
   noticeTimer: null,
   searchUpdateTimer: null,
+  jobDetail: null,
+  jobDetailLoading: false,
+  jobDetailSourceJobId: null,
+  jobs: [],
 };
 
 function getSafeStorage() {
@@ -58,7 +62,9 @@ async function fetchJson(url, options = {}) {
     } catch {
       detail = rawMessage;
     }
-    throw new Error(`${response.status} ${response.statusText}${detail ? ` - ${detail}` : ""}`);
+    const error = new Error(`${response.status} ${response.statusText}${detail ? ` - ${detail}` : ""}`);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -201,6 +207,24 @@ function renderTable(containerId, columns, rows) {
     .join("");
 
   container.innerHTML = `<div class="table-shell"><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function renderJobDetailAction(row) {
+  const sourceJobId = row.source_job_id || row.job_id || "";
+  if (!sourceJobId) {
+    return "-";
+  }
+  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(sourceJobId)}">查看详情</button>`;
+}
+
+function renderDetailStateBadge(fetchedAt) {
+  return fetchedAt
+    ? '<span class="status-badge status-ok">已采集</span>'
+    : '<span class="status-badge status-warn">未采集</span>';
+}
+
+function formatJson(value) {
+  return escapeHtml(JSON.stringify(value ?? {}, null, 2));
 }
 
 function setActiveView(viewId) {
@@ -379,6 +403,102 @@ function renderAuthDetail(status) {
   ].join("");
 }
 
+function setJobDetailDrawerOpen(open) {
+  const drawer = document.getElementById("jobDetailDrawer");
+  if (!drawer) {
+    return;
+  }
+  drawer.hidden = !open;
+  document.body.style.overflow = open ? "hidden" : "";
+}
+
+function renderJobDetailDrawerLoading(sourceJobId) {
+  const container = document.getElementById("jobDetailContent");
+  document.getElementById("jobDetailTitle").textContent = "正在获取职位详情";
+  container.innerHTML = `
+    <div class="detail-loading">
+      <span class="status-badge status-warn">加载中</span>
+      <strong>正在获取职位详情</strong>
+      <span class="hint-text">${escapeHtml(sourceJobId)}</span>
+    </div>
+  `;
+  document.getElementById("jobDetailMeta").innerHTML = "";
+}
+
+function renderJobDetailDrawerError(message) {
+  const container = document.getElementById("jobDetailContent");
+  document.getElementById("jobDetailTitle").textContent = "职位详情获取失败";
+  container.innerHTML = `<div class="empty">${escapeHtml(message || "职位详情获取失败。")}</div>`;
+  document.getElementById("jobDetailMeta").innerHTML = "";
+}
+
+function renderJobDetailDrawer(payload) {
+  const job = payload?.job || {};
+  const detailPayload = job.detail_payload || {};
+  const jobSection = detailPayload.job || {};
+  const companySection = detailPayload.company || {};
+  const bossSection = detailPayload.boss || {};
+  const rawPayload = detailPayload.raw_payload || {};
+  const cachedBadge = payload.cached
+    ? '<span class="status-badge status-ok">已缓存</span>'
+    : '<span class="status-badge status-warn">已采集</span>';
+  const detailText = job.detail_text || jobSection.description || "暂无职位详情。";
+  document.getElementById("jobDetailTitle").textContent = job.title || jobSection.title || "查看职位详情";
+
+  document.getElementById("jobDetailMeta").innerHTML = [
+    cachedBadge,
+    `<span>${escapeHtml(job.source_job_id || job.job_id || "-")}</span>`,
+    `<span>${escapeHtml(formatDate(job.detail_fetched_at))}</span>`,
+  ].join("");
+
+  document.getElementById("jobDetailContent").innerHTML = `
+    <div class="detail-summary">
+      <div>
+        <span class="eyebrow">职位详情</span>
+        <h3>${escapeHtml(job.title || jobSection.title || "-")}</h3>
+        <p>${escapeHtml(job.company || companySection.name || "-")}</p>
+      </div>
+      <div class="detail-summary-grid">
+        <div><strong>城市</strong><span>${escapeHtml(job.city || jobSection.city || "-")}</span></div>
+        <div><strong>薪资</strong><span>${escapeHtml(job.salary || jobSection.salary || "-")}</span></div>
+        <div><strong>经验</strong><span>${escapeHtml(job.experience || jobSection.experience || "-")}</span></div>
+        <div><strong>学历</strong><span>${escapeHtml(jobSection.degree || "-")}</span></div>
+        <div><strong>地址</strong><span>${escapeHtml(jobSection.address || "-")}</span></div>
+        <div><strong>状态</strong><span>${escapeHtml(jobSection.status || "-")}</span></div>
+      </div>
+    </div>
+
+    <div class="detail-panel">
+      <h4>职位描述</h4>
+      <pre class="detail-pre">${escapeHtml(detailText)}</pre>
+    </div>
+
+    <div class="detail-panel">
+      <h4>公司信息</h4>
+      <div class="detail-list">
+        <div><strong>公司</strong><span>${escapeHtml(companySection.name || job.company || "-")}</span></div>
+        <div><strong>阶段</strong><span>${escapeHtml(companySection.stage || "-")}</span></div>
+        <div><strong>规模</strong><span>${escapeHtml(companySection.scale || "-")}</span></div>
+        <div><strong>行业</strong><span>${escapeHtml(companySection.industry || "-")}</span></div>
+        <div><strong>简介</strong><span>${escapeHtml(companySection.intro || "-")}</span></div>
+      </div>
+    </div>
+
+    <div class="detail-panel">
+      <h4>BOSS 信息</h4>
+      <div class="detail-list">
+        <div><strong>姓名</strong><span>${escapeHtml(bossSection.name || "-")}</span></div>
+        <div><strong>职位</strong><span>${escapeHtml(bossSection.title || "-")}</span></div>
+      </div>
+    </div>
+
+    <details class="detail-panel">
+      <summary>原始数据</summary>
+      <pre class="detail-pre">${formatJson(rawPayload)}</pre>
+    </details>
+  `;
+}
+
 async function loadAuthStatus() {
   const status = await fetchJson("/api/system/auth");
   state.auth = status;
@@ -500,7 +620,14 @@ function renderDashboardTasks(items) {
 }
 
 async function loadJobs() {
-  const items = await fetchJson("/api/jobs");
+  state.jobs = await fetchJson("/api/jobs");
+  renderJobsTable();
+  return state.jobs;
+}
+
+function renderJobsTable() {
+  const items = getSortedFilteredJobs();
+  document.getElementById("jobsCount").textContent = `共 ${items.length} 条（全部 ${state.jobs.length} 条）`;
   renderTable(
     "jobsTable",
     [
@@ -511,12 +638,11 @@ async function loadJobs() {
       { label: "经验", render: (row) => escapeHtml(row.experience || "-") },
       { label: "搜索次数", render: (row) => escapeHtml(String(row.search_count ?? 0)) },
       { label: "最近搜索", render: (row) => escapeHtml(formatDate(row.last_searched_at || row.last_seen_at)) },
+      { label: "详情状态", render: (row) => renderDetailStateBadge(row.detail_fetched_at) },
+      { label: "详情", render: (row) => renderJobDetailAction(row) },
       {
-        label: "跳转",
-        render: (row) =>
-          row.job_url
-            ? `<a href="${escapeHtml(row.job_url)}" target="_blank" rel="noreferrer">查看职位</a>`
-            : "-",
+        label: "链接",
+        render: (row) => renderJobLinkButton(row),
       },
       {
         label: "状态",
@@ -525,7 +651,112 @@ async function loadJobs() {
     ],
     items,
   );
+}
+
+function getSortedFilteredJobs() {
+  let items = [...state.jobs];
+
+  // filter
+  const matchStatus = document.getElementById("jobsMatchStatusFilter")?.value || "";
+  if (matchStatus) {
+    items = items.filter((row) => row.match_status === matchStatus);
+  }
+  const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
+  if (greeted === "true") {
+    items = items.filter((row) => row.greeted);
+  } else if (greeted === "false") {
+    items = items.filter((row) => !row.greeted);
+  }
+  const cityFilter = (document.getElementById("jobsCityFilter")?.value || "").trim().toLowerCase();
+  if (cityFilter) {
+    items = items.filter((row) => (row.city || "").toLowerCase().includes(cityFilter));
+  }
+  const keyword = (document.getElementById("jobsKeywordFilter")?.value || "").trim().toLowerCase();
+  if (keyword) {
+    items = items.filter(
+      (row) =>
+        (row.title || "").toLowerCase().includes(keyword) ||
+        (row.company || "").toLowerCase().includes(keyword),
+    );
+  }
+
+  // sort
+  const sortBy = document.getElementById("jobsSortSelect")?.value || "last_searched_at_desc";
+  const [field, dir] = sortBy.split(/_(?=[^_]*$)/);
+  const direction = dir === "asc" ? 1 : -1;
+  items.sort((a, b) => {
+    let va, vb;
+    switch (field) {
+      case "last_searched_at":
+        va = a.last_searched_at || a.last_seen_at || "";
+        vb = b.last_searched_at || b.last_seen_at || "";
+        break;
+      case "company":
+        va = (a.company || "").toLowerCase();
+        vb = (b.company || "").toLowerCase();
+        break;
+      case "title":
+        va = (a.title || "").toLowerCase();
+        vb = (b.title || "").toLowerCase();
+        break;
+      case "search_count":
+        va = a.search_count ?? 0;
+        vb = b.search_count ?? 0;
+        break;
+      default:
+        return 0;
+    }
+    if (va < vb) return -1 * direction;
+    if (va > vb) return 1 * direction;
+    return 0;
+  });
+
   return items;
+}
+
+function renderJobLinkButton(row) {
+  if (!row.job_url) return "-";
+  return `<button type="button" class="button-link" data-copy-link="${escapeHtml(row.job_url)}" title="复制职位链接">📋 复制链接</button>`;
+}
+
+async function copyJobLink(url, button) {
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(url);
+    ok = true;
+  } catch {
+    // Fallback for browsers that block clipboard API
+  }
+
+  if (!ok) {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = url;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      ok = true;
+    } catch {
+      // Both methods failed
+    }
+  }
+
+  if (ok) {
+    if (button) {
+      const original = button.textContent;
+      button.textContent = "✅ 已复制!";
+      button.disabled = true;
+      setTimeout(() => {
+        button.textContent = original;
+        button.disabled = false;
+      }, 2000);
+    }
+  } else {
+    showError("复制失败，请手动复制链接");
+  }
 }
 
 function renderLatestSearchMeta(task, rows) {
@@ -568,17 +799,51 @@ async function loadCurrentSearchResults() {
       { label: "薪资", render: (row) => escapeHtml(row.salary || "-") },
       { label: "经验", render: (row) => escapeHtml(row.experience || "-") },
       { label: "采集时间", render: (row) => escapeHtml(formatDate(row.collected_at || row.updated_at)) },
+      { label: "详情", render: (row) => renderJobDetailAction(row) },
       {
-        label: "跳转",
-        render: (row) =>
-          row.job_url
-            ? `<a href="${escapeHtml(row.job_url)}" target="_blank" rel="noreferrer">查看职位</a>`
-            : "-",
+        label: "链接",
+        render: (row) => renderJobLinkButton(row),
       },
     ],
     rows,
   );
   return rows;
+}
+
+async function openJobDetail(sourceJobId) {
+  if (!sourceJobId) {
+    return;
+  }
+  clearError();
+  state.jobDetailSourceJobId = sourceJobId;
+  state.jobDetailLoading = true;
+  setJobDetailDrawerOpen(true);
+  renderJobDetailDrawerLoading(sourceJobId);
+  try {
+    const payload = await fetchJson(`/api/jobs/${encodeURIComponent(sourceJobId)}/detail`);
+    state.jobDetail = payload;
+    renderJobDetailDrawer(payload);
+    if (payload.cached) {
+      showNotice("职位详情已从缓存读取", 5000);
+    } else {
+      showNotice("职位详情已从 BOSS 采集并保存", 5000);
+    }
+    loadJobs().catch((error) => showError(error.message || "职位列表刷新失败"));
+  } catch (error) {
+    renderJobDetailDrawerError(error.message || "职位详情获取失败");
+    if (error.status && error.status >= 500) {
+      showError(error.message || "职位详情获取失败");
+    }
+  } finally {
+    state.jobDetailLoading = false;
+  }
+}
+
+function closeJobDetailDrawer() {
+  state.jobDetail = null;
+  state.jobDetailLoading = false;
+  state.jobDetailSourceJobId = null;
+  setJobDetailDrawerOpen(false);
 }
 
 async function loadConversations() {
@@ -802,6 +1067,28 @@ function bindEvents() {
     button.addEventListener("click", () => navigateTo(button.dataset.viewTarget));
   });
 
+  document.addEventListener("click", (event) => {
+    const detailButton = event.target.closest("[data-job-detail]");
+    if (detailButton) {
+      event.preventDefault();
+      openJobDetail(detailButton.dataset.jobDetail).catch((error) => showError(error.message || "职位详情获取失败"));
+      return;
+    }
+
+    const copyButton = event.target.closest("[data-copy-link]");
+    if (copyButton) {
+      event.preventDefault();
+      copyJobLink(copyButton.dataset.copyLink, copyButton);
+      return;
+    }
+
+    const closeButton = event.target.closest("[data-close-job-detail]");
+    if (closeButton) {
+      event.preventDefault();
+      closeJobDetailDrawer();
+    }
+  });
+
   window.addEventListener("hashchange", () => {
     setActiveView(getViewFromHash());
     loadView(state.activeView).catch((error) => showError(error.message || "页面加载失败"));
@@ -831,6 +1118,13 @@ function bindEvents() {
   document
     .getElementById("refreshJobsButton")
     .addEventListener("click", () => loadJobs().catch((error) => showError(error.message)));
+
+  ["jobsSortSelect", "jobsMatchStatusFilter", "jobsGreetedFilter"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", renderJobsTable);
+  });
+  ["jobsCityFilter", "jobsKeywordFilter"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", renderJobsTable);
+  });
   document
     .getElementById("greetButton")
     .addEventListener("click", () => triggerGreeting().catch((error) => showError(error.message)));
@@ -846,6 +1140,11 @@ function bindEvents() {
   document
     .getElementById("refreshLogsButton")
     .addEventListener("click", () => loadLogs().catch((error) => showError(error.message)));
+  document.getElementById("jobDetailDrawer").addEventListener("click", (event) => {
+    if (event.target?.dataset?.close === "true") {
+      closeJobDetailDrawer();
+    }
+  });
 }
 
 bindSearchFormPersistence();

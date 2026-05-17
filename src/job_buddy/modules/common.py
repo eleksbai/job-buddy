@@ -38,6 +38,9 @@ class DocumentModel(BaseModel):
         return cls.model_validate(data)
 
 
+TASK_TIMEOUT = 300  # 5 minutes
+
+
 class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"

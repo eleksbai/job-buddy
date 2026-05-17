@@ -165,7 +165,7 @@
           <div class="panel-header">
             <div>
               <h2>职位板块</h2>
-              <p>展示去重后的全部职位，并记录搜索次数和最近搜索时间。</p>
+              <p>展示去重后的全部职位，支持排序和筛选。</p>
             </div>
             <div class="panel-actions">
               <button id="refreshJobsButton" class="button-secondary">刷新职位</button>
@@ -175,7 +175,47 @@
           <div class="panel-card">
             <div class="panel-card-header">
               <h3>全部职位</h3>
-              <span class="hint-text">默认展示最近更新的去重职位记录</span>
+              <span id="jobsCount" class="hint-text"></span>
+            </div>
+            <div class="form-grid" style="margin-bottom:1rem">
+              <label>
+                排序
+                <select id="jobsSortSelect">
+                  <option value="last_searched_at_desc">最近搜索</option>
+                  <option value="last_searched_at_asc">最早搜索</option>
+                  <option value="company_asc">公司名 A-Z</option>
+                  <option value="company_desc">公司名 Z-A</option>
+                  <option value="title_asc">职位名 A-Z</option>
+                  <option value="title_desc">职位名 Z-A</option>
+                  <option value="search_count_desc">搜索次数 高-低</option>
+                  <option value="search_count_asc">搜索次数 低-高</option>
+                </select>
+              </label>
+              <label>
+                匹配状态
+                <select id="jobsMatchStatusFilter">
+                  <option value="">全部</option>
+                  <option value="new">new</option>
+                  <option value="matched">matched</option>
+                  <option value="contacted">contacted</option>
+                </select>
+              </label>
+              <label>
+                是否已打招呼
+                <select id="jobsGreetedFilter">
+                  <option value="">全部</option>
+                  <option value="true">已打招呼</option>
+                  <option value="false">未打招呼</option>
+                </select>
+              </label>
+              <label>
+                城市
+                <input id="jobsCityFilter" type="text" placeholder="输入城市筛选" />
+              </label>
+              <label>
+                公司/职位
+                <input id="jobsKeywordFilter" type="text" placeholder="搜索公司或职位名" />
+              </label>
             </div>
             <div id="jobsTable"></div>
           </div>
@@ -273,6 +313,21 @@
           </div>
         </section>
       </main>
+
+      <div id="jobDetailDrawer" class="detail-drawer" hidden>
+        <button type="button" class="detail-drawer-backdrop" data-close="true" aria-label="关闭详情"></button>
+        <aside class="detail-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="jobDetailTitle">
+          <div class="panel-header detail-drawer-header">
+            <div>
+              <span class="eyebrow">职位详情</span>
+              <h2 id="jobDetailTitle">查看职位详情</h2>
+              <div id="jobDetailMeta" class="detail-meta"></div>
+            </div>
+            <button type="button" class="button-secondary" data-close-job-detail="true">关闭</button>
+          </div>
+          <div id="jobDetailContent" class="detail-drawer-body"></div>
+        </aside>
+      </div>
     </div>
     <script src="/assets/app.js" defer></script>
   </body>

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -6,7 +7,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from job_buddy.core.boss import map_boss_operation_error, BossClientProtocol
-from job_buddy.modules.common import BaseRepository, DocumentModel, TaskStatus, TaskTriggerResponse, TimestampedSchema, utc_now
+from job_buddy.modules.common import (
+    TASK_TIMEOUT,
+    BaseRepository,
+    DocumentModel,
+    TaskStatus,
+    TaskTriggerResponse,
+    TimestampedSchema,
+    utc_now,
+)
 from job_buddy.modules.jobs import GreetingTask, GreetingTaskRepository, JobLeadRepository
 from job_buddy.modules.targets import TargetProfile
 
@@ -89,6 +98,42 @@ class GreetingService:
             )
         )
 
+        try:
+            await asyncio.wait_for(
+                self._do_greet(task, target, job_ids, greeting_message, limit),
+                timeout=TASK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            current = await self.tasks.get(task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            failed = await self.tasks.update(
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return failed
+
+        updated = await self.tasks.get(task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def _do_greet(
+        self,
+        task: GreetingTask,
+        target: TargetProfile | None,
+        job_ids: list[str],
+        greeting_message: str | None,
+        limit: int,
+    ) -> None:
+        await self._update_step(task.id, "fetch_jobs")
         if job_ids:
             jobs = [job for job_id in job_ids if (job := await self.jobs.get(job_id)) is not None]
         else:
@@ -98,7 +143,8 @@ class GreetingService:
         failed_count = 0
         default_message = greeting_message or (target.greeting_template if target else None)
 
-        for job in jobs:
+        for idx, job in enumerate(jobs):
+            await self._update_step(task.id, f"greet_job_{idx + 1}_of_{len(jobs)}")
             try:
                 try:
                     response = await self.boss_client.greet_job(
@@ -142,7 +188,7 @@ class GreetingService:
         elif failed_count and not success_count:
             final_status = TaskStatus.FAILED
 
-        updated = await self.tasks.update(
+        await self.tasks.update(
             task.id,
             {
                 "status": final_status,
@@ -150,9 +196,9 @@ class GreetingService:
                 "finished_at": utc_now(),
             },
         )
-        if updated is None:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
-        return updated
+
+    async def _update_step(self, task_id: str, step: str) -> None:
+        await self.tasks.update(task_id, {"result_summary": {"step": step}})
 
     async def get_task_detail(self, task_id: str) -> tuple[GreetingTask, list[GreetingRecord]]:
         task = await self.tasks.get(task_id)

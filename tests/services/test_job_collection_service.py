@@ -22,6 +22,8 @@ class FakeBossClient:
         self.health_message = "已登录"
         self.health_last_error = None
         self.search_error: Exception | None = None
+        self.detail_error: Exception | None = None
+        self.detail_payload: dict | None = None
         self.payloads = [
             [
                 {
@@ -83,6 +85,121 @@ class FakeBossClient:
             },
         )
 
+    async def detail(self, request) -> dict:
+        _ = request
+        if self.detail_error is not None:
+            raise self.detail_error
+        return self.detail_payload or {
+            "engine": "patchright",
+            "browser": "Patchright Chromium",
+            "request_url": "https://www.zhipin.com/wapi/zpgeek/job/detail.json?securityId=sec-1",
+            "requested_at": "2026-05-16T13:02:20+00:00",
+            "response_received_at": "2026-05-16T13:02:21+00:00",
+            "request_payload": {
+                "job_id": "job-1",
+                "security_id": "sec-1",
+                "job_url": "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
+                "title": "Python Backend Engineer",
+                "company": "Demo Tech",
+            },
+            "response_payload": {
+                "code": 0,
+                "zpData": {
+                    "jobInfo": {
+                        "encryptId": "job-1",
+                        "securityId": "sec-1",
+                        "jobName": "Python Backend Engineer",
+                        "salaryDesc": "20-30K",
+                        "experienceName": "3-5年",
+                        "degreeName": "本科",
+                        "locationName": "上海",
+                        "address": "Demo Address",
+                        "showSkills": ["Python", "FastAPI"],
+                        "postDescription": "Build APIs",
+                        "jobStatusDesc": "在招",
+                    },
+                    "brandComInfo": {
+                        "brandName": "Demo Tech",
+                        "stageName": "A轮",
+                        "scaleName": "100-499人",
+                        "industryName": "互联网",
+                        "introduce": "Demo intro",
+                    },
+                    "bossInfo": {
+                        "name": "Alice",
+                        "title": "招聘经理",
+                    },
+                },
+            },
+            "job_id": "job-1",
+            "security_id": "sec-1",
+            "job_url": "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
+            "detail_payload": {
+                "job": {
+                    "job_id": "job-1",
+                    "security_id": "sec-1",
+                    "job_url": "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
+                    "title": "Python Backend Engineer",
+                    "salary": "20-30K",
+                    "experience": "3-5年",
+                    "degree": "本科",
+                    "city": "上海",
+                    "address": "Demo Address",
+                    "skills": ["Python", "FastAPI"],
+                    "description": "Build APIs",
+                    "status": "在招",
+                },
+                "company": {
+                    "name": "Demo Tech",
+                    "stage": "A轮",
+                    "scale": "100-499人",
+                    "industry": "互联网",
+                    "intro": "Demo intro",
+                },
+                "boss": {"name": "Alice", "title": "招聘经理"},
+                "raw_payload": {
+                    "code": 0,
+                    "zpData": {
+                        "jobInfo": {
+                            "encryptId": "job-1",
+                            "securityId": "sec-1",
+                            "jobName": "Python Backend Engineer",
+                            "salaryDesc": "20-30K",
+                            "experienceName": "3-5年",
+                            "degreeName": "本科",
+                            "locationName": "上海",
+                            "address": "Demo Address",
+                            "showSkills": ["Python", "FastAPI"],
+                            "postDescription": "Build APIs",
+                            "jobStatusDesc": "在招",
+                        },
+                        "brandComInfo": {
+                            "brandName": "Demo Tech",
+                            "stageName": "A轮",
+                            "scaleName": "100-499人",
+                            "industryName": "互联网",
+                            "introduce": "Demo intro",
+                        },
+                        "bossInfo": {
+                            "name": "Alice",
+                            "title": "招聘经理",
+                        },
+                    },
+                },
+            },
+            "detail_text": "职位名称：Python Backend Engineer\n公司：Demo Tech",
+            "detail_raw_payload": {
+                "code": 0,
+                "zpData": {
+                    "jobInfo": {
+                        "encryptId": "job-1",
+                        "securityId": "sec-1",
+                        "jobName": "Python Backend Engineer",
+                    }
+                },
+            },
+        }
+
     async def healthcheck(self) -> dict:
         if self.logged_in:
             return {
@@ -111,6 +228,9 @@ class FakeTaskRepository:
         task.id = f"task-{self.counter}"
         self.items[task.id] = task
         return task
+
+    async def get(self, entity_id: str) -> GreetingTask | None:
+        return self.items.get(entity_id)
 
     async def update(self, task_id: str, updates: dict) -> GreetingTask | None:
         task = self.items.get(task_id)
@@ -245,3 +365,33 @@ def test_search_jobs_maps_auth_errors_from_runtime():
     assert len(records.items) == 0
     assert len(traces.items) == 0
     assert len(jobs.items) == 0
+
+
+def test_get_job_detail_returns_cached_detail_without_refetching():
+    service, jobs, records, traces = build_service()
+    asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
+    job = jobs.items["job-1"]
+    job.detail_payload = {"job": {"title": "Python Backend Engineer"}}
+    job.detail_text = "职位名称：Python Backend Engineer"
+
+    result, cached = asyncio.run(service.get_job_detail("job-1"))
+
+    assert cached is True
+    assert result.detail_text == "职位名称：Python Backend Engineer"
+    assert result.detail_payload["job"]["title"] == "Python Backend Engineer"
+    assert len(records.items) == 1
+    assert len(traces.items) == 1
+
+
+def test_get_job_detail_fetches_and_persists_detail_when_missing():
+    service, jobs, records, traces = build_service()
+    asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
+
+    result, cached = asyncio.run(service.get_job_detail("job-1"))
+
+    assert cached is False
+    assert result.detail_text == "职位名称：Python Backend Engineer\n公司：Demo Tech"
+    assert result.detail_payload["job"]["title"] == "Python Backend Engineer"
+    assert result.detail_source_url == "https://www.zhipin.com/wapi/zpgeek/job/detail.json?securityId=sec-1"
+    assert result.detail_fetched_at is not None
+    assert jobs.items["job-1"].detail_payload["company"]["name"] == "Demo Tech"

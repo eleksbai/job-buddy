@@ -2,7 +2,7 @@ import asyncio
 import json
 
 from job_buddy.core.boss import BossOperationError
-from job_buddy.core.engines.models import LoginRequest, LoginResult, SearchJobItem, SearchResult
+from job_buddy.core.engines.models import JobDetailRequest, LoginRequest, LoginResult, SearchJobItem, SearchResult
 from job_buddy.core.engines.runtime import EngineRuntimeManager
 from job_buddy.core.config import Settings
 
@@ -13,6 +13,7 @@ class FakeEngine:
     def __init__(self) -> None:
         self.login_calls = 0
         self.search_calls = 0
+        self.detail_calls = 0
 
     async def login(self, request: LoginRequest) -> LoginResult:
         _ = request
@@ -29,6 +30,16 @@ class FakeEngine:
         self.search_calls += 1
         return SearchResult(items=[SearchJobItem(job_id=request.query["query"], title="demo", company="demo")])
 
+    async def detail(self, request) -> dict:
+        self.detail_calls += 1
+        return {
+            "job_id": request.job_id,
+            "security_id": request.security_id,
+            "job_url": request.job_url,
+            "detail_payload": {"job": {"title": "demo"}},
+            "detail_text": "职位名称：demo",
+        }
+
     async def healthcheck(self) -> dict:
         return {"status": "ok", "provider": self.name, "logged_in": True}
 
@@ -36,14 +47,14 @@ class FakeEngine:
         return None
 
 
-def test_runtime_uses_bound_engine_for_login_and_search(tmp_path):
+def test_runtime_uses_bound_engine_for_login_search_and_detail(tmp_path):
     config_path = tmp_path / "collector_engines.json"
     config_path.write_text(
         json.dumps(
             {
                 "engines": {"patchright": {"enabled": True, "params": {}}},
-                "bindings": {"login": "patchright", "search": "patchright"},
-                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}},
+                "bindings": {"login": "patchright", "search": "patchright", "detail": "patchright"},
+                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}, "detail": {"max_retries": 0}},
             }
         ),
         encoding="utf-8",
@@ -54,10 +65,20 @@ def test_runtime_uses_bound_engine_for_login_and_search(tmp_path):
 
     login_result = asyncio.run(runtime.login())
     search_result = asyncio.run(runtime.search_jobs({"query": "python"}))
+    detail_result = asyncio.run(
+        runtime.detail(
+            JobDetailRequest(
+                job_id="python",
+                security_id="sec-1",
+                job_url="https://www.zhipin.com/job_detail/python.html?securityId=sec-1",
+            )
+        )
+    )
 
     assert login_result.logged_in is True
     assert fake_engine.login_calls == 1
     assert fake_engine.search_calls == 1
+    assert fake_engine.detail_calls == 1
     assert search_result == [
         {
             "job_id": "python",
@@ -71,6 +92,8 @@ def test_runtime_uses_bound_engine_for_login_and_search(tmp_path):
             "raw_payload": {},
         }
     ]
+    assert detail_result["job_id"] == "python"
+    assert detail_result["security_id"] == "sec-1"
 
 
 def test_runtime_marks_state_after_token_invalid_failure(tmp_path):
@@ -80,7 +103,7 @@ def test_runtime_marks_state_after_token_invalid_failure(tmp_path):
             {
                 "engines": {"patchright": {"enabled": True, "params": {}}},
                 "bindings": {"login": "patchright", "search": "patchright"},
-                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}},
+                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}, "detail": {"max_retries": 0}},
             }
         ),
         encoding="utf-8",
@@ -124,4 +147,5 @@ def test_runtime_defaults_login_and_search_to_patchright_when_config_missing(tmp
     assert login_result.logged_in is True
     assert login_engine.login_calls == 1
     assert login_engine.search_calls == 1
+    assert login_engine.detail_calls == 0
     assert search_result[0]["job_id"] == "python"

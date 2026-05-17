@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -15,11 +15,14 @@ def register_web(app: FastAPI) -> None:
     async def index() -> FileResponse:
         return FileResponse(STATIC_ROOT / "index.html")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str) -> FileResponse:
-        if full_path.startswith(("api", "mcp", "docs", "openapi.json")):
-            return FileResponse(STATIC_ROOT / "index.html", status_code=404)
-        asset_candidate = STATIC_ROOT / full_path
-        if asset_candidate.is_file():
-            return FileResponse(asset_candidate)
-        return FileResponse(STATIC_ROOT / "index.html")
+    @app.middleware("http")
+    async def spa_fallback(request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 404:
+            path = request.url.path
+            if not path.startswith(("/api/", "/docs", "/openapi.json")):
+                asset_candidate = STATIC_ROOT / path.lstrip("/")
+                if asset_candidate.is_file():
+                    return FileResponse(asset_candidate)
+                return FileResponse(STATIC_ROOT / "index.html")
+        return response

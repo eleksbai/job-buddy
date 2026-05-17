@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 from job_buddy.core.boss import BossOperationError
 from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import LoginRequest, SearchRequest
+from job_buddy.core.engines.models import JobDetailRequest, LoginRequest, SearchRequest
 from job_buddy.core.engines.patchright import PatchrightEngine
 
 
@@ -376,6 +376,63 @@ def test_patchright_search_filters_by_welfare(monkeypatch):
     result = asyncio.run(engine.search(SearchRequest(query={"query": "python", "welfare": "双休,五险一金"})))
 
     assert [item.job_id for item in result.items] == ["job-1"]
+
+
+def test_patchright_detail_fetches_job_detail(monkeypatch):
+    page = FakePage()
+    page.fetch_payload = {
+        "code": 0,
+        "zpData": {
+            "jobInfo": {
+                "encryptId": "job-1",
+                "securityId": "sec-1",
+                "jobName": "Python Backend Engineer",
+                "salaryDesc": "20-30K",
+                "experienceName": "3-5年",
+                "degreeName": "本科",
+                "locationName": "上海",
+                "address": "Demo Address",
+                "showSkills": ["Python", "FastAPI"],
+                "postDescription": "Build APIs",
+                "jobStatusDesc": "在招",
+            },
+            "brandComInfo": {
+                "brandName": "Demo Tech",
+                "stageName": "A轮",
+                "scaleName": "100-499人",
+                "industryName": "互联网",
+                "introduce": "Demo intro",
+            },
+            "bossInfo": {"name": "Alice", "title": "招聘经理"},
+        },
+    }
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+
+    engine = PatchrightEngine(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(
+        engine.detail(
+            JobDetailRequest(
+                job_id="job-1",
+                security_id="sec-1",
+                job_url="https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
+                title="Python Backend Engineer",
+                company="Demo Tech",
+            )
+        )
+    )
+
+    assert result["job"]["title"] == "Python Backend Engineer"
+    assert result["job"]["skills"] == ["Python", "FastAPI"]
+    assert result["detail_text"].startswith("职位名称：Python Backend Engineer")
+    assert page.last_fetch_url is not None
+    parsed = urlparse(page.last_fetch_url)
+    params = parse_qs(parsed.query)
+    assert params["securityId"] == ["sec-1"]
 
 
 def _async_result(value):

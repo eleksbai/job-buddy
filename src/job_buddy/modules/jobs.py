@@ -1,15 +1,23 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from job_buddy.core.boss import map_boss_operation_error, raise_for_boss_healthcheck
-from job_buddy.core.engines.models import SearchRequest
+from job_buddy.core.engines.models import JobDetailRequest, SearchRequest
 from job_buddy.core.engines.runtime import EngineRuntimeManager
-from job_buddy.modules.common import BaseRepository, DocumentModel, TaskStatus, TimestampedSchema, utc_now
+from job_buddy.modules.common import (
+    TASK_TIMEOUT,
+    BaseRepository,
+    DocumentModel,
+    TaskStatus,
+    TimestampedSchema,
+    utc_now,
+)
 from job_buddy.modules.targets import TargetProfile
 
 
@@ -28,6 +36,10 @@ class JobLead(DocumentModel):
     job_url: str | None = None
     match_status: str = "new"
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+    detail_payload: dict[str, Any] = Field(default_factory=dict)
+    detail_text: str | None = None
+    detail_source_url: str | None = None
+    detail_fetched_at: datetime | None = None
     last_seen_at: datetime = Field(default_factory=datetime.utcnow)
     search_count: int = 1
     last_searched_at: datetime = Field(default_factory=utc_now)
@@ -47,9 +59,43 @@ class JobLeadRead(TimestampedSchema):
     match_status: str
     search_count: int
     last_searched_at: datetime | None = None
+    detail_fetched_at: datetime | None = None
+    detail_source_url: str | None = None
     last_seen_at: datetime
     greeted: bool
     raw_payload: dict[str, Any]
+    detail_payload: dict[str, Any] = Field(default_factory=dict)
+    detail_text: str | None = None
+
+
+class JobLeadDetailRead(JobLeadRead):
+    pass
+
+
+class JobDetailResponse(BaseModel):
+    cached: bool
+    job: JobLeadDetailRead
+
+
+class SearchJobsRequest(BaseModel):
+    query: str
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    education: str | None = None
+    scale: str | None = None
+    industry: str | None = None
+    stage: str | None = None
+    job_type: str | None = None
+    page: int = 1
+
+
+class SearchJobsResponse(BaseModel):
+    success: bool
+    count: int
+    items: list[dict[str, Any]]
+    error: str | None = None
+    code: str | None = None
 
 
 class JobCollectionRecord(DocumentModel):
@@ -128,7 +174,8 @@ class JobLeadRepository(BaseRepository[JobLead]):
             filters["match_status"] = match_status
         if greeted is not None:
             filters["greeted"] = greeted
-        return await self.list(filters=filters, limit=limit)
+        cursor = self.collection.find(filters).sort([("last_searched_at", -1), ("_id", -1)]).limit(limit)
+        return [self.model_cls.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
     async def get_by_source_job_id(self, source_job_id: str) -> JobLead | None:
         payload = await self.collection.find_one({"source_job_id": source_job_id})
@@ -193,6 +240,64 @@ class JobCollectionService:
             limit=limit,
         )
 
+    async def get_job_detail(self, source_job_id: str) -> tuple[JobLead, bool]:
+        job = await self.jobs.get_by_source_job_id(source_job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+        if job.detail_payload and job.detail_text:
+            return job, True
+
+        try:
+            detail_result = await self.runtime.detail(
+                JobDetailRequest(
+                    job_id=job.source_job_id,
+                    security_id=job.security_id,
+                    job_url=job.job_url,
+                    title=job.title,
+                    company=job.company,
+                )
+            )
+        except Exception as exc:
+            raise map_boss_operation_error(exc) from exc
+
+        updated = await self.jobs.update(
+            job.id,
+            {
+                "title": str(detail_result.get("job", {}).get("title") or job.title),
+                "company": str(detail_result.get("company", {}).get("name") or job.company),
+                "city": detail_result.get("job", {}).get("city") or job.city,
+                "salary": detail_result.get("job", {}).get("salary") or job.salary,
+                "experience": detail_result.get("job", {}).get("experience") or job.experience,
+                "job_url": detail_result.get("job_url") or job.job_url,
+                "detail_payload": dict(detail_result.get("detail_payload") or {}),
+                "detail_text": str(detail_result.get("detail_text") or ""),
+                "detail_source_url": detail_result.get("request_url") or detail_result.get("job_url") or job.job_url,
+                "detail_fetched_at": utc_now(),
+            },
+        )
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job update failed.")
+        return updated, False
+
+    async def search_jobs_readonly(self, query: dict[str, Any]) -> list[dict[str, Any]]:
+        """Synchronous read-only search. No persistence."""
+        health = await self.runtime.healthcheck()
+        raise_for_boss_healthcheck(health)
+        search_result = await self.runtime.search(SearchRequest(query=query))
+        return [
+            {
+                "job_id": item.job_id,
+                "title": item.title,
+                "company": item.company,
+                "city": item.city,
+                "salary": item.salary,
+                "experience": item.experience,
+                "job_url": item.job_url,
+            }
+            for item in search_result.items
+        ]
+
     async def search_jobs(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
         task = await self.tasks.create(
             GreetingTask(
@@ -204,111 +309,32 @@ class JobCollectionService:
             )
         )
         try:
-            try:
-                health = await self.runtime.healthcheck()
-                raise_for_boss_healthcheck(health)
-                search_result = await self.runtime.search(SearchRequest(query=query))
-            except Exception as exc:
-                raise map_boss_operation_error(exc) from exc
-            trace_id: str | None = None
-            if search_result.trace:
-                requested_at = search_result.trace.get("requested_at")
-                response_received_at = search_result.trace.get("response_received_at")
-                trace = await self.traces.create(
-                    JobCollectionTrace(
-                        task_id=task.id,
-                        target_profile_id=target.id if target else None,
-                        engine=search_result.trace.get("engine"),
-                        browser=search_result.trace.get("browser"),
-                        request_url=search_result.trace.get("request_url"),
-                        referer=search_result.trace.get("referer"),
-                        requested_at=datetime.fromisoformat(requested_at) if isinstance(requested_at, str) else None,
-                        response_received_at=(
-                            datetime.fromisoformat(response_received_at) if isinstance(response_received_at, str) else None
-                        ),
-                        request_payload=dict(search_result.trace.get("request_payload") or {}),
-                        request_params=dict(search_result.trace.get("request_params") or {}),
-                        response_payload=dict(search_result.trace.get("response_payload") or {}),
-                        result_count=int(search_result.trace.get("result_count") or 0),
-                    )
-                )
-                trace_id = trace.id
-            dedup_created = 0
-            dedup_updated = 0
-            collected = 0
-            for item in search_result.items:
-                await self.records.create(
-                    JobCollectionRecord(
-                        task_id=task.id,
-                        trace_id=trace_id,
-                        target_profile_id=target.id if target else None,
-                        source_job_id=item.job_id,
-                        security_id=item.security_id,
-                        title=item.title,
-                        company=item.company,
-                        city=item.city,
-                        salary=item.salary,
-                        experience=item.experience,
-                        job_url=item.job_url,
-                        raw_payload=item.raw_payload,
-                    )
-                )
-                collected += 1
-
-                existing = await self.jobs.get_by_source_job_id(item.job_id)
-                if existing is None:
-                    await self.jobs.create(
-                        JobLead(
-                            source_job_id=item.job_id,
-                            security_id=item.security_id,
-                            title=item.title,
-                            company=item.company,
-                            city=item.city,
-                            salary=item.salary,
-                            experience=item.experience,
-                            job_url=item.job_url,
-                            match_status="matched" if target else "new",
-                            raw_payload=item.raw_payload,
-                            search_count=1,
-                            last_searched_at=utc_now(),
-                        )
-                    )
-                    dedup_created += 1
-                else:
-                    await self.jobs.update(
-                        existing.id,
-                        {
-                            "security_id": item.security_id,
-                            "title": item.title,
-                            "company": item.company,
-                            "city": item.city,
-                            "salary": item.salary,
-                            "experience": item.experience,
-                            "job_url": item.job_url,
-                            "raw_payload": item.raw_payload,
-                            "last_seen_at": utc_now(),
-                            "last_searched_at": utc_now(),
-                            "search_count": max(1, existing.search_count) + 1,
-                        },
-                    )
-                    dedup_updated += 1
-
-            updated = await self.tasks.update(
+            await asyncio.wait_for(
+                self._do_search(task, query, target),
+                timeout=TASK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            current = await self.tasks.get(task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            logger.error(
+                "search task timed out: task_id=%s step=%s query=%s",
+                task.id,
+                step,
+                query,
+            )
+            failed = await self.tasks.update(
                 task.id,
                 {
-                    "status": TaskStatus.SUCCEEDED,
-                    "result_summary": {
-                        "fetched": len(search_result.items),
-                        "collected": collected,
-                        "dedup_created": dedup_created,
-                        "dedup_updated": dedup_updated,
-                    },
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
                     "finished_at": utc_now(),
                 },
             )
-            if updated is None:
+            if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
-            return updated
+            return failed
         except Exception as exc:
             logger.exception(
                 "search task failed: task_id=%s target_profile_id=%s query=%s",
@@ -327,3 +353,120 @@ class JobCollectionService:
             if failed is None:
                 raise
             return failed
+
+        updated = await self.tasks.get(task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def _do_search(
+        self, task: GreetingTask, query: dict[str, Any], target: TargetProfile | None
+    ) -> None:
+        await self._update_step(task.id, "healthcheck")
+        try:
+            health = await self.runtime.healthcheck()
+            raise_for_boss_healthcheck(health)
+            search_result = await self.runtime.search(SearchRequest(query=query))
+        except Exception as exc:
+            raise map_boss_operation_error(exc) from exc
+
+        await self._update_step(task.id, "persist_results")
+        trace_id: str | None = None
+        if search_result.trace:
+            requested_at = search_result.trace.get("requested_at")
+            response_received_at = search_result.trace.get("response_received_at")
+            trace = await self.traces.create(
+                JobCollectionTrace(
+                    task_id=task.id,
+                    target_profile_id=target.id if target else None,
+                    engine=search_result.trace.get("engine"),
+                    browser=search_result.trace.get("browser"),
+                    request_url=search_result.trace.get("request_url"),
+                    referer=search_result.trace.get("referer"),
+                    requested_at=datetime.fromisoformat(requested_at) if isinstance(requested_at, str) else None,
+                    response_received_at=(
+                        datetime.fromisoformat(response_received_at) if isinstance(response_received_at, str) else None
+                    ),
+                    request_payload=dict(search_result.trace.get("request_payload") or {}),
+                    request_params=dict(search_result.trace.get("request_params") or {}),
+                    response_payload=dict(search_result.trace.get("response_payload") or {}),
+                    result_count=int(search_result.trace.get("result_count") or 0),
+                )
+            )
+            trace_id = trace.id
+        dedup_created = 0
+        dedup_updated = 0
+        collected = 0
+        for item in search_result.items:
+            await self.records.create(
+                JobCollectionRecord(
+                    task_id=task.id,
+                    trace_id=trace_id,
+                    target_profile_id=target.id if target else None,
+                    source_job_id=item.job_id,
+                    security_id=item.security_id,
+                    title=item.title,
+                    company=item.company,
+                    city=item.city,
+                    salary=item.salary,
+                    experience=item.experience,
+                    job_url=item.job_url,
+                    raw_payload=item.raw_payload,
+                )
+            )
+            collected += 1
+
+            existing = await self.jobs.get_by_source_job_id(item.job_id)
+            if existing is None:
+                await self.jobs.create(
+                    JobLead(
+                        source_job_id=item.job_id,
+                        security_id=item.security_id,
+                        title=item.title,
+                        company=item.company,
+                        city=item.city,
+                        salary=item.salary,
+                        experience=item.experience,
+                        job_url=item.job_url,
+                        match_status="matched" if target else "new",
+                        raw_payload=item.raw_payload,
+                        search_count=1,
+                        last_searched_at=utc_now(),
+                    )
+                )
+                dedup_created += 1
+            else:
+                await self.jobs.update(
+                    existing.id,
+                    {
+                        "security_id": item.security_id,
+                        "title": item.title,
+                        "company": item.company,
+                        "city": item.city,
+                        "salary": item.salary,
+                        "experience": item.experience,
+                        "job_url": item.job_url,
+                        "raw_payload": item.raw_payload,
+                        "last_seen_at": utc_now(),
+                        "last_searched_at": utc_now(),
+                        "search_count": max(1, existing.search_count) + 1,
+                    },
+                )
+                dedup_updated += 1
+
+        await self.tasks.update(
+            task.id,
+            {
+                "status": TaskStatus.SUCCEEDED,
+                "result_summary": {
+                    "fetched": len(search_result.items),
+                    "collected": collected,
+                    "dedup_created": dedup_created,
+                    "dedup_updated": dedup_updated,
+                },
+                "finished_at": utc_now(),
+            },
+        )
+
+    async def _update_step(self, task_id: str, step: str) -> None:
+        await self.tasks.update(task_id, {"result_summary": {"step": step}})

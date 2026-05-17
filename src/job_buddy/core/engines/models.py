@@ -28,6 +28,15 @@ class SearchRequest:
 
 
 @dataclass
+class JobDetailRequest:
+    job_id: str
+    security_id: str | None = None
+    job_url: str | None = None
+    title: str | None = None
+    company: str | None = None
+
+
+@dataclass
 class SearchJobItem:
     job_id: str
     security_id: str | None = None

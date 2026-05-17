@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from pathlib import Path
 from typing import Any
 from datetime import UTC, datetime
@@ -12,18 +12,27 @@ from patchright.async_api import async_playwright
 
 from job_buddy.core.boss import BossOperationError, filter_jobs_by_welfare
 from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import LoginRequest, LoginResult, SearchJobItem, SearchRequest, SearchResult
+from job_buddy.core.engines.models import (
+    JobDetailRequest,
+    LoginRequest,
+    LoginResult,
+    SearchJobItem,
+    SearchRequest,
+    SearchResult,
+)
 from job_buddy.core.zhipin_api import (
     CITY_CODES,
     EDUCATION_CODES,
     EXPERIENCE_CODES,
     INDUSTRY_CODES,
     JOB_TYPE_CODES,
+    build_job_detail_url,
     SALARY_CODES,
     SCALE_CODES,
     SEARCH_URL,
     STAGE_CODES,
     WEB_GEEK_JOB_URL,
+    normalize_job_detail,
     normalize_job,
 )
 
@@ -192,6 +201,7 @@ class PatchrightEngine:
                 recoverable=True,
                 recovery_action="login",
                 status_code=401,
+                boss_side=True,
             )
 
         trace = self._build_search_trace(request.query)
@@ -203,8 +213,9 @@ class PatchrightEngine:
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
-                recoverable=True,
-                status_code=502,
+                recoverable=False,
+                status_code=400,
+                boss_side=True,
             )
 
         raw_items = payload.get("zpData", {}).get("jobList", [])
@@ -228,6 +239,86 @@ class PatchrightEngine:
         items = [self._search_item_from_payload(self._normalize_raw_job(item)) for item in raw_items]
         trace["result_count"] = len(items)
         return SearchResult(items=items, trace=trace)
+
+    async def detail(self, request: JobDetailRequest) -> dict[str, Any]:
+        await self.check_page_health()
+        login_status = await self.get_auth_status()
+        if not login_status.logged_in:
+            raise BossOperationError(
+                code="AUTH_REQUIRED",
+                message="未登录，请先点击页面右上角登录",
+                recoverable=True,
+                recovery_action="login",
+                status_code=401,
+                boss_side=True,
+            )
+
+        resolved_security_id = request.security_id or self._extract_security_id(request.job_url)
+        if not resolved_security_id:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="职位详情缺少 securityId",
+                recoverable=True,
+                status_code=400,
+            )
+
+        request_url = build_job_detail_url(resolved_security_id)
+        if not request_url:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="职位详情链接生成失败",
+                recoverable=True,
+                status_code=400,
+            )
+
+        requested_at = datetime.now(tz=UTC).isoformat()
+        payload = await self._fetch_job_detail_payload(request_url)
+        response_received_at = datetime.now(tz=UTC).isoformat()
+        if payload.get("code") not in (None, 0):
+            message = str(payload.get("message") or "职位详情采集失败")
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=message,
+                recoverable=False,
+                status_code=404,
+                boss_side=True,
+            )
+
+        normalized = normalize_job_detail(
+            payload,
+            {
+                "job_id": request.job_id,
+                "security_id": resolved_security_id,
+                "job_url": request.job_url,
+                "title": request.title,
+                "company": request.company,
+            },
+        )
+        detail_payload = dict(normalized["detail_payload"])
+        return {
+            "engine": self.name,
+            "browser": "Patchright Chromium",
+            "request_url": request_url,
+            "requested_at": requested_at,
+            "response_received_at": response_received_at,
+            "request_payload": {
+                "job_id": request.job_id,
+                "security_id": resolved_security_id,
+                "job_url": request.job_url,
+                "title": request.title,
+                "company": request.company,
+            },
+            "response_payload": payload,
+            "job": detail_payload.get("job", {}),
+            "company": detail_payload.get("company", {}),
+            "boss": detail_payload.get("boss", {}),
+            "detail_payload": detail_payload,
+            "detail_text": normalized.get("detail_text"),
+            "job_id": normalized.get("job_id"),
+            "security_id": normalized.get("security_id"),
+            "job_url": normalized.get("job_url"),
+            "detail_raw_payload": normalized.get("detail_raw_payload"),
+        }
 
     async def healthcheck(self) -> dict[str, Any]:
         try:
@@ -284,6 +375,29 @@ class PatchrightEngine:
             ) from exc
 
     async def _search_jobs_payload(self, request_url: str) -> dict[str, Any]:
+        return await self.page.evaluate(
+            """
+            async ({ url, referer }) => {
+                const response = await fetch(url, {
+                    method: "GET",
+                    credentials: "include",
+                    headers: {
+                        "Accept": "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "zp_page_request_id": crypto.randomUUID(),
+                    },
+                    referrer: referer,
+                });
+                return await response.json();
+            }
+            """,
+            {
+                "url": request_url,
+                "referer": WEB_GEEK_JOB_URL,
+            },
+        )
+
+    async def _fetch_job_detail_payload(self, request_url: str) -> dict[str, Any]:
         return await self.page.evaluate(
             """
             async ({ url, referer }) => {
@@ -376,6 +490,16 @@ class PatchrightEngine:
 
     def _normalize_raw_job(self, raw: dict[str, Any]) -> dict[str, Any]:
         return normalize_job(raw)
+
+    def _extract_security_id(self, job_url: str | None) -> str | None:
+        if not job_url:
+            return None
+        query = parse_qs(urlparse(job_url).query)
+        values = query.get("securityId") or query.get("securityid")
+        if not values:
+            return None
+        value = str(values[0]).strip()
+        return value or None
 
     def _search_item_from_payload(self, payload: dict[str, Any]) -> SearchJobItem:
         return SearchJobItem(

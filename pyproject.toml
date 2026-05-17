@@ -25,6 +25,9 @@ dev = [
     "pytest-asyncio>=1.0.0",
 ]
 
+[project.scripts]
+job-buddy-mcp = "job_buddy.mcp_server:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

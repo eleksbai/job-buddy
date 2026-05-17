@@ -7,13 +7,17 @@
   },
   "bindings": {
     "login": "patchright",
-    "search": "patchright"
+    "search": "patchright",
+    "detail": "patchright"
   },
   "retry_policy": {
     "login": {
       "max_retries": 0
     },
     "search": {
+      "max_retries": 0
+    },
+    "detail": {
       "max_retries": 0
     }
   }

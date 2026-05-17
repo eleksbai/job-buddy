@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "job-buddy": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "job-buddy-mcp"],
+      "env": {
+        "API_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
