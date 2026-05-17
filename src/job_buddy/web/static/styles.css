@@ -576,3 +576,42 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Chat History Drawer ── */
+
+.chat-message-card {
+  padding: 0.75rem 1rem;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  margin-bottom: 0.5rem;
+}
+
+.chat-message-card:last-child {
+  margin-bottom: 0;
+}
+
+.chat-message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.chat-message-sender {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.chat-message-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.chat-message-self {
+  border-left: 3px solid var(--accent);
+}

@@ -8,7 +8,9 @@
   "bindings": {
     "login": "patchright",
     "search": "patchright",
-    "detail": "patchright"
+    "detail": "patchright",
+    "friend_list": "patchright",
+    "chat_history": "patchright"
   },
   "retry_policy": {
     "login": {
@@ -18,6 +20,12 @@
       "max_retries": 0
     },
     "detail": {
+      "max_retries": 0
+    },
+    "friend_list": {
+      "max_retries": 0
+    },
+    "chat_history": {
       "max_retries": 0
     }
   }

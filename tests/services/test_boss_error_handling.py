@@ -10,6 +10,10 @@ class AuthRequired(Exception):
 
 
 class ExplodingConversationClient:
+    async def list_friends(self, page: int = 1) -> list[dict]:
+        _ = page
+        raise AuthRequired()
+
     async def list_conversations(self, limit: int = 20) -> list[dict]:
         _ = limit
         raise AuthRequired()

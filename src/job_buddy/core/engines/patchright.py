@@ -13,6 +13,8 @@ from patchright.async_api import async_playwright
 from job_buddy.core.boss import BossOperationError, filter_jobs_by_welfare
 from job_buddy.core.config import Settings
 from job_buddy.core.engines.models import (
+    ChatHistoryRequest,
+    FriendListRequest,
     JobDetailRequest,
     LoginRequest,
     LoginResult,
@@ -21,11 +23,14 @@ from job_buddy.core.engines.models import (
     SearchResult,
 )
 from job_buddy.core.zhipin_api import (
+    CHAT_HISTORY_URL,
     CITY_CODES,
     EDUCATION_CODES,
     EXPERIENCE_CODES,
+    FRIEND_LIST_URL,
     INDUSTRY_CODES,
     JOB_TYPE_CODES,
+    WEB_GEEK_CHAT_URL,
     build_job_detail_url,
     SALARY_CODES,
     SCALE_CODES,
@@ -319,6 +324,122 @@ class PatchrightEngine:
             "job_url": normalized.get("job_url"),
             "detail_raw_payload": normalized.get("detail_raw_payload"),
         }
+
+    async def friend_list(self, request: FriendListRequest) -> list[dict[str, Any]]:
+        await self.check_page_health()
+        login_status = await self.get_auth_status()
+        if not login_status.logged_in:
+            raise BossOperationError(
+                code="AUTH_REQUIRED",
+                message="未登录，请先点击页面右上角登录",
+                recoverable=True,
+                recovery_action="login",
+                status_code=401,
+                boss_side=True,
+            )
+
+        url = f"{FRIEND_LIST_URL}?page={request.page}"
+        payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
+        if payload.get("code") not in (None, 0):
+            message = str(payload.get("message") or "好友列表获取失败")
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=message,
+                recoverable=False,
+                status_code=400,
+                boss_side=True,
+            )
+
+        zp_data = payload.get("zpData") or {}
+        friends = zp_data.get("result") or zp_data.get("friendList") or []
+        if not isinstance(friends, list):
+            return []
+        return [
+            {
+                "friend_id": str(f.get("encryptFriendId") or f.get("uid") or ""),
+                "gid": str(f.get("uid") or ""),
+                "name": str(f.get("name") or ""),
+                "title": str(f.get("title") or ""),
+                "company": str(f.get("brandName") or f.get("company") or ""),
+                "avatar": f.get("avatar"),
+                "last_message": f.get("lastMessage"),
+                "last_message_at": f.get("lastMessageTime"),
+                "unread_count": f.get("unreadCount", 0),
+                "security_id": str(f.get("securityId") or "") or None,
+                "raw_payload": f,
+            }
+            for f in friends
+        ]
+
+    async def chat_history(self, request: ChatHistoryRequest) -> dict[str, Any]:
+        await self.check_page_health()
+        login_status = await self.get_auth_status()
+        if not login_status.logged_in:
+            raise BossOperationError(
+                code="AUTH_REQUIRED",
+                message="未登录，请先点击页面右上角登录",
+                recoverable=True,
+                recovery_action="login",
+                status_code=401,
+                boss_side=True,
+            )
+
+        url = f"{CHAT_HISTORY_URL}?gid={request.gid}&securityId={request.security_id}&page={request.page}&c={request.count}&src=0"
+        payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
+        if payload.get("code") not in (None, 0):
+            message = str(payload.get("message") or "聊天历史获取失败")
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=message,
+                recoverable=False,
+                status_code=400,
+                boss_side=True,
+            )
+
+        zp_data = payload.get("zpData") or {}
+        messages = zp_data.get("messages") or []
+        if not isinstance(messages, list):
+            messages = []
+        return {
+            "gid": request.gid,
+            "security_id": request.security_id,
+            "page": request.page,
+            "count": request.count,
+            "has_more": bool(zp_data.get("hasMore", False)),
+            "total": zp_data.get("totalCount", len(messages)),
+            "messages": [
+                {
+                    "message_id": str(m.get("msgId") or ""),
+                    "from_id": str(m.get("fromId") or ""),
+                    "content": str(m.get("content") or ""),
+                    "type": m.get("msgType"),
+                    "created_at": m.get("createTime"),
+                    "raw_payload": m,
+                }
+                for m in messages
+            ],
+            "raw_payload": payload,
+        }
+
+    async def _fetch_json(self, url: str, referer: str) -> dict[str, Any]:
+        return await self.page.evaluate(
+            """
+            async ({ url, referer }) => {
+                const response = await fetch(url, {
+                    method: "GET",
+                    credentials: "include",
+                    headers: {
+                        "Accept": "application/json, text/plain, */*",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "zp_page_request_id": crypto.randomUUID(),
+                    },
+                    referrer: referer,
+                });
+                return await response.json();
+            }
+            """,
+            {"url": url, "referer": referer},
+        )
 
     async def healthcheck(self) -> dict[str, Any]:
         try:

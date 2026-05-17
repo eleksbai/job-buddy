@@ -1,7 +1,12 @@
 from fastapi import APIRouter, Depends, Query, status
 
 from job_buddy.deps import get_conversation_service
-from job_buddy.modules.conversations import ConversationRecordRead, ConversationService, ConversationSyncResponse
+from job_buddy.modules.conversations import (
+    ChatHistoryResponse,
+    ConversationRecordRead,
+    ConversationService,
+    ConversationSyncResponse,
+)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -22,3 +27,14 @@ async def sync_conversations(
 ) -> ConversationSyncResponse:
     count = await service.sync_conversations(limit=limit)
     return ConversationSyncResponse(count=count)
+
+
+@router.get("/{gid}/messages", response_model=ChatHistoryResponse, operation_id="get_chat_history")
+async def get_chat_history(
+    gid: str,
+    security_id: str = Query(...),
+    page: int = Query(default=1, ge=1),
+    count: int = Query(default=20, le=100),
+    service: ConversationService = Depends(get_conversation_service),
+) -> ChatHistoryResponse:
+    return await service.get_chat_history(gid=gid, security_id=security_id, page=page, count=count)

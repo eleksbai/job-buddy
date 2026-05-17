@@ -8,8 +8,10 @@ from typing import Any
 from job_buddy.core.boss import BossOperationError, map_boss_operation_error
 from job_buddy.core.config import Settings
 from job_buddy.core.engines.models import (
+    ChatHistoryRequest,
     EngineConfig,
     EngineState,
+    FriendListRequest,
     JobDetailRequest,
     LoginRequest,
     LoginResult,
@@ -85,14 +87,18 @@ class EngineRuntimeManager:
             status_code=501,
         )
 
+    async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
+        result = await self._execute("friend_list", FriendListRequest(page=page), "friend_list")
+        assert isinstance(result, list)
+        return result
+
+    async def get_chat_history(self, gid: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
+        result = await self._execute("chat_history", ChatHistoryRequest(gid=gid, security_id=security_id, page=page, count=count), "chat_history")
+        assert isinstance(result, dict)
+        return result
+
     async def list_conversations(self, limit: int = 20) -> list[dict[str, Any]]:
-        _ = limit
-        raise BossOperationError(
-            code="ENGINE_UNAVAILABLE",
-            message="当前运行时未实现历史对话能力",
-            recoverable=False,
-            status_code=501,
-        )
+        return await self.list_friends(page=1)[:limit]
 
     async def close(self) -> None:
         for engine in self._engines.values():

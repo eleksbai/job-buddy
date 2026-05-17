@@ -247,10 +247,11 @@
           <div class="panel-header">
             <div>
               <h2>沟通记录</h2>
-              <p>查看已同步的会话信息和最近消息。</p>
+              <p>从 BOSS直聘 拉取最新好友列表，点击查看聊天历史。</p>
             </div>
             <div class="panel-actions">
-              <button id="refreshConversationsButton" class="button-secondary">刷新会话</button>
+              <button id="syncConversationsFromChatButton">同步会话</button>
+              <button id="refreshConversationsButton" class="button-secondary">刷新</button>
             </div>
           </div>
 
@@ -326,6 +327,25 @@
             <button type="button" class="button-secondary" data-close-job-detail="true">关闭</button>
           </div>
           <div id="jobDetailContent" class="detail-drawer-body"></div>
+        </aside>
+      </div>
+
+      <div id="chatHistoryDrawer" class="detail-drawer" hidden>
+        <button type="button" class="detail-drawer-backdrop" data-close="true" aria-label="关闭聊天历史"></button>
+        <aside class="detail-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="chatHistoryTitle">
+          <div class="panel-header detail-drawer-header">
+            <div>
+              <span class="eyebrow">聊天历史</span>
+              <h2 id="chatHistoryTitle">查看聊天记录</h2>
+              <div id="chatHistoryMeta" class="detail-meta"></div>
+            </div>
+            <div class="panel-actions">
+              <button id="chatHistoryPrevPageButton" class="button-secondary">上一页</button>
+              <button id="chatHistoryNextPageButton" class="button-secondary">下一页</button>
+              <button type="button" class="button-secondary" data-close-chat-history="true">关闭</button>
+            </div>
+          </div>
+          <div id="chatHistoryContent" class="detail-drawer-body"></div>
         </aside>
       </div>
     </div>

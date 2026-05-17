@@ -37,6 +37,19 @@ class JobDetailRequest:
 
 
 @dataclass
+class FriendListRequest:
+    page: int = 1
+
+
+@dataclass
+class ChatHistoryRequest:
+    gid: str
+    security_id: str
+    page: int = 1
+    count: int = 20
+
+
+@dataclass
 class SearchJobItem:
     job_id: str
     security_id: str | None = None

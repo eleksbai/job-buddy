@@ -4,8 +4,11 @@ from typing import Any
 
 BASE_URL = "https://www.zhipin.com"
 WEB_GEEK_JOB_URL = f"{BASE_URL}/web/geek/job"
+WEB_GEEK_CHAT_URL = f"{BASE_URL}/web/geek/chat"
 SEARCH_URL = f"{BASE_URL}/wapi/zpgeek/search/joblist.json"
 DETAIL_URL = f"{BASE_URL}/wapi/zpgeek/job/detail.json"
+FRIEND_LIST_URL = f"{BASE_URL}/wapi/zprelation/friend/getGeekFriendList.json"
+CHAT_HISTORY_URL = f"{BASE_URL}/wapi/zpchat/geek/historyMsg"
 
 
 def build_job_url(job_id: str | None, security_id: str | None = None) -> str | None:

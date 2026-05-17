@@ -13,6 +13,11 @@ const state = {
   jobDetailLoading: false,
   jobDetailSourceJobId: null,
   jobs: [],
+  chatHistoryGid: null,
+  chatHistorySecurityId: null,
+  chatHistoryPage: 1,
+  chatHistoryName: "",
+  chatHistoryFriendId: null,
 };
 
 function getSafeStorage() {
@@ -846,20 +851,188 @@ function closeJobDetailDrawer() {
   setJobDetailDrawerOpen(false);
 }
 
+// ── Chat History Drawer ──
+
+function setChatHistoryDrawerOpen(open) {
+  const drawer = document.getElementById("chatHistoryDrawer");
+  if (!drawer) return;
+  drawer.hidden = !open;
+  document.body.style.overflow = open ? "hidden" : "";
+}
+
+function renderChatHistoryDrawerLoading(name) {
+  document.getElementById("chatHistoryTitle").textContent = "正在获取聊天记录";
+  document.getElementById("chatHistoryContent").innerHTML =
+    `<div class="detail-loading"><span class="status-badge status-warn">加载中</span><strong>正在获取与 ${escapeHtml(name)} 的聊天记录</strong></div>`;
+  document.getElementById("chatHistoryMeta").innerHTML = "";
+}
+
+function renderChatHistoryDrawerError(message) {
+  document.getElementById("chatHistoryTitle").textContent = "聊天记录获取失败";
+  document.getElementById("chatHistoryContent").innerHTML = `<div class="empty">${escapeHtml(message || "聊天记录获取失败。")}</div>`;
+  document.getElementById("chatHistoryMeta").innerHTML = "";
+}
+
+function messageTypeLabel(type) {
+  const map = { 1: "文本", 2: "图片", 3: "语音", 7: "简历", 8: "招呼", 9: "交换微信", 10: "交换电话" };
+  return map[type] || `类型${type}`;
+}
+
+function messageSenderLabel(fromId, friendId, friendName) {
+  if (fromId && friendId && String(fromId) === String(friendId)) {
+    return escapeHtml(friendName || "对方");
+  }
+  return "我";
+}
+
+function renderChatHistoryMessages(messages, friendId, friendName) {
+  if (!messages.length) {
+    return '<div class="empty">暂无聊天记录。</div>';
+  }
+  return messages
+    .slice()
+    .reverse()
+    .map((m) => {
+      const sender = messageSenderLabel(m.from_id, friendId, friendName);
+      const isSelf = sender === "我";
+      const typeLabel = messageTypeLabel(m.type);
+      const time = m.created_at ? formatDate(m.created_at) : "-";
+      return `
+        <div class="chat-message-card${isSelf ? " chat-message-self" : ""}">
+          <div class="chat-message-header">
+            <span class="chat-message-sender">${sender}</span>
+            <span>${escapeHtml(typeLabel)} &middot; ${escapeHtml(time)}</span>
+          </div>
+          <div class="chat-message-body">${escapeHtml(m.content || "")}</div>
+        </div>`;
+    })
+    .join("");
+}
+
+async function loadChatHistory(gid, securityId, page) {
+  return await fetchJson(
+    `/api/conversations/${encodeURIComponent(gid)}/messages?security_id=${encodeURIComponent(securityId)}&page=${page || 1}&count=20`
+  );
+}
+
+async function openConversationChat(gid, securityId, name, friendId) {
+  if (!gid || !securityId) return;
+  clearError();
+  state.chatHistoryGid = gid;
+  state.chatHistorySecurityId = securityId;
+  state.chatHistoryPage = 1;
+  state.chatHistoryName = name;
+  state.chatHistoryFriendId = friendId;
+  setChatHistoryDrawerOpen(true);
+  renderChatHistoryDrawerLoading(name);
+
+  try {
+    const payload = await loadChatHistory(gid, securityId, 1);
+    renderChatHistoryDrawer(payload);
+  } catch (error) {
+    renderChatHistoryDrawerError(error.message || "聊天记录获取失败");
+  }
+}
+
+function renderChatHistoryDrawer(payload) {
+  const name = state.chatHistoryName;
+  const friendId = state.chatHistoryFriendId;
+  document.getElementById("chatHistoryTitle").textContent = `与 ${escapeHtml(name)} 的聊天记录`;
+  document.getElementById("chatHistoryMeta").innerHTML = [
+    `<span>第 ${payload.page} 页</span>`,
+    `<span>共 ${payload.total} 条</span>`,
+    payload.has_more
+      ? '<span class="status-badge status-info">还有更多</span>'
+      : '<span class="status-badge status-ok">已全部加载</span>',
+  ].join("");
+
+  document.getElementById("chatHistoryContent").innerHTML = renderChatHistoryMessages(
+    payload.messages || [],
+    friendId,
+    name
+  );
+
+  setButtonBusy("chatHistoryPrevPageButton", false);
+  setButtonBusy("chatHistoryNextPageButton", false);
+  document.getElementById("chatHistoryPrevPageButton").disabled = payload.page <= 1;
+  document.getElementById("chatHistoryNextPageButton").disabled = !payload.has_more;
+}
+
+async function goChatHistoryPage(delta) {
+  const nextPage = state.chatHistoryPage + delta;
+  if (nextPage < 1) return;
+  const { chatHistoryGid, chatHistorySecurityId, chatHistoryName } = state;
+  if (!chatHistoryGid || !chatHistorySecurityId) return;
+
+  setButtonBusy("chatHistoryPrevPageButton", true, "加载中");
+  setButtonBusy("chatHistoryNextPageButton", true, "加载中");
+  try {
+    const payload = await loadChatHistory(chatHistoryGid, chatHistorySecurityId, nextPage);
+    state.chatHistoryPage = nextPage;
+    renderChatHistoryDrawer(payload);
+  } catch (error) {
+    showError(error.message || "翻页失败");
+    setButtonBusy("chatHistoryPrevPageButton", false);
+    setButtonBusy("chatHistoryNextPageButton", false);
+  }
+}
+
+function closeChatHistoryDrawer() {
+  state.chatHistoryGid = null;
+  state.chatHistorySecurityId = null;
+  state.chatHistoryPage = 1;
+  state.chatHistoryName = "";
+  state.chatHistoryFriendId = null;
+  setChatHistoryDrawerOpen(false);
+}
+
 async function loadConversations() {
   const items = await fetchJson("/api/conversations");
   renderTable(
     "conversationsTable",
     [
+      { label: "姓名", render: (row) => escapeHtml(row.name || row.title) },
       { label: "职位", render: (row) => escapeHtml(row.title) },
       { label: "公司", render: (row) => escapeHtml(row.company || "-") },
+      { label: "发起方", render: (row) => renderRelationType(row.raw_payload) },
+      { label: "未读", render: (row) => renderUnreadBadge(row.unread_count) },
+      { label: "状态", render: (row) => renderReadStatus(row.raw_payload) },
       { label: "最近消息", render: (row) => escapeHtml(row.last_message || "-") },
-      { label: "未读数", render: (row) => escapeHtml(String(row.unread_count)) },
       { label: "最近时间", render: (row) => escapeHtml(formatDate(row.last_message_at)) },
+      { label: "操作", render: (row) => renderChatHistoryAction(row) },
     ],
     items,
   );
   return items;
+}
+
+function renderRelationType(rawPayload) {
+  if (!rawPayload || !rawPayload.relationType) return "-";
+  const map = { 1: "对方主动", 2: "我主动", 3: "投递" };
+  return escapeHtml(map[rawPayload.relationType] || "-");
+}
+
+function renderUnreadBadge(count) {
+  if (count > 0) {
+    return `<span class="status-badge status-warn">${escapeHtml(String(count))}</span>`;
+  }
+  return `<span class="status-badge status-ok">0</span>`;
+}
+
+function renderReadStatus(rawPayload) {
+  const status = rawPayload?.lastMessageInfo?.status;
+  if (status === 2) return '<span class="status-badge status-warn">未读</span>';
+  if (status === 1) return '<span class="status-badge status-ok">已读</span>';
+  return "-";
+}
+
+function renderChatHistoryAction(row) {
+  const gid = row.gid;
+  const securityId = row.security_id;
+  if (!gid || !securityId) return "-";
+  const name = row.name || "";
+  const friendId = row.source_conversation_id || "";
+  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(gid)}|${escapeHtml(securityId)}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
 }
 
 function renderLogs(payload) {
@@ -1087,6 +1260,22 @@ function bindEvents() {
       event.preventDefault();
       closeJobDetailDrawer();
     }
+
+    const chatButton = event.target.closest("[data-chat-history]");
+    if (chatButton) {
+      event.preventDefault();
+      const parts = chatButton.dataset.chatHistory.split("|");
+      openConversationChat(parts[0], parts[1], decodeURIComponent(parts[2] || ""), parts[3] || "").catch(
+        (error) => showError(error.message || "聊天历史获取失败")
+      );
+      return;
+    }
+
+    const closeChatButton = event.target.closest("[data-close-chat-history]");
+    if (closeChatButton) {
+      event.preventDefault();
+      closeChatHistoryDrawer();
+    }
   });
 
   window.addEventListener("hashchange", () => {
@@ -1140,9 +1329,23 @@ function bindEvents() {
   document
     .getElementById("refreshLogsButton")
     .addEventListener("click", () => loadLogs().catch((error) => showError(error.message)));
+  document
+    .getElementById("syncConversationsFromChatButton")
+    .addEventListener("click", () => syncConversations().catch((error) => showError(error.message)));
+  document
+    .getElementById("chatHistoryPrevPageButton")
+    .addEventListener("click", () => goChatHistoryPage(-1).catch((error) => showError(error.message)));
+  document
+    .getElementById("chatHistoryNextPageButton")
+    .addEventListener("click", () => goChatHistoryPage(1).catch((error) => showError(error.message)));
   document.getElementById("jobDetailDrawer").addEventListener("click", (event) => {
     if (event.target?.dataset?.close === "true") {
       closeJobDetailDrawer();
+    }
+  });
+  document.getElementById("chatHistoryDrawer").addEventListener("click", (event) => {
+    if (event.target?.dataset?.close === "true") {
+      closeChatHistoryDrawer();
     }
   });
 }

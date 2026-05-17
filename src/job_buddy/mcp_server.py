@@ -263,6 +263,38 @@ async def list_conversations(limit: int = 100) -> list[dict[str, Any]]:
 
 
 @mcp.tool
+async def sync_conversations(limit: int = 20) -> dict[str, Any]:
+    """同步 BOSS直聘 沟通列表，返回同步数量。"""
+    async with _client() as client:
+        try:
+            resp = await client.post("/api/conversations/sync", params={"limit": str(limit)})
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as exc:
+            return {"error": f"API unreachable: {exc}"}
+
+
+@mcp.tool
+async def get_chat_history(gid: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
+    """获取与指定好友的聊天消息历史。
+
+    Args:
+        gid: 会话 GID（从 list_conversations 获取）
+        security_id: 好友 security_id（从 list_conversations 获取）
+        page: 页码，默认 1
+        count: 每页消息数，默认 20
+    """
+    params = {"security_id": security_id, "page": str(page), "count": str(count)}
+    async with _client() as client:
+        try:
+            resp = await client.get(f"/api/conversations/{gid}/messages", params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as exc:
+            return {"error": f"API unreachable: {exc}"}
+
+
+@mcp.tool
 async def get_system_status() -> dict[str, Any]:
     """查看系统状态和 BOSS直聘 连接状态。"""
     async with _client() as client:
