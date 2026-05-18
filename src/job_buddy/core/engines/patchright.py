@@ -47,13 +47,31 @@ LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
 
 
+def _find_text_in_body(body: dict) -> str:
+    """递归搜索 body 下的第一个 text 字段。"""
+    if not isinstance(body, dict):
+        return ""
+    for key, value in body.items():
+        if key == "text" and isinstance(value, str) and value.strip():
+            return value
+        if isinstance(value, dict):
+            found = _find_text_in_body(value)
+            if found:
+                return found
+    return ""
+
+
 def _extract_message_content(m: dict) -> str:
     """从 BOSS 消息 payload 提取可显示的文本内容。"""
     body = m.get("body")
     if isinstance(body, str):
         return body
     if isinstance(body, dict):
-        # 招呼消息 (type=8) 包含 jobDesc.content
+        # 优先递归查找 body 下的 text 字段
+        text = _find_text_in_body(body)
+        if text:
+            return text
+        # 招呼消息 (type=8): 包含 jobDesc.content
         job_desc = body.get("jobDesc") or {}
         if isinstance(job_desc, dict):
             return str(job_desc.get("content") or body.get("headTitle") or "")
@@ -424,6 +442,7 @@ class PatchrightEngine:
         messages = zp_data.get("messages") or []
         if not isinstance(messages, list):
             messages = []
+        messages = [m for m in messages if m.get("uncount") == 0]
         return {
             "boss_id": request.boss_id,
             "security_id": request.security_id,
