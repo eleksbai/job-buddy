@@ -122,7 +122,7 @@ class ConversationService:
         return await self.conversations.list(filters=filters, sort_by="last_message_ts")
 
     async def get_chat_history(
-        self, job_id: int, page: int = 1, count: int = 20
+        self, job_id: int, page: int = 1, count: int = 20, cached_only: bool = False
     ) -> ChatHistoryResponse:
         conv = await self.conversations.collection.find_one({"job_id": job_id})
         if not conv:
@@ -135,6 +135,31 @@ class ConversationService:
 
         gid = conv.get("gid", "")
         security_id = conv.get("security_id")
+
+        if cached_only:
+            cached = await self.messages.collection.find(
+                {"conversation_id": gid}
+            ).sort("sent_at", 1).to_list(length=count)
+            return ChatHistoryResponse(
+                gid=gid,
+                security_id=security_id,
+                page=1,
+                count=len(cached),
+                has_more=False,
+                total=len(cached),
+                messages=[
+                    {
+                        "message_id": m["message_id"],
+                        "from_id": m["from_id"],
+                        "content": m.get("content", ""),
+                        "type": m.get("msg_type"),
+                        "created_at": m.get("sent_at"),
+                        "raw_payload": m.get("raw_payload", m),
+                    }
+                    for m in cached
+                ],
+            )
+
         boss_id = conv.get("encrypt_boss_id")
 
         try:

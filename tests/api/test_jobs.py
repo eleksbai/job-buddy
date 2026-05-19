@@ -41,8 +41,8 @@ class FakeJobService:
             )
         ]
 
-    async def get_job_detail(self, source_job_id):
-        _ = source_job_id
+    async def get_job_detail(self, source_job_id, security_id=None):
+        _ = source_job_id; _ = security_id
         return (
             JobLead(
                 _id="6825fb1a7d4ce9adcc2d1a31",

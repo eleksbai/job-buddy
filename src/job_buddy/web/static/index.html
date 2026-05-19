@@ -313,6 +313,34 @@
             <div id="logsViewer" class="logs-viewer"></div>
           </div>
         </section>
+
+        <section id="jobDetailView" class="view-panel" data-view="job-detail" hidden>
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">沟通记录</span>
+              <h2 id="jobDetailChatTitle">聊天记录</h2>
+              <p id="jobDetailChatMeta" class="hint-text"></p>
+            </div>
+            <div class="panel-actions">
+              <button id="jobDetailSyncChatButton">同步聊天记录</button>
+              <button id="jobDetailRefreshButton" class="button-secondary">刷新</button>
+            </div>
+          </div>
+          <div class="panel-card">
+            <div id="jobDetailChatContent"></div>
+          </div>
+
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">职位详情</span>
+              <h2 id="jobDetailPageTitle">职位详情</h2>
+              <div id="jobDetailPageMeta" class="detail-meta"></div>
+            </div>
+          </div>
+          <div class="panel-card">
+            <div id="jobDetailPageContent"></div>
+          </div>
+        </section>
       </main>
 
       <div id="jobDetailDrawer" class="detail-drawer" hidden>
@@ -340,8 +368,6 @@
               <div id="chatHistoryMeta" class="detail-meta"></div>
             </div>
             <div class="panel-actions">
-              <button id="chatHistoryPrevPageButton" class="button-secondary">上一页</button>
-              <button id="chatHistoryNextPageButton" class="button-secondary">下一页</button>
               <button type="button" class="button-secondary" data-close-chat-history="true">关闭</button>
             </div>
           </div>

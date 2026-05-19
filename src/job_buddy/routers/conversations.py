@@ -32,6 +32,7 @@ async def get_chat_history(
     job_id: int,
     page: int = Query(default=1, ge=1),
     count: int = Query(default=20, le=100),
+    cached_only: bool = Query(default=False, description="Only return cached messages, skip BOSS fetch"),
     service: ConversationService = Depends(get_conversation_service),
 ) -> ChatHistoryResponse:
-    return await service.get_chat_history(job_id=job_id, page=page, count=count)
+    return await service.get_chat_history(job_id=job_id, page=page, count=count, cached_only=cached_only)

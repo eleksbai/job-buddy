@@ -240,10 +240,41 @@ class JobCollectionService:
             limit=limit,
         )
 
-    async def get_job_detail(self, source_job_id: str) -> tuple[JobLead, bool]:
+    async def get_job_detail(self, source_job_id: str, security_id: str | None = None) -> tuple[JobLead, bool]:
         job = await self.jobs.get_by_source_job_id(source_job_id)
         if job is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+            if not security_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+            # Create a minimal job record from conversation data, then fetch detail
+            try:
+                detail_result = await self.runtime.detail(
+                    JobDetailRequest(
+                        job_id=source_job_id,
+                        security_id=security_id,
+                        job_url=None,
+                        title=source_job_id,
+                        company="",
+                    )
+                )
+            except Exception as exc:
+                raise map_boss_operation_error(exc) from exc
+            job = await self.jobs.create(
+                JobLead(
+                    source_job_id=source_job_id,
+                    security_id=security_id,
+                    title=str(detail_result.get("job", {}).get("title") or source_job_id),
+                    company=str(detail_result.get("company", {}).get("name") or ""),
+                    city=detail_result.get("job", {}).get("city"),
+                    salary=detail_result.get("job", {}).get("salary"),
+                    experience=detail_result.get("job", {}).get("experience"),
+                    job_url=detail_result.get("job_url"),
+                    detail_payload=dict(detail_result.get("detail_payload") or {}),
+                    detail_text=str(detail_result.get("detail_text") or ""),
+                    detail_source_url=detail_result.get("request_url"),
+                    detail_fetched_at=utc_now(),
+                )
+            )
+            return job, False
 
         if job.detail_payload and job.detail_text:
             return job, True

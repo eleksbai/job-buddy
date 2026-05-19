@@ -29,9 +29,10 @@ async def list_jobs(
 @router.get("/{source_job_id}/detail", response_model=JobDetailResponse, operation_id="get_job_detail")
 async def get_job_detail(
     source_job_id: str,
+    security_id: str | None = Query(default=None, description="BOSS security_id, used when job is not yet in the database"),
     service: JobCollectionService = Depends(get_job_service),
 ) -> JobDetailResponse:
-    job, cached = await service.get_job_detail(source_job_id)
+    job, cached = await service.get_job_detail(source_job_id, security_id=security_id)
     return JobDetailResponse(cached=cached, job=JobLeadDetailRead(**job.model_dump()))
 
 

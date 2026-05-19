@@ -615,3 +615,8 @@ a {
 .chat-message-self {
   border-left: 3px solid var(--accent);
 }
+
+#jobDetailChatContent {
+  max-height: 60vh;
+  overflow-y: auto;
+}
