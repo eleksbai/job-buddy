@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -5,6 +6,8 @@ from pydantic import BaseModel, Field
 
 from job_buddy.core.boss import BossClientProtocol, BossOperationError, map_boss_operation_error
 from job_buddy.modules.common import BaseRepository, DocumentModel, TimestampedSchema, utc_now
+
+logger = logging.getLogger(__name__)
 
 _CST = timezone(timedelta(hours=8))
 
@@ -122,9 +125,12 @@ class ConversationService:
         return await self.conversations.list(filters=filters, sort_by="last_message_ts")
 
     async def get_chat_history(
-        self, job_id: int, page: int = 1, count: int = 20, cached_only: bool = False
+        self, job_id: str, page: int = 1, count: int = 20, cached_only: bool = False
     ) -> ChatHistoryResponse:
-        conv = await self.conversations.collection.find_one({"job_id": job_id})
+        filters: list[dict] = [{"encrypt_job_id": job_id}]
+        if job_id.isdigit():
+            filters.append({"job_id": int(job_id)})
+        conv = await self.conversations.collection.find_one({"$or": filters})
         if not conv:
             raise BossOperationError(
                 code="REQUEST_FAILED",
@@ -167,6 +173,10 @@ class ConversationService:
                 boss_id=boss_id, security_id=security_id, page=page, count=count
             )
         except Exception as exc:
+            logger.warning(
+                "BOSS chat history fetch failed: job_id=%s gid=%s page=%s count=%s error=%s",
+                job_id, gid, page, count, exc,
+            )
             raise map_boss_operation_error(exc) from exc
 
         messages = result.get("messages", [])
@@ -200,6 +210,7 @@ class ConversationService:
         try:
             friends = await self.boss_client.list_friends(page=1)
         except Exception as exc:
+            logger.warning("BOSS conversation sync failed: error=%s", exc)
             raise map_boss_operation_error(exc) from exc
 
         coll = self.conversations.collection

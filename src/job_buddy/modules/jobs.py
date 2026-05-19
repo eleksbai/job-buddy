@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from job_buddy.core.boss import map_boss_operation_error, raise_for_boss_healthcheck
 from job_buddy.core.engines.models import JobDetailRequest, SearchRequest
@@ -24,9 +24,18 @@ from job_buddy.modules.targets import TargetProfile
 logger = logging.getLogger(__name__)
 
 
+def _coerce_numeric_job_id(raw_payload: dict[str, Any]) -> int | None:
+    value = raw_payload.get("jobId")
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 class JobLead(DocumentModel):
     source: str = "boss"
     source_job_id: str
+    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -49,6 +58,7 @@ class JobLead(DocumentModel):
 class JobLeadRead(TimestampedSchema):
     source: str
     source_job_id: str
+    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -66,6 +76,15 @@ class JobLeadRead(TimestampedSchema):
     raw_payload: dict[str, Any]
     detail_payload: dict[str, Any] = Field(default_factory=dict)
     detail_text: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("job_id") is None:
+            raw_payload = data.get("raw_payload")
+            if isinstance(raw_payload, dict):
+                data["job_id"] = _coerce_numeric_job_id(raw_payload)
+        return data
 
 
 class JobLeadDetailRead(JobLeadRead):
@@ -104,6 +123,7 @@ class JobCollectionRecord(DocumentModel):
     target_profile_id: str | None = None
     source: str = "boss"
     source_job_id: str
+    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -121,6 +141,7 @@ class JobCollectionRecordRead(TimestampedSchema):
     target_profile_id: str | None = None
     source: str
     source_job_id: str
+    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -130,6 +151,15 @@ class JobCollectionRecordRead(TimestampedSchema):
     job_url: str | None = None
     raw_payload: dict[str, Any]
     collected_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("job_id") is None:
+            raw_payload = data.get("raw_payload")
+            if isinstance(raw_payload, dict):
+                data["job_id"] = _coerce_numeric_job_id(raw_payload)
+        return data
 
 
 class JobCollectionTrace(DocumentModel):
@@ -240,6 +270,10 @@ class JobCollectionService:
             limit=limit,
         )
 
+    @staticmethod
+    def _extract_numeric_job_id(raw_payload: dict[str, Any]) -> int | None:
+        return _coerce_numeric_job_id(raw_payload)
+
     async def get_job_detail(self, source_job_id: str, security_id: str | None = None) -> tuple[JobLead, bool]:
         job = await self.jobs.get_by_source_job_id(source_job_id)
         if job is None:
@@ -257,6 +291,10 @@ class JobCollectionService:
                     )
                 )
             except Exception as exc:
+                logger.warning(
+                    "BOSS detail fetch failed (new job): source_job_id=%s security_id=%s error=%s",
+                    source_job_id, security_id, exc,
+                )
                 raise map_boss_operation_error(exc) from exc
             job = await self.jobs.create(
                 JobLead(
@@ -290,6 +328,10 @@ class JobCollectionService:
                 )
             )
         except Exception as exc:
+            logger.warning(
+                "BOSS detail fetch failed (existing job): source_job_id=%s job_url=%s error=%s",
+                job.source_job_id, job.job_url, exc,
+            )
             raise map_boss_operation_error(exc) from exc
 
         updated = await self.jobs.update(
@@ -313,9 +355,17 @@ class JobCollectionService:
 
     async def search_jobs_readonly(self, query: dict[str, Any]) -> list[dict[str, Any]]:
         """Synchronous read-only search. No persistence."""
-        health = await self.runtime.healthcheck()
-        raise_for_boss_healthcheck(health)
-        search_result = await self.runtime.search(SearchRequest(query=query))
+        health = None
+        try:
+            health = await self.runtime.healthcheck()
+            raise_for_boss_healthcheck(health)
+            search_result = await self.runtime.search(SearchRequest(query=query))
+        except Exception as exc:
+            logger.warning(
+                "BOSS search (readonly) failed: query=%s health=%s error=%s",
+                query, health, exc,
+            )
+            raise map_boss_operation_error(exc) from exc
         return [
             {
                 "job_id": item.job_id,
@@ -394,11 +444,16 @@ class JobCollectionService:
         self, task: GreetingTask, query: dict[str, Any], target: TargetProfile | None
     ) -> None:
         await self._update_step(task.id, "healthcheck")
+        health = None
         try:
             health = await self.runtime.healthcheck()
             raise_for_boss_healthcheck(health)
             search_result = await self.runtime.search(SearchRequest(query=query))
         except Exception as exc:
+            logger.warning(
+                "BOSS search failed: task_id=%s query=%s health=%s error=%s",
+                task.id, query, health, exc,
+            )
             raise map_boss_operation_error(exc) from exc
 
         await self._update_step(task.id, "persist_results")
@@ -429,12 +484,14 @@ class JobCollectionService:
         dedup_updated = 0
         collected = 0
         for item in search_result.items:
+            job_id = self._extract_numeric_job_id(item.raw_payload)
             await self.records.create(
                 JobCollectionRecord(
                     task_id=task.id,
                     trace_id=trace_id,
                     target_profile_id=target.id if target else None,
                     source_job_id=item.job_id,
+                    job_id=job_id,
                     security_id=item.security_id,
                     title=item.title,
                     company=item.company,
@@ -452,6 +509,7 @@ class JobCollectionService:
                 await self.jobs.create(
                     JobLead(
                         source_job_id=item.job_id,
+                        job_id=job_id,
                         security_id=item.security_id,
                         title=item.title,
                         company=item.company,
@@ -471,6 +529,7 @@ class JobCollectionService:
                     existing.id,
                     {
                         "security_id": item.security_id,
+                        "job_id": job_id,
                         "title": item.title,
                         "company": item.company,
                         "city": item.city,

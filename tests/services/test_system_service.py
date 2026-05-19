@@ -68,8 +68,35 @@ class FakeAuthStateRepository:
         return state
 
 
+class FakeDeleteResult:
+    def __init__(self, deleted_count: int) -> None:
+        self.deleted_count = deleted_count
+
+
+class FakeCollection:
+    def __init__(self, deleted_count: int) -> None:
+        self.deleted_count = deleted_count
+        self.delete_calls = 0
+
+    async def delete_many(self, filters: dict) -> FakeDeleteResult:
+        assert filters == {}
+        self.delete_calls += 1
+        return FakeDeleteResult(self.deleted_count)
+
+
+class FakeDatabase:
+    def __init__(self) -> None:
+        self.collections = {
+            name: FakeCollection(index + 1)
+            for index, name in enumerate(SystemService.data_collection_names)
+        }
+
+    def __getitem__(self, collection_name: str) -> FakeCollection:
+        return self.collections[collection_name]
+
+
 def test_run_doctor_returns_structured_response():
-    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeAuthStateRepository())
+    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeAuthStateRepository(), FakeDatabase())
 
     result = asyncio.run(service.run_doctor())
 
@@ -81,7 +108,7 @@ def test_run_doctor_returns_structured_response():
 def test_login_persists_auth_state():
     runtime = FakeRuntime()
     auth_states = FakeAuthStateRepository()
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states)
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
 
     result = asyncio.run(service.login())
 
@@ -102,7 +129,7 @@ def test_logout_clears_auth_state():
         login_method="patchright",
         browser="Patchright Chromium",
     )
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states)
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
 
     result = asyncio.run(service.logout())
 
@@ -121,7 +148,7 @@ def test_get_auth_status_hides_historical_identity_when_logged_out():
         login_method="patchright",
         browser="Patchright Chromium",
     )
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states)
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
 
     result = asyncio.run(service.get_auth_status())
 
@@ -133,7 +160,7 @@ def test_get_auth_status_hides_historical_identity_when_logged_out():
 def test_login_maps_auth_errors():
     runtime = FakeRuntime()
     runtime.login_error = AuthRequired()
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, FakeAuthStateRepository())
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, FakeAuthStateRepository(), FakeDatabase())
 
     try:
         asyncio.run(service.login())
@@ -155,6 +182,7 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
         Settings(APP_LOG_DIR=str(log_dir)),
         FakeRuntime(),
         FakeAuthStateRepository(),
+        FakeDatabase(),
     )
 
     result = asyncio.run(service.get_logs(limit=1))
@@ -164,3 +192,14 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
     assert len(result.lines) == 1
     assert result.lines[0].text.endswith("ERROR second")
     assert result.lines[0].level_hint == "error"
+
+
+def test_clear_data_deletes_business_collections():
+    database = FakeDatabase()
+    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeAuthStateRepository(), database)
+
+    result = asyncio.run(service.clear_data())
+
+    assert set(result.deleted_counts) == set(SystemService.data_collection_names)
+    assert result.total_deleted == sum(range(1, len(SystemService.data_collection_names) + 1))
+    assert all(collection.delete_calls == 1 for collection in database.collections.values())

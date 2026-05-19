@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from job_buddy.deps import get_system_service
 from job_buddy.modules.system import (
     AuthStatusResponse,
+    DataClearResponse,
     DoctorResponse,
     LogsResponse,
     SearchOptionsResponse,
@@ -33,6 +34,11 @@ async def get_logs(
     service: SystemService = Depends(get_system_service),
 ) -> LogsResponse:
     return await service.get_logs(limit=limit)
+
+
+@router.post("/data/clear", response_model=DataClearResponse, operation_id="clear_data")
+async def clear_data(service: SystemService = Depends(get_system_service)) -> DataClearResponse:
+    return await service.clear_data()
 
 
 @router.post("/auth/login", response_model=AuthStatusResponse, operation_id="login_auth")

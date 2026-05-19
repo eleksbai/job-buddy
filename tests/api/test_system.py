@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from job_buddy.deps import get_system_service
 from job_buddy.modules.system import (
     AuthStatusResponse,
+    DataClearResponse,
     DoctorCheckResponse,
     DoctorResponse,
     LogsResponse,
@@ -79,6 +80,12 @@ class FakeSystemService:
             truncated=False,
             source="job-buddy.log",
             updated_at=datetime.fromisoformat("2026-05-16T21:00:01+08:00"),
+        )
+
+    async def clear_data(self) -> DataClearResponse:
+        return DataClearResponse(
+            deleted_counts={"job_leads": 2, "conversation_records": 1},
+            total_deleted=3,
         )
 
 
@@ -161,3 +168,18 @@ async def test_get_logs():
     payload = response.json()
     assert payload["source"] == "job-buddy.log"
     assert payload["lines"][1]["level_hint"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_clear_data():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    app.dependency_overrides[get_system_service] = lambda: FakeSystemService()
+
+    async with api_client(app) as client:
+        response = await client.post("/api/system/data/clear")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_deleted"] == 3
+    assert payload["deleted_counts"]["job_leads"] == 2

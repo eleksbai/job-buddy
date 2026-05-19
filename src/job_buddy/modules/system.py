@@ -2,6 +2,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from job_buddy.core.boss import (
@@ -128,18 +129,36 @@ class LogsResponse(BaseModel):
     updated_at: datetime
 
 
+class DataClearResponse(BaseModel):
+    deleted_counts: dict[str, int]
+    total_deleted: int
+
+
 class SystemService:
+    data_collection_names = (
+        "target_profiles",
+        "job_leads",
+        "job_collection_records",
+        "job_collection_traces",
+        "greeting_tasks",
+        "greeting_records",
+        "conversation_records",
+        "chat_messages",
+    )
+
     def __init__(
         self,
         doctor_runner: BossDoctorRunner,
         settings: Settings,
         runtime: EngineRuntimeManager,
         auth_states: AuthStateRepository,
+        database: AsyncIOMotorDatabase,
     ) -> None:
         self.doctor_runner = doctor_runner
         self.settings = settings
         self.runtime = runtime
         self.auth_states = auth_states
+        self.database = database
 
     async def run_doctor(self) -> DoctorResponse:
         result = await self.doctor_runner.run()
@@ -214,6 +233,16 @@ class SystemService:
             truncated=truncated,
             source=log_file.name,
             updated_at=utc_now(),
+        )
+
+    async def clear_data(self) -> DataClearResponse:
+        deleted_counts: dict[str, int] = {}
+        for collection_name in self.data_collection_names:
+            result = await self.database[collection_name].delete_many({})
+            deleted_counts[collection_name] = result.deleted_count
+        return DataClearResponse(
+            deleted_counts=deleted_counts,
+            total_deleted=sum(deleted_counts.values()),
         )
 
     async def _sync_auth_state(

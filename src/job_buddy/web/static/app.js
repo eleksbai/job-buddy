@@ -218,11 +218,11 @@ function renderTable(containerId, columns, rows) {
 }
 
 function renderJobDetailAction(row) {
-  const sourceJobId = row.source_job_id || row.job_id || "";
-  if (!sourceJobId) {
+  const encryptJobId = row.source_job_id;
+  if (!encryptJobId) {
     return "-";
   }
-  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(sourceJobId)}">查看详情</button>`;
+  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(encryptJobId)}">查看详情</button>`;
 }
 
 function renderDetailStateBadge(fetchedAt) {
@@ -263,11 +263,12 @@ function setActiveView(viewId) {
 }
 
 function getViewFromHash() {
-  const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+  const hash = window.location.hash.replace(/^#/, "");
   if (!hash) return { view: "dashboard", params: {} };
   const detailMatch = hash.match(/^job-detail\/([^/]+)$/);
-  if (detailMatch) return { view: "job-detail", params: { jobId: detailMatch[1] } };
-  return { view: VIEW_IDS.includes(hash) ? hash : "dashboard", params: {} };
+  if (detailMatch) return { view: "job-detail", params: { jobId: decodeURIComponent(detailMatch[1]) } };
+  const viewId = decodeURIComponent(hash);
+  return { view: VIEW_IDS.includes(viewId) ? viewId : "dashboard", params: {} };
 }
 
 function navigateTo(viewId, params = {}, updateHash = true) {
@@ -275,7 +276,7 @@ function navigateTo(viewId, params = {}, updateHash = true) {
   const nextView = valid ? viewId : "dashboard";
   let nextHash = nextView;
   if (viewId === "job-detail" && params.jobId) {
-    nextHash = `job-detail/${params.jobId}`;
+    nextHash = `job-detail/${encodeURIComponent(params.jobId)}`;
   }
   if (updateHash && window.location.hash === `#${nextHash}`) {
     setActiveView(nextView);
@@ -1146,20 +1147,20 @@ function renderReadStatus(rawPayload) {
 }
 
 function renderChatHistoryAction(row) {
-  const jobId = row.job_id;
-  if (!jobId) return "-";
+  const encryptJobId = row.encrypt_job_id;
+  if (!encryptJobId) return "-";
   const name = row.name || "";
   const friendId = row.source_conversation_id || "";
-  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(String(jobId))}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
+  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(encryptJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
 }
 
 function renderJobDetailPageAction(row) {
-  const jobId = row.job_id;
-  if (!jobId) return "-";
+  const encryptJobId = row.encrypt_job_id;
+  if (!encryptJobId) return "-";
   const name = row.name || "";
   const friendId = row.source_conversation_id || "";
   const securityId = row.security_id || "";
-  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(String(jobId))}|${escapeHtml(name)}|${escapeHtml(friendId)}|${escapeHtml(securityId)}">职位详情</button>`;
+  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(encryptJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}|${escapeHtml(securityId)}">职位详情</button>`;
 }
 
 function renderLogs(payload) {
@@ -1327,6 +1328,31 @@ async function syncConversations() {
   }
 }
 
+async function clearData() {
+  const confirmed = window.confirm("确认清除目标、职位、任务、沟通和聊天等业务数据？此操作不可恢复。");
+  if (!confirmed) {
+    return;
+  }
+
+  clearError();
+  setButtonBusy("clearDataButton", true, "清除中");
+  try {
+    const result = await fetchJson("/api/system/data/clear", { method: "POST" });
+    state.jobs = [];
+    await Promise.all([
+      loadSummaryCards(),
+      fetchJson("/api/tasks?limit=5").then(renderDashboardTasks),
+      state.activeView === "jobs" ? loadJobs() : Promise.resolve(),
+      state.activeView === "tasks" ? loadTasks() : Promise.resolve(),
+      state.activeView === "conversations" ? loadConversations() : Promise.resolve(),
+      state.activeView === "search" ? loadCurrentSearchResults() : Promise.resolve(),
+    ]);
+    showNotice(`已清除 ${result.total_deleted} 条数据`, 5000);
+  } finally {
+    setButtonBusy("clearDataButton", false);
+  }
+}
+
 async function loadView(viewId, params = {}) {
   clearError();
   switch (viewId) {
@@ -1378,7 +1404,10 @@ function bindEvents() {
     const detailButton = event.target.closest("[data-job-detail]");
     if (detailButton) {
       event.preventDefault();
-      openJobDetail(detailButton.dataset.jobDetail).catch((error) => showError(error.message || "职位详情获取失败"));
+      state.jobDetailPageName = "";
+      state.jobDetailPageFriendId = "";
+      state.jobDetailPageSecurityId = "";
+      navigateTo("job-detail", { jobId: detailButton.dataset.jobDetail });
       return;
     }
 
@@ -1442,6 +1471,9 @@ function bindEvents() {
   document
     .getElementById("doctorButton")
     .addEventListener("click", () => loadDoctor().catch((error) => showError(error.message)));
+  document
+    .getElementById("clearDataButton")
+    .addEventListener("click", () => clearData().catch((error) => showError(error.message)));
   document
     .getElementById("searchButton")
     .addEventListener("click", () => triggerSearch().catch((error) => showError(error.message)));

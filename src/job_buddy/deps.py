@@ -63,4 +63,5 @@ async def get_system_service(
         settings,
         runtime,
         AuthStateRepository(db),
+        db,
     )

@@ -29,7 +29,7 @@ async def sync_conversations(
 
 @router.get("/{job_id}/messages", response_model=ChatHistoryResponse, operation_id="get_chat_history")
 async def get_chat_history(
-    job_id: int,
+    job_id: str,
     page: int = Query(default=1, ge=1),
     count: int = Query(default=20, le=100),
     cached_only: bool = Query(default=False, description="Only return cached messages, skip BOSS fetch"),
