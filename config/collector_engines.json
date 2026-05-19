@@ -9,8 +9,10 @@
     "login": "patchright",
     "search": "patchright",
     "detail": "patchright",
+    "greet": "patchright",
     "friend_list": "patchright",
-    "chat_history": "patchright"
+    "chat_history": "patchright",
+    "send_message": "patchright"
   },
   "retry_policy": {
     "login": {
@@ -22,10 +24,16 @@
     "detail": {
       "max_retries": 0
     },
+    "greet": {
+      "max_retries": 0
+    },
     "friend_list": {
       "max_retries": 0
     },
     "chat_history": {
+      "max_retries": 0
+    },
+    "send_message": {
       "max_retries": 0
     }
   }

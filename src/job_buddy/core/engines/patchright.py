@@ -15,12 +15,14 @@ from job_buddy.core.config import Settings
 from job_buddy.core.engines.models import (
     ChatHistoryRequest,
     FriendListRequest,
+    GreetJobRequest,
     JobDetailRequest,
     LoginRequest,
     LoginResult,
     SearchJobItem,
     SearchRequest,
     SearchResult,
+    SendMessageRequest,
 )
 from job_buddy.core.zhipin_api import (
     CHAT_HISTORY_URL,
@@ -28,6 +30,7 @@ from job_buddy.core.zhipin_api import (
     EDUCATION_CODES,
     EXPERIENCE_CODES,
     FRIEND_LIST_URL,
+    GREET_URL,
     INDUSTRY_CODES,
     JOB_TYPE_CODES,
     WEB_GEEK_CHAT_URL,
@@ -143,8 +146,9 @@ class PatchrightEngine:
             await self.close()
             await self.init()
 
-    def page_to_file(self, content: str) -> None:
-        output = Path("data/patchright.html")
+    async def save_page_to_file(self, filename: str = "patchright.html") -> None:
+        output = Path("data") / filename
+        content = await self.page.content()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(content, encoding="utf-8")
 
@@ -413,6 +417,42 @@ class PatchrightEngine:
             reverse=True,
         )
 
+    async def greet(self, request: GreetJobRequest) -> dict[str, Any]:
+        await self.check_page_health()
+        login_status = await self.get_auth_status()
+        if not login_status.logged_in:
+            raise BossOperationError(
+                code="AUTH_REQUIRED",
+                message="未登录，请先点击页面右上角登录",
+                recoverable=True,
+                recovery_action="login",
+                status_code=401,
+                boss_side=True,
+            )
+
+        body = {
+            "securityId": request.security_id,
+            "jobId": request.job_id,
+            "greeting": request.message or "您好，我对该岗位很感兴趣，希望能和您聊一聊。",
+        }
+        payload = await self._post_json(GREET_URL, WEB_GEEK_CHAT_URL, body)
+        if payload.get("code") not in (None, 0):
+            message = str(payload.get("message") or "打招呼失败")
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=message,
+                recoverable=True,
+                status_code=400,
+                boss_side=True,
+            )
+
+        return {
+            "job_id": request.job_id,
+            "security_id": request.security_id,
+            "message": body["greeting"],
+            "raw_payload": payload,
+        }
+
     async def chat_history(self, request: ChatHistoryRequest) -> dict[str, Any]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
@@ -464,6 +504,275 @@ class PatchrightEngine:
             "raw_payload": payload,
         }
 
+    async def send_message(self, request: SendMessageRequest) -> dict[str, Any]:
+        await self.check_page_health()
+        login_status = await self.get_auth_status()
+        if not login_status.logged_in:
+            raise BossOperationError(
+                code="AUTH_REQUIRED",
+                message="未登录，请先点击页面右上角登录",
+                recoverable=True,
+                recovery_action="login",
+                status_code=401,
+                boss_side=True,
+            )
+
+        content = request.content.strip()
+        if not content:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="消息内容不能为空",
+                recoverable=False,
+                status_code=400,
+            )
+
+        chat_url = f"{WEB_GEEK_CHAT_URL}?{urlencode({'id': request.boss_id, 'jobId': request.job_id, 'securityId': request.security_id or ''})}"
+        await self.page.goto(chat_url, wait_until="domcontentloaded")
+        try:
+            await self.page.wait_for_load_state("networkidle")
+        except Exception:
+            pass
+        try:
+            await self.page.wait_for_selector(".chat-container", state="attached", timeout=10_000)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+        # await self.save_page_to_file("patchright.html")
+        result = await self.page.evaluate(
+            """
+            async ({ request }) => {
+                const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const escapeHtml = (text) => String(text)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+                const squashText = (text) => String(text || "").replace(/\\s+/g, " ").trim();
+                const findVueComponent = (predicate) => {
+                    const seen = new Set();
+                    const queue = [];
+                    for (const el of document.querySelectorAll("*")) {
+                        if (el.__vue__) queue.push(el.__vue__);
+                    }
+                    while (queue.length) {
+                        const vm = queue.shift();
+                        if (!vm || seen.has(vm)) continue;
+                        seen.add(vm);
+                        if (predicate(vm)) return vm;
+                        try {
+                            for (const child of vm.$children || []) queue.push(child);
+                        } catch (error) {}
+                    }
+                    return null;
+                };
+                const vmName = (vm) => (vm && vm.$options && (vm.$options.name || vm.$options._componentTag)) || "";
+                const findVueParent = (el, predicate) => {
+                    let current = el;
+                    while (current) {
+                        const vm = current.__vue__;
+                        if (vm && (!predicate || predicate(vm))) return vm;
+                        current = current.parentElement;
+                    }
+                    return null;
+                };
+                const describeEl = (el) => ({
+                    tag: el.tagName,
+                    id: el.id || "",
+                    className: String(el.className || ""),
+                    contenteditable: el.getAttribute("contenteditable") || "",
+                    text: squashText(el.innerText || el.value || "").slice(0, 120),
+                    vue: vmName(el.__vue__),
+                    parentVue: vmName(findVueParent(el)),
+                });
+                const collectDiagnostics = (log) => {
+                    const components = [];
+                    const seen = new Set();
+                    for (const el of document.querySelectorAll("*")) {
+                        const vm = el.__vue__;
+                        if (!vm || seen.has(vm)) continue;
+                        seen.add(vm);
+                        const methods = Object.keys(vm)
+                            .filter((key) => typeof vm[key] === "function")
+                            .filter((key) => /send|click|chat|friend|boss|geek|message|enter/i.test(key))
+                            .slice(0, 12);
+                        components.push({
+                            name: vmName(vm),
+                            className: String(el.className || ""),
+                            methods,
+                        });
+                        if (components.length >= 40) break;
+                    }
+                    const inputs = Array.from(document.querySelectorAll(
+                        "#chat-input, button[type='send'].btn-send, .boss-chat-editor-input, .chat-editor [contenteditable='true'], .chat-conversation [contenteditable='true'], [contenteditable='true'], textarea, input, [class*='editor'], [class*='input']"
+                    )).slice(0, 60).map(describeEl);
+                    return {
+                        href: location.href,
+                        readyState: document.readyState,
+                        title: document.title,
+                        chatConversationText: squashText(document.querySelector(".chat-conversation")?.innerText || "").slice(0, 500),
+                        chatUserText: squashText(document.querySelector(".chat-user")?.innerText || "").slice(0, 500),
+                        chatUserVue: vmName(document.querySelector(".chat-user")?.__vue__),
+                        chatUserItemCount: document.querySelectorAll(".chat-user li, .chat-user .user-item, .chat-user [data-id], .chat-user [data-uid]").length,
+                        inputs,
+                        components,
+                        log,
+                    };
+                };
+                const getChatDom = () => {
+                    const input = document.querySelector("#chat-input");
+                    const sendButton = document.querySelector("button[type='send'].btn-send");
+                    if (!input) return { input: null, sendButton: null, error: "未找到聊天输入框" };
+                    if (!sendButton) return { input, sendButton: null, error: "未找到发送按钮" };
+                    return { input, sendButton, error: null };
+                };
+                const waitForChatDom = async () => {
+                    for (let i = 0; i < 60; i += 1) {
+                        const state = getChatDom();
+                        if (!state.error) return state;
+                        await sleep(250);
+                    }
+                    return getChatDom();
+                };
+                const switchByList = async (log) => {
+                    const targetIds = [
+                        request.boss_uid,
+                        request.boss_id,
+                        request.raw_payload && request.raw_payload.uid,
+                        request.raw_payload && request.raw_payload.encryptUid,
+                        request.raw_payload && request.raw_payload.encryptBossId,
+                    ].filter(Boolean).map((item) => String(item));
+                    const list = document.querySelector(".chat-user");
+                    const listVm = list && list.__vue__;
+                    const candidateItems = Array.from(document.querySelectorAll(
+                        ".chat-user li, .chat-user .user-item, .chat-user [data-id], .chat-user [data-uid]"
+                    ));
+                    const matchedEl = candidateItems.find((el) => {
+                        const text = [el.textContent, el.outerHTML, el.getAttribute("data-id"), el.getAttribute("data-uid")]
+                            .filter(Boolean)
+                            .join(" ");
+                        return targetIds.some((id) => id && text.includes(id));
+                    });
+                    if (matchedEl) {
+                        matchedEl.click();
+                        log.push("matched chat list item clicked");
+                        await sleep(1200);
+                        return true;
+                    }
+                    if (listVm && typeof listVm.geekClick === "function") {
+                        const friendData = {
+                            ...request.raw_payload,
+                            uid: Number(request.boss_uid),
+                            friendId: Number(request.boss_uid),
+                            encryptUid: request.boss_id,
+                            encryptBossId: request.boss_id,
+                            securityId: request.security_id,
+                            encryptJobId: request.job_id,
+                            jobId: request.raw_payload && request.raw_payload.jobId,
+                            friendSource: (request.raw_payload && request.raw_payload.friendSource) || 0,
+                        };
+                        try {
+                            listVm.geekClick(friendData);
+                            log.push("geekClick called");
+                            await sleep(1500);
+                            return true;
+                        } catch (error) {
+                            log.push("geekClick failed: " + error.message);
+                        }
+                    }
+                    log.push("chat list switch skipped");
+                    return false;
+                };
+                const resolveSelfId = async () => {
+                    if (request.self_id) return String(request.self_id);
+                    const pageUid = window._PAGE && (window._PAGE.uid || window._PAGE.userId);
+                    if (pageUid) return String(pageUid);
+                    try {
+                        const response = await fetch("/wapi/zpuser/wap/getUserInfo.json", {
+                            method: "GET",
+                            credentials: "include",
+                            headers: {
+                                "Accept": "application/json, text/plain, */*",
+                                "X-Requested-With": "XMLHttpRequest",
+                            },
+                        });
+                        const payload = await response.json();
+                        const userId = payload && payload.zpData && payload.zpData.userId;
+                        if (userId) return String(userId);
+                    } catch (error) {}
+                    return "";
+                };
+
+                const log = [];
+                const selfId = await resolveSelfId();
+                if (!selfId) {
+                    return { ok: false, error: "未获取到当前求职者 uid", log };
+                }
+
+                await switchByList(log);
+                const state = await waitForChatDom();
+                if (state.error) return { ok: false, error: state.error, diagnostics: collectDiagnostics(log), log };
+                const { input, sendButton } = state;
+
+                if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+                    input.value = request.content;
+                } else {
+                    input.innerHTML = escapeHtml(request.content);
+                }
+                input.focus();
+                input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: request.content }));
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                await sleep(300);
+                if (sendButton.disabled || sendButton.classList.contains("disabled")) {
+                    log.push("send button disabled before click");
+                }
+                sendButton.click();
+                log.push("send button clicked");
+                await sleep(1200);
+                const chatText = squashText(document.querySelector(".chat-conversation")?.innerText || "");
+                return {
+                    ok: true,
+                    method: "dom.click.send",
+                    selfId,
+                    visibleInConversation: chatText.includes(request.content),
+                    log,
+                };
+            }
+            """,
+            {"request": request.__dict__},
+        )
+        # await self.save_page_to_file("patchright-after-send.html")
+        if not isinstance(result, dict) or not result.get("ok"):
+            result_payload = result if isinstance(result, dict) else {}
+            message = str(result_payload.get("error") or "发送消息失败")
+            diagnostics = result_payload.get("diagnostics")
+            if isinstance(diagnostics, dict):
+                chat_text = str(diagnostics.get("chatConversationText") or "")
+                item_count = diagnostics.get("chatUserItemCount")
+                input_count = len(diagnostics.get("inputs") or [])
+                message = (
+                    f"{message}（chatItems={item_count}, inputs={input_count}, "
+                    f"page={diagnostics.get('href')}, text={chat_text[:80]}）"
+                )
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=message,
+                recoverable=True,
+                recovery_action="打开 BOSS 沟通页后重试",
+                status_code=502,
+                boss_side=True,
+            )
+
+        return {
+            "status": "sent",
+            "job_id": request.job_id,
+            "gid": request.gid,
+            "self_id": result.get("selfId") or request.self_id,
+            "boss_uid": request.boss_uid,
+            "boss_id": request.boss_id,
+            "security_id": request.security_id,
+            "content": content,
+            "raw_payload": result,
+        }
+
     async def _fetch_json(self, url: str, referer: str) -> dict[str, Any]:
         return await self.page.evaluate(
             """
@@ -482,6 +791,28 @@ class PatchrightEngine:
             }
             """,
             {"url": url, "referer": referer},
+        )
+
+    async def _post_json(self, url: str, referer: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await self.page.evaluate(
+            """
+            async ({ url, referer, body }) => {
+                const response = await fetch(url, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                        "Accept": "application/json, text/plain, */*",
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "zp_page_request_id": crypto.randomUUID(),
+                    },
+                    referrer: referer,
+                    body: new URLSearchParams(body).toString(),
+                });
+                return await response.json();
+            }
+            """,
+            {"url": url, "referer": referer, "body": body},
         )
 
     async def healthcheck(self) -> dict[str, Any]:

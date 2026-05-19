@@ -34,7 +34,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -619,4 +620,28 @@ a {
 #jobDetailChatContent {
   max-height: 60vh;
   overflow-y: auto;
+}
+
+.chat-compose-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.chat-compose-card textarea {
+  width: 100%;
+  min-height: 5rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.chat-compose-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }

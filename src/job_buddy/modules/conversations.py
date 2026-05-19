@@ -35,6 +35,7 @@ class ConversationRecord(DocumentModel):
     source_conversation_id: str  # friend_id or gid
     gid: str = ""
     security_id: str | None = None
+    self_id: str | None = None
     job_id: int | None = None
     encrypt_job_id: str | None = None
     encrypt_boss_id: str | None = None
@@ -54,6 +55,7 @@ class ConversationRecordRead(TimestampedSchema):
     source_conversation_id: str
     gid: str
     security_id: str | None = None
+    self_id: str | None = None
     job_id: int | None = None
     encrypt_job_id: str | None = None
     encrypt_boss_id: str | None = None
@@ -97,6 +99,18 @@ class ChatHistoryResponse(BaseModel):
     messages: list[dict]
 
 
+class SendMessagePayload(BaseModel):
+    content: str
+
+
+class SendMessageResponse(BaseModel):
+    gid: str
+    job_id: str
+    content: str
+    status: str
+    raw_payload: dict = Field(default_factory=dict)
+
+
 class ConversationSyncResponse(BaseModel):
     count: int
 
@@ -109,6 +123,37 @@ class ConversationRepository(BaseRepository[ConversationRecord]):
 class ChatMessageRepository(BaseRepository[ChatMessage]):
     collection_name = "chat_messages"
     model_cls = ChatMessage
+
+
+def _extract_self_id(item: dict) -> str | None:
+    raw = item.get("raw_payload", item)
+    boss_uid = raw.get("uid") or item.get("boss_uid")
+    last_message_info = raw.get("lastMessageInfo") or {}
+    if not boss_uid or not isinstance(last_message_info, dict):
+        return None
+
+    from_id = last_message_info.get("fromId")
+    to_id = last_message_info.get("toId")
+    if from_id is not None and str(from_id) == str(boss_uid) and to_id is not None:
+        return str(to_id)
+    if to_id is not None and str(to_id) == str(boss_uid) and from_id is not None:
+        return str(from_id)
+    return None
+
+
+def _extract_self_id_from_messages(boss_uid: str | None, messages: list[dict]) -> str | None:
+    if not boss_uid:
+        return None
+
+    for message in messages:
+        raw = message.get("raw_payload") or message
+        from_id = ((raw.get("from") or {}).get("uid")) or message.get("from_id")
+        to_id = (raw.get("to") or {}).get("uid")
+        if from_id is not None and str(from_id) == str(boss_uid) and to_id is not None:
+            return str(to_id)
+        if to_id is not None and str(to_id) == str(boss_uid) and from_id is not None:
+            return str(from_id)
+    return None
 
 
 class ConversationService:
@@ -180,6 +225,15 @@ class ConversationService:
             raise map_boss_operation_error(exc) from exc
 
         messages = result.get("messages", [])
+        boss_uid = str(conv.get("gid") or (conv.get("raw_payload") or {}).get("uid") or "")
+        backfilled_self_id = _extract_self_id_from_messages(boss_uid, messages)
+        if backfilled_self_id and backfilled_self_id != conv.get("self_id"):
+            await self.conversations.collection.update_one(
+                {"_id": conv["_id"]},
+                {"$set": {"self_id": backfilled_self_id, "updated_at": utc_now()}},
+            )
+            conv["self_id"] = backfilled_self_id
+
         msg_coll = self.messages.collection
         for m in messages:
             existing = await msg_coll.find_one({"message_id": m["message_id"]})
@@ -206,6 +260,76 @@ class ConversationService:
             messages=messages,
         )
 
+    async def send_message(self, job_id: str, content: str) -> SendMessageResponse:
+        content = content.strip()
+        if not content:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="消息内容不能为空",
+                recoverable=False,
+                status_code=400,
+            )
+
+        conv = await self.conversations.collection.find_one({"encrypt_job_id": job_id})
+        if not conv:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=f"未找到 job_id={job_id} 的会话记录",
+                recoverable=False,
+                status_code=404,
+            )
+
+        conv = await self._ensure_send_identity(conv, job_id)
+
+        try:
+            result = await self.boss_client.send_message(conv, content)
+        except Exception as exc:
+            logger.warning("BOSS send message failed: job_id=%s error=%s", job_id, exc)
+            raise map_boss_operation_error(exc) from exc
+
+        return SendMessageResponse(
+            gid=str(conv.get("gid") or ""),
+            job_id=job_id,
+            content=content,
+            status=str(result.get("status") or "sent"),
+            raw_payload=result,
+        )
+
+    async def _ensure_send_identity(self, conv: dict, job_id: str) -> dict:
+        raw_payload = conv.get("raw_payload") or {}
+        boss_uid = str(conv.get("gid") or raw_payload.get("uid") or "")
+        boss_id = conv.get("encrypt_boss_id") or raw_payload.get("encryptBossId") or raw_payload.get("encryptUid")
+        if conv.get("self_id") and boss_uid and boss_id:
+            return conv
+
+        boss_id_for_history = conv.get("encrypt_boss_id")
+        security_id = conv.get("security_id")
+        if not boss_id_for_history or not security_id:
+            return conv
+
+        try:
+            result = await self.boss_client.get_chat_history(
+                boss_id=boss_id_for_history,
+                security_id=security_id,
+                page=1,
+                count=20,
+            )
+        except Exception as exc:
+            logger.warning("BOSS send identity backfill failed: job_id=%s error=%s", job_id, exc)
+            return conv
+
+        self_id = _extract_self_id_from_messages(boss_uid, result.get("messages", []))
+        updates = {}
+        if self_id:
+            updates["self_id"] = self_id
+        if boss_uid:
+            updates["boss_uid"] = boss_uid
+        if updates:
+            updates["updated_at"] = utc_now()
+            await self.conversations.collection.update_one({"_id": conv["_id"]}, {"$set": updates})
+            conv.update(updates)
+        return conv
+
     async def sync_conversations(self) -> int:
         try:
             friends = await self.boss_client.list_friends(page=1)
@@ -229,6 +353,7 @@ class ConversationService:
                     pass
 
             last_message_at = _format_last_time(last_message_ts) if last_message_ts else None
+            self_id = _extract_self_id(item)
 
             filter_doc = {"job_id": job_id} if job_id else {"source_conversation_id": friend_id}
 
@@ -237,6 +362,7 @@ class ConversationService:
                 {"$set": {
                     "source_conversation_id": friend_id,
                     "gid": item.get("gid", ""),
+                    "self_id": self_id,
                     "job_id": job_id,
                     "encrypt_job_id": item.get("encrypt_job_id"),
                     "encrypt_boss_id": item.get("encrypt_boss_id"),

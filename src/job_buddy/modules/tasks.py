@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +19,8 @@ from job_buddy.modules.common import (
 )
 from job_buddy.modules.jobs import GreetingTask, GreetingTaskRepository, JobLeadRepository
 from job_buddy.modules.targets import TargetProfile
+
+logger = logging.getLogger(__name__)
 
 
 class SearchTaskRequest(BaseModel):
@@ -150,12 +153,17 @@ class GreetingService:
                     response = await self.boss_client.greet_job(
                         {
                             "source_job_id": job.source_job_id,
+                            "security_id": job.security_id,
                             "title": job.title,
                             "company": job.company,
                         },
                         message=default_message,
                     )
                 except Exception as exc:
+                    logger.warning(
+                        "BOSS greet failed: task_id=%s source_job_id=%s error=%s",
+                        task.id, job.source_job_id, exc,
+                    )
                     raise map_boss_operation_error(exc) from exc
                 await self.records.create(
                     GreetingRecord(

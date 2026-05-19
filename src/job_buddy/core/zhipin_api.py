@@ -7,6 +7,7 @@ WEB_GEEK_JOB_URL = f"{BASE_URL}/web/geek/job"
 WEB_GEEK_CHAT_URL = f"{BASE_URL}/web/geek/chat"
 SEARCH_URL = f"{BASE_URL}/wapi/zpgeek/search/joblist.json"
 DETAIL_URL = f"{BASE_URL}/wapi/zpgeek/job/detail.json"
+GREET_URL = f"{BASE_URL}/wapi/zpgeek/friend/add.json"
 FRIEND_LIST_URL = f"{BASE_URL}/wapi/zprelation/friend/getGeekFriendList.json"
 CHAT_HISTORY_URL = f"{BASE_URL}/wapi/zpchat/geek/historyMsg"
 

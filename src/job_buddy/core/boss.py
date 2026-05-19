@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -22,6 +23,7 @@ class BossClientProtocol(Protocol):
     async def greet_job(self, job: dict[str, Any], message: str | None = None) -> dict[str, Any]: ...
     async def list_friends(self, page: int = 1) -> list[dict[str, Any]]: ...
     async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]: ...
+    async def send_message(self, conversation: dict[str, Any], content: str) -> dict[str, Any]: ...
     async def list_conversations(self, limit: int = 20) -> list[dict[str, Any]]: ...
     async def healthcheck(self) -> dict[str, Any]: ...
 
@@ -89,6 +91,9 @@ def map_boss_operation_error(exc: Exception) -> BossOperationError:
     )
 
 
+logger = logging.getLogger(__name__)
+
+
 def raise_for_boss_healthcheck(health: dict[str, Any]) -> None:
     status_value = str(health.get("status") or "")
     logged_in = health.get("logged_in")
@@ -97,6 +102,7 @@ def raise_for_boss_healthcheck(health: dict[str, Any]) -> None:
 
     if status_value == "auth_required" or logged_in is False:
         code = "TOKEN_INVALID" if last_error or "无效" in message else "AUTH_REQUIRED"
+        logger.warning("BOSS healthcheck failed: %s", health)
         raise BossOperationError(
             code=code,
             message=message,

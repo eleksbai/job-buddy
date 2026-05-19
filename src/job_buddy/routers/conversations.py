@@ -6,6 +6,8 @@ from job_buddy.modules.conversations import (
     ConversationRecordRead,
     ConversationService,
     ConversationSyncResponse,
+    SendMessagePayload,
+    SendMessageResponse,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -36,3 +38,12 @@ async def get_chat_history(
     service: ConversationService = Depends(get_conversation_service),
 ) -> ChatHistoryResponse:
     return await service.get_chat_history(job_id=job_id, page=page, count=count, cached_only=cached_only)
+
+
+@router.post("/{job_id}/messages/send", response_model=SendMessageResponse, operation_id="send_chat_message")
+async def send_chat_message(
+    job_id: str,
+    payload: SendMessagePayload,
+    service: ConversationService = Depends(get_conversation_service),
+) -> SendMessageResponse:
+    return await service.send_message(job_id=job_id, content=payload.content)

@@ -2,7 +2,15 @@ import asyncio
 import json
 
 from job_buddy.core.boss import BossOperationError
-from job_buddy.core.engines.models import JobDetailRequest, LoginRequest, LoginResult, SearchJobItem, SearchResult
+from job_buddy.core.engines.models import (
+    GreetJobRequest,
+    JobDetailRequest,
+    LoginRequest,
+    LoginResult,
+    SearchJobItem,
+    SearchResult,
+    SendMessageRequest,
+)
 from job_buddy.core.engines.runtime import EngineRuntimeManager
 from job_buddy.core.config import Settings
 
@@ -14,6 +22,10 @@ class FakeEngine:
         self.login_calls = 0
         self.search_calls = 0
         self.detail_calls = 0
+        self.greet_calls = 0
+        self.greet_request = None
+        self.send_message_calls = 0
+        self.send_message_request = None
 
     async def login(self, request: LoginRequest) -> LoginResult:
         _ = request
@@ -40,6 +52,16 @@ class FakeEngine:
             "detail_text": "职位名称：demo",
         }
 
+    async def greet(self, request: GreetJobRequest) -> dict:
+        self.greet_calls += 1
+        self.greet_request = request
+        return {"code": 0, "job_id": request.job_id, "security_id": request.security_id}
+
+    async def send_message(self, request: SendMessageRequest) -> dict:
+        self.send_message_calls += 1
+        self.send_message_request = request
+        return {"status": "sent", "job_id": request.job_id, "content": request.content}
+
     async def healthcheck(self) -> dict:
         return {"status": "ok", "provider": self.name, "logged_in": True}
 
@@ -53,8 +75,20 @@ def test_runtime_uses_bound_engine_for_login_search_and_detail(tmp_path):
         json.dumps(
             {
                 "engines": {"patchright": {"enabled": True, "params": {}}},
-                "bindings": {"login": "patchright", "search": "patchright", "detail": "patchright"},
-                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}, "detail": {"max_retries": 0}},
+                "bindings": {
+                    "login": "patchright",
+                    "search": "patchright",
+                    "detail": "patchright",
+                    "greet": "patchright",
+                    "send_message": "patchright",
+                },
+                "retry_policy": {
+                    "login": {"max_retries": 0},
+                    "search": {"max_retries": 0},
+                    "detail": {"max_retries": 0},
+                    "greet": {"max_retries": 0},
+                    "send_message": {"max_retries": 0},
+                },
             }
         ),
         encoding="utf-8",
@@ -74,11 +108,31 @@ def test_runtime_uses_bound_engine_for_login_search_and_detail(tmp_path):
             )
         )
     )
+    greet_result = asyncio.run(runtime.greet_job({"source_job_id": "python", "security_id": "sec-1"}, "你好"))
+    send_result = asyncio.run(
+        runtime.send_message(
+            {
+                "encrypt_job_id": "python",
+                "gid": "gid-1",
+                "self_id": "self-1",
+                "encrypt_boss_id": "boss-1",
+                "security_id": "sec-1",
+                "raw_payload": {"uid": "uid-1"},
+            },
+            "发一条消息",
+        )
+    )
 
     assert login_result.logged_in is True
     assert fake_engine.login_calls == 1
     assert fake_engine.search_calls == 1
     assert fake_engine.detail_calls == 1
+    assert fake_engine.greet_calls == 1
+    assert fake_engine.greet_request.message == "你好"
+    assert fake_engine.send_message_calls == 1
+    assert fake_engine.send_message_request.content == "发一条消息"
+    assert fake_engine.send_message_request.job_id == "python"
+    assert fake_engine.send_message_request.gid == "gid-1"
     assert search_result == [
         {
             "job_id": "python",
@@ -94,6 +148,8 @@ def test_runtime_uses_bound_engine_for_login_search_and_detail(tmp_path):
     ]
     assert detail_result["job_id"] == "python"
     assert detail_result["security_id"] == "sec-1"
+    assert greet_result["job_id"] == "python"
+    assert send_result["status"] == "sent"
 
 
 def test_runtime_marks_state_after_token_invalid_failure(tmp_path):

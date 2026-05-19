@@ -330,12 +330,22 @@
           <div class="panel-card">
             <div id="jobDetailChatContent"></div>
           </div>
+          <div class="panel-card chat-compose-card">
+            <textarea id="jobDetailMessageInput" rows="3" placeholder="输入要发送的消息"></textarea>
+            <div class="chat-compose-actions">
+              <span id="jobDetailSendHint" class="hint-text">发送普通聊天消息，需要已存在会话记录。</span>
+              <button id="jobDetailSendMessageButton">发送消息</button>
+            </div>
+          </div>
 
           <div class="panel-header">
             <div>
               <span class="eyebrow">职位详情</span>
               <h2 id="jobDetailPageTitle">职位详情</h2>
               <div id="jobDetailPageMeta" class="detail-meta"></div>
+            </div>
+            <div class="panel-actions">
+              <button id="jobDetailGreetButton" hidden>打招呼</button>
             </div>
           </div>
           <div class="panel-card">

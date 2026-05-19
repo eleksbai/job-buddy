@@ -63,6 +63,7 @@ class FakeJob:
     def __init__(self) -> None:
         self.id = "job-1"
         self.source_job_id = "source-job-1"
+        self.security_id = "sec-1"
         self.title = "Python Backend Engineer"
         self.company = "Demo Tech"
 

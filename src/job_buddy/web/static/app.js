@@ -16,6 +16,7 @@ const state = {
   jobDetailPageName: null,
   jobDetailPageFriendId: null,
   jobDetailPageSecurityId: null,
+  jobDetailPagePayload: null,
   jobs: [],
   chatHistoryGid: null,
   chatHistoryPage: 1,
@@ -1013,6 +1014,7 @@ async function loadJobDetailPage(jobId) {
   }
 
   state.jobDetailPageJobId = jobId;
+  state.jobDetailPagePayload = null;
   clearError();
 
   // Job detail: fetch first (uses cache, or triggers BOSS fetch if missing)
@@ -1020,12 +1022,14 @@ async function loadJobDetailPage(jobId) {
   document.getElementById("jobDetailPageMeta").innerHTML = "";
   document.getElementById("jobDetailPageContent").innerHTML =
     '<div class="empty">正在加载职位详情</div>';
+  document.getElementById("jobDetailGreetButton").hidden = true;
 
   // Chat: show cached messages only (no BOSS fetch)
   document.getElementById("jobDetailChatTitle").textContent = "聊天记录";
   document.getElementById("jobDetailChatMeta").textContent = "";
   document.getElementById("jobDetailChatContent").innerHTML =
     '<div class="empty">暂无缓存，点击"同步聊天记录"获取</div>';
+  document.getElementById("jobDetailMessageInput").value = "";
 
   const securityId = state.jobDetailPageSecurityId || "";
   const detailUrl = securityId
@@ -1034,6 +1038,7 @@ async function loadJobDetailPage(jobId) {
 
   try {
     const detailResult = await fetchJson(detailUrl);
+    state.jobDetailPagePayload = detailResult;
     renderJobDetailPageDetail(detailResult);
   } catch (error) {
     document.getElementById("jobDetailPageTitle").textContent = "职位详情加载失败";
@@ -1081,6 +1086,29 @@ function renderJobDetailPageDetail(payload) {
   document.getElementById("jobDetailPageTitle").textContent = title;
   document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
+  const contact = payload?.job?.raw_payload?.contact;
+  document.getElementById("jobDetailGreetButton").hidden = contact !== false;
+}
+
+async function greetCurrentJobDetail() {
+  const job = state.jobDetailPagePayload?.job;
+  if (!job?.id) {
+    showError("缺少职位记录 ID");
+    return;
+  }
+
+  clearError();
+  setButtonBusy("jobDetailGreetButton", true, "发送中");
+  try {
+    const result = await fetchJson("/api/tasks/greet", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: [job.id], limit: 1 }),
+    });
+    showNotice(`已触发打招呼任务 ${result.task_id}`, 5000);
+    await Promise.all([loadJobDetailPage(state.jobDetailPageJobId), loadJobs(), loadTasks(), loadSummaryCards()]);
+  } finally {
+    setButtonBusy("jobDetailGreetButton", false);
+  }
 }
 
 async function syncChatHistoryForJobDetail() {
@@ -1101,6 +1129,37 @@ async function syncChatHistoryForJobDetail() {
     showError(error.message || "同步聊天记录失败");
   } finally {
     setButtonBusy("jobDetailSyncChatButton", false);
+  }
+}
+
+async function sendMessageForJobDetail() {
+  const jobId = state.jobDetailPageJobId;
+  const input = document.getElementById("jobDetailMessageInput");
+  const content = input.value.trim();
+  if (!jobId) {
+    showError("缺少职位 ID");
+    return;
+  }
+  if (!content) {
+    showError("消息内容不能为空");
+    return;
+  }
+
+  clearError();
+  setButtonBusy("jobDetailSendMessageButton", true, "发送中");
+  try {
+    await fetchJson(`/api/conversations/${encodeURIComponent(jobId)}/messages/send`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    input.value = "";
+    const payload = await fetchJson(
+      `/api/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
+    );
+    renderJobDetailPageChat(payload);
+    showNotice("消息已发送", 3000);
+  } finally {
+    setButtonBusy("jobDetailSendMessageButton", false);
   }
 }
 
@@ -1517,6 +1576,17 @@ function bindEvents() {
   document
     .getElementById("jobDetailRefreshButton")
     .addEventListener("click", () => loadJobDetailPage(state.jobDetailPageJobId).catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailGreetButton")
+    .addEventListener("click", () => greetCurrentJobDetail().catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailSendMessageButton")
+    .addEventListener("click", () => sendMessageForJobDetail().catch((error) => showError(error.message)));
+  document.getElementById("jobDetailMessageInput").addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      sendMessageForJobDetail().catch((error) => showError(error.message));
+    }
+  });
   document.getElementById("jobDetailDrawer").addEventListener("click", (event) => {
     if (event.target?.dataset?.close === "true") {
       closeJobDetailDrawer();

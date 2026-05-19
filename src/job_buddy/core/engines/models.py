@@ -37,6 +37,13 @@ class JobDetailRequest:
 
 
 @dataclass
+class GreetJobRequest:
+    job_id: str
+    security_id: str
+    message: str | None = None
+
+
+@dataclass
 class FriendListRequest:
     page: int = 1
 
@@ -47,6 +54,18 @@ class ChatHistoryRequest:
     security_id: str
     page: int = 1
     count: int = 20
+
+
+@dataclass
+class SendMessageRequest:
+    job_id: str
+    gid: str
+    self_id: str
+    boss_uid: str
+    boss_id: str
+    security_id: str | None
+    content: str
+    raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

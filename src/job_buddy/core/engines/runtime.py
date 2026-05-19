@@ -12,11 +12,13 @@ from job_buddy.core.engines.models import (
     EngineConfig,
     EngineState,
     FriendListRequest,
+    GreetJobRequest,
     JobDetailRequest,
     LoginRequest,
     LoginResult,
     SearchRequest,
     SearchResult,
+    SendMessageRequest,
 )
 from job_buddy.core.engines.patchright import PatchrightEngine
 
@@ -79,13 +81,18 @@ class EngineRuntimeManager:
         return result
 
     async def greet_job(self, job: dict[str, Any], message: str | None = None) -> dict[str, Any]:
-        _ = job, message
-        raise BossOperationError(
-            code="ENGINE_UNAVAILABLE",
-            message="当前运行时未实现发送消息能力",
-            recoverable=False,
-            status_code=501,
-        )
+        security_id = str(job.get("security_id") or "")
+        job_id = str(job.get("source_job_id") or job.get("job_id") or "")
+        if not security_id or not job_id:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="打招呼缺少 security_id 或 job_id",
+                recoverable=False,
+                status_code=400,
+            )
+        result = await self._execute("greet", GreetJobRequest(job_id=job_id, security_id=security_id, message=message), "greet")
+        assert isinstance(result, dict)
+        return result
 
     async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
         result = await self._execute("friend_list", FriendListRequest(page=page), "friend_list")
@@ -94,6 +101,53 @@ class EngineRuntimeManager:
 
     async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
         result = await self._execute("chat_history", ChatHistoryRequest(boss_id=boss_id, security_id=security_id, page=page, count=count), "chat_history")
+        assert isinstance(result, dict)
+        return result
+
+    async def send_message(self, conversation: dict[str, Any], content: str) -> dict[str, Any]:
+        content = content.strip()
+        job_id = str(conversation.get("encrypt_job_id") or "")
+        gid = str(conversation.get("gid") or "")
+        raw_payload = dict(conversation.get("raw_payload") or {})
+        self_id = str(conversation.get("self_id") or "")
+        boss_uid = str(raw_payload.get("uid") or conversation.get("boss_uid") or gid or "")
+        boss_id = str(conversation.get("encrypt_boss_id") or raw_payload.get("encryptBossId") or raw_payload.get("encryptUid") or "")
+        security_id = conversation.get("security_id")
+        if not content:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="消息内容不能为空",
+                recoverable=False,
+                status_code=400,
+            )
+        if not job_id or not gid:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="发送消息缺少会话 ID",
+                recoverable=False,
+                status_code=400,
+            )
+        if not boss_uid or not boss_id:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="发送消息缺少 boss uid 或 encryptBossId，请先同步会话",
+                recoverable=False,
+                status_code=400,
+            )
+        result = await self._execute(
+            "send_message",
+            SendMessageRequest(
+                job_id=job_id,
+                gid=gid,
+                self_id=self_id,
+                boss_uid=boss_uid,
+                boss_id=boss_id,
+                security_id=str(security_id) if security_id else None,
+                content=content,
+                raw_payload=raw_payload,
+            ),
+            "send_message",
+        )
         assert isinstance(result, dict)
         return result
 
@@ -212,8 +266,18 @@ class EngineRuntimeManager:
                 "engines": {
                     "patchright": {"enabled": True, "params": {}},
                 },
-                "bindings": {"login": "patchright", "search": "patchright", "detail": "patchright"},
-                "retry_policy": {"login": {"max_retries": 0}, "search": {"max_retries": 0}, "detail": {"max_retries": 0}},
+                "bindings": {
+                    "login": "patchright",
+                    "search": "patchright",
+                    "detail": "patchright",
+                    "send_message": "patchright",
+                },
+                "retry_policy": {
+                    "login": {"max_retries": 0},
+                    "search": {"max_retries": 0},
+                    "detail": {"max_retries": 0},
+                    "send_message": {"max_retries": 0},
+                },
             }
         return json.loads(path.read_text(encoding="utf-8"))
 

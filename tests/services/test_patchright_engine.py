@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 from job_buddy.core.boss import BossOperationError
 from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import JobDetailRequest, LoginRequest, SearchRequest
+from job_buddy.core.engines.models import GreetJobRequest, JobDetailRequest, LoginRequest, SearchRequest, SendMessageRequest
 from job_buddy.core.engines.patchright import PatchrightEngine
 
 
@@ -16,6 +16,8 @@ class FakePage:
         self.fetch_payload: dict | None = None
         self.last_fetch_url: str | None = None
         self.last_fetch_referer: str | None = None
+        self.last_fetch_body: dict | None = None
+        self.last_send_request: dict | None = None
 
     async def goto(self, url: str, wait_until: str) -> None:
         self.goto_calls.append((url, wait_until))
@@ -28,12 +30,24 @@ class FakePage:
             payload = args[0]
             self.last_fetch_url = payload["url"]
             self.last_fetch_referer = payload["referer"]
+            self.last_fetch_body = payload.get("body")
             return self.fetch_payload or {"code": 0, "zpData": {"jobList": []}}
+        if "btn-send" in script or "#chat-input" in script:
+            payload = args[0]
+            self.last_send_request = payload["request"]
+            return {"ok": True, "method": "dom.click.send", "selfId": "self-1", "visibleInConversation": True}
         return 1
 
     async def wait_for_load_state(self, state: str) -> None:
         _ = state
         return None
+
+    async def wait_for_selector(self, selector: str, **kwargs) -> None:
+        _ = selector, kwargs
+        return None
+
+    async def content(self) -> str:
+        return "<html><body><div class=\"chat-container\"></div></body></html>"
 
     async def bring_to_front(self) -> None:
         return None
@@ -431,6 +445,59 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
     parsed = urlparse(page.last_fetch_url)
     params = parse_qs(parsed.query)
     assert params["securityId"] == ["sec-1"]
+
+
+def test_patchright_greet_posts_browser_request(monkeypatch):
+    page = FakePage()
+    page.fetch_payload = {"code": 0, "zpData": {"ok": True}}
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+
+    engine = PatchrightEngine(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(engine.greet(GreetJobRequest(job_id="job-1", security_id="sec-1", message="你好")))
+
+    assert result["job_id"] == "job-1"
+    assert result["security_id"] == "sec-1"
+    assert page.last_fetch_url == "https://www.zhipin.com/wapi/zpgeek/friend/add.json"
+    assert page.last_fetch_referer == "https://www.zhipin.com/web/geek/chat"
+    assert page.last_fetch_body == {"securityId": "sec-1", "jobId": "job-1", "greeting": "你好"}
+
+
+def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
+    page = FakePage()
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+
+    engine = PatchrightEngine(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(
+        engine.send_message(
+            SendMessageRequest(
+                job_id="encrypt-1",
+                gid="gid-1",
+                self_id="self-1",
+                boss_uid="uid-1",
+                boss_id="boss-1",
+                security_id="sec-1",
+                content="你好",
+                raw_payload={"uid": "uid-1"},
+            )
+        )
+    )
+
+    assert page.goto_calls[-1][0].startswith("https://www.zhipin.com/web/geek/chat?")
+    assert page.goto_calls[-1][1] == "domcontentloaded"
+    assert page.last_send_request["job_id"] == "encrypt-1"
+    assert page.last_send_request["content"] == "你好"
+    assert result["status"] == "sent"
+    assert result["raw_payload"]["method"] == "dom.click.send"
 
 
 def _async_result(value):
