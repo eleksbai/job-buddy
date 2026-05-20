@@ -156,11 +156,22 @@ def normalize_job(raw: dict[str, Any]) -> dict[str, Any]:
     security_id = str(raw.get("securityId") or "") or None
     encrypt_boss_id = str(raw.get("encryptBossId") or "") or None
     contact = raw.get("contact") if isinstance(raw.get("contact"), bool) else None
+    boss_online = raw.get("bossOnline") if isinstance(raw.get("bossOnline"), bool) else None
+    boss_active_text = str(raw.get("activeTimeDesc") or "") or None
+    job_active_time = raw.get("activeTime")
+    if job_active_time is not None:
+        try:
+            job_active_time = int(job_active_time)
+        except (TypeError, ValueError):
+            job_active_time = None
     return {
         "job_id": job_id,
         "security_id": security_id,
         "encrypt_boss_id": encrypt_boss_id,
         "contact": contact,
+        "boss_online": boss_online,
+        "boss_active_text": boss_active_text,
+        "job_active_time": job_active_time,
         "title": str(raw.get("jobName") or ""),
         "company": str(raw.get("brandName") or ""),
         "city": raw.get("cityName"),
@@ -191,6 +202,18 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
     contact = relation_info.get("beFriend")
     if not isinstance(contact, bool):
         contact = fallback.get("contact")
+    boss_online = boss_info.get("bossOnline")
+    if not isinstance(boss_online, bool):
+        boss_online = fallback.get("boss_online")
+    boss_active_text = str(boss_info.get("activeTimeDesc") or fallback.get("boss_active_text") or "") or None
+    job_active_time = brand_info.get("activeTime")
+    if job_active_time is None:
+        job_active_time = fallback.get("job_active_time")
+    if job_active_time is not None:
+        try:
+            job_active_time = int(job_active_time)
+        except (TypeError, ValueError):
+            job_active_time = None
     job_url = build_job_url(job_id, security_id) or fallback.get("job_url")
 
     job = {
@@ -217,7 +240,10 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
     boss = {
         "name": str(boss_info.get("name") or boss_info.get("bossName") or "") or None,
         "title": str(boss_info.get("title") or boss_info.get("bossTitle") or "") or None,
+        "online": boss_online,
+        "active_text": boss_active_text,
     }
+    job["active_time"] = job_active_time
 
     detail_text_parts = []
     for label, value in [
@@ -235,6 +261,7 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
         ("行业", company.get("industry")),
         ("BOSS", boss.get("name")),
         ("BOSS 职位", boss.get("title")),
+        ("BOSS 活跃", boss.get("active_text")),
         ("职位描述", job.get("description")),
         ("公司介绍", company.get("intro")),
     ]:
@@ -246,6 +273,9 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
         "security_id": security_id,
         "encrypt_boss_id": encrypt_boss_id,
         "contact": contact,
+        "boss_online": boss_online,
+        "boss_active_text": boss_active_text,
+        "job_active_time": job_active_time,
         "job_url": job_url,
         "detail_payload": {
             "job": job,

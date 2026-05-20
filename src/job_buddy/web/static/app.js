@@ -462,14 +462,18 @@ function renderJobDetailDrawerError(message) {
 function buildJobDetailHtml(payload) {
   const job = payload?.job || {};
   const detailPayload = job.detail_payload || {};
-  const jobSection = detailPayload.job || {};
-  const companySection = detailPayload.company || {};
-  const bossSection = detailPayload.boss || {};
-  const rawPayload = detailPayload.raw_payload || {};
+  const normalizedDetail = detailPayload.detail_payload || detailPayload;
+  const jobSection = normalizedDetail.job || {};
+  const companySection = normalizedDetail.company || {};
+  const bossSection = normalizedDetail.boss || {};
+  const rawPayload = normalizedDetail.raw_payload || detailPayload.response_payload || detailPayload.raw_payload || {};
   const cachedBadge = payload.cached
     ? '<span class="status-badge status-ok">已缓存</span>'
     : '<span class="status-badge status-warn">已采集</span>';
   const detailText = job.detail_text || jobSection.description || "暂无职位详情。";
+  const bossOnlineText = job.boss_online === true ? "在线" : job.boss_online === false ? "离线" : "-";
+  const jobActiveTimeValue = job.job_active_time || jobSection.active_time;
+  const jobActiveTimeText = jobActiveTimeValue ? formatDate(jobActiveTimeValue) : "-";
 
   const metaHtml = [
     cachedBadge,
@@ -478,6 +482,16 @@ function buildJobDetailHtml(payload) {
   ].join("");
 
   const bodyHtml = `
+    <div class="detail-panel">
+      <h4>BOSS 信息</h4>
+      <div class="detail-list">
+        <div><strong>姓名</strong><span>${escapeHtml(bossSection.name || "-")}</span></div>
+        <div><strong>职位</strong><span>${escapeHtml(bossSection.title || "-")}</span></div>
+        <div><strong>在线状态</strong><span>${escapeHtml(bossOnlineText)}</span></div>
+        <div><strong>活跃情况</strong><span>${escapeHtml(job.boss_active_text || bossSection.active_text || "-")}</span></div>
+      </div>
+    </div>
+
     <div class="detail-summary">
       <div>
         <span class="eyebrow">职位详情</span>
@@ -506,15 +520,8 @@ function buildJobDetailHtml(payload) {
         <div><strong>阶段</strong><span>${escapeHtml(companySection.stage || "-")}</span></div>
         <div><strong>规模</strong><span>${escapeHtml(companySection.scale || "-")}</span></div>
         <div><strong>行业</strong><span>${escapeHtml(companySection.industry || "-")}</span></div>
+        <div><strong>岗位活跃时间</strong><span>${escapeHtml(jobActiveTimeText)}</span></div>
         <div><strong>简介</strong><span>${escapeHtml(companySection.intro || "-")}</span></div>
-      </div>
-    </div>
-
-    <div class="detail-panel">
-      <h4>BOSS 信息</h4>
-      <div class="detail-list">
-        <div><strong>姓名</strong><span>${escapeHtml(bossSection.name || "-")}</span></div>
-        <div><strong>职位</strong><span>${escapeHtml(bossSection.title || "-")}</span></div>
       </div>
     </div>
 
@@ -671,6 +678,9 @@ function renderJobsTable() {
       { label: "城市", render: (row) => escapeHtml(row.city || "-") },
       { label: "薪资", render: (row) => escapeHtml(row.salary || "-") },
       { label: "经验", render: (row) => escapeHtml(row.experience || "-") },
+      { label: "在线状态", render: (row) => escapeHtml(row.boss_online === true ? "在线" : row.boss_online === false ? "离线" : "-") },
+      { label: "活跃情况", render: (row) => escapeHtml(row.boss_active_text || "-") },
+      { label: "岗位活跃时间", render: (row) => escapeHtml(row.job_active_time ? formatDate(row.job_active_time) : "-") },
       { label: "搜索次数", render: (row) => escapeHtml(String(row.search_count ?? 0)) },
       { label: "最近搜索", render: (row) => escapeHtml(formatDate(row.last_searched_at || row.last_seen_at)) },
       { label: "详情状态", render: (row) => renderDetailStateBadge(row.detail_fetched_at) },

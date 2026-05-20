@@ -134,10 +134,13 @@ class FakeBossClient:
                         "scaleName": "100-499人",
                         "industryName": "互联网",
                         "introduce": "Demo intro",
+                        "activeTime": 1779249002309,
                     },
                     "bossInfo": {
                         "name": "Alice",
                         "title": "招聘经理",
+                        "activeTimeDesc": "本周活跃",
+                        "bossOnline": False,
                     },
                 },
             },
@@ -158,6 +161,7 @@ class FakeBossClient:
                     "skills": ["Python", "FastAPI"],
                     "description": "Build APIs",
                     "status": "在招",
+                    "active_time": 1779249002309,
                 },
                 "company": {
                     "name": "Demo Tech",
@@ -166,7 +170,7 @@ class FakeBossClient:
                     "industry": "互联网",
                     "intro": "Demo intro",
                 },
-                "boss": {"name": "Alice", "title": "招聘经理"},
+                "boss": {"name": "Alice", "title": "招聘经理", "active_text": "本周活跃", "online": False},
                 "raw_payload": {
                     "code": 0,
                     "zpData": {
@@ -197,7 +201,10 @@ class FakeBossClient:
                     },
                 },
             },
-            "detail_text": "职位名称：Python Backend Engineer\n公司：Demo Tech",
+            "detail_text": "职位名称：Python Backend Engineer\n公司：Demo Tech\nBOSS 活跃：本周活跃",
+            "boss_online": False,
+            "boss_active_text": "本周活跃",
+            "job_active_time": 1779249002309,
             "detail_raw_payload": {
                 "code": 0,
                 "zpData": {
@@ -422,8 +429,10 @@ def test_get_job_detail_fetches_and_persists_detail_when_missing():
     result, cached = asyncio.run(service.get_job_detail("job-1"))
 
     assert cached is False
-    assert result.detail_text == "职位名称：Python Backend Engineer\n公司：Demo Tech"
-    assert result.detail_payload["job"]["title"] == "Python Backend Engineer"
+    assert result.detail_text == "职位名称：Python Backend Engineer\n公司：Demo Tech\nBOSS 活跃：本周活跃"
+    assert result.detail_payload["detail_payload"]["job"]["title"] == "Python Backend Engineer"
     assert result.detail_source_url == "https://www.zhipin.com/wapi/zpgeek/job/detail.json?securityId=sec-1"
     assert result.detail_fetched_at is not None
-    assert jobs.items["job-1"].detail_payload["company"]["name"] == "Demo Tech"
+    assert result.job_active_time == 1779249002309
+    assert result.boss_active_text == "本周活跃"
+    assert jobs.items["job-1"].detail_payload["detail_payload"]["company"]["name"] == "Demo Tech"

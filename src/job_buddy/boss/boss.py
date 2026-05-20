@@ -442,6 +442,9 @@ class PatchrightEngine:
             "detail_text": normalized.get("detail_text"),
             "job_id": normalized.get("job_id"),
             "security_id": normalized.get("security_id"),
+            "boss_online": normalized.get("boss_online"),
+            "boss_active_text": normalized.get("boss_active_text"),
+            "job_active_time": normalized.get("job_active_time"),
             "job_url": normalized.get("job_url"),
             "detail_raw_payload": normalized.get("detail_raw_payload"),
         }

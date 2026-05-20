@@ -97,6 +97,9 @@ class SearchJobItemOut(BossSchema):
     security_id: str | None = None
     encrypt_boss_id: str | None = None
     contact: bool | None = None
+    boss_online: bool | None = None
+    boss_active_text: str | None = None
+    job_active_time: int | None = None
     title: str = ""
     company: str = ""
     city: str | None = None
