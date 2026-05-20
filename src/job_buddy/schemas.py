@@ -3,15 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
-
-
-def _coerce_numeric_job_id(raw_payload: dict[str, Any]) -> int | None:
-    value = raw_payload.get("jobId")
-    try:
-        return int(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
+from pydantic import BaseModel, Field
 
 
 class TimestampedSchema(BaseModel):
@@ -61,9 +53,8 @@ class TargetProfileRead(TimestampedSchema):
 class JobLeadRead(TimestampedSchema):
     source: str
     source_job_id: str
-    job_id: int | None = None
     security_id: str | None = None
-    encrypt_boss_id: str | None = None
+    source_friend_id: str | None = None
     contact: bool | None = None
     boss_online: bool | None = None
     boss_active_text: str | None = None
@@ -84,15 +75,6 @@ class JobLeadRead(TimestampedSchema):
     raw_payload: dict[str, Any]
     detail_payload: dict[str, Any] = Field(default_factory=dict)
     detail_text: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
-        if isinstance(data, dict) and data.get("job_id") is None:
-            raw_payload = data.get("raw_payload")
-            if isinstance(raw_payload, dict):
-                data["job_id"] = _coerce_numeric_job_id(raw_payload)
-        return data
 
 
 class JobLeadDetailRead(JobLeadRead):
@@ -131,7 +113,6 @@ class JobCollectionRecordRead(TimestampedSchema):
     target_profile_id: str | None = None
     source: str
     source_job_id: str
-    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -142,15 +123,6 @@ class JobCollectionRecordRead(TimestampedSchema):
     raw_payload: dict[str, Any]
     collected_at: datetime
 
-    @model_validator(mode="before")
-    @classmethod
-    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
-        if isinstance(data, dict) and data.get("job_id") is None:
-            raw_payload = data.get("raw_payload")
-            if isinstance(raw_payload, dict):
-                data["job_id"] = _coerce_numeric_job_id(raw_payload)
-        return data
-
 
 class SearchTaskRequest(BaseModel):
     target_profile_id: str | None = None
@@ -159,7 +131,7 @@ class SearchTaskRequest(BaseModel):
 
 class GreetTaskRequest(BaseModel):
     target_profile_id: str | None = None
-    job_ids: list[str] = Field(default_factory=list)
+    source_job_ids: list[str] = Field(default_factory=list)
     greeting_message: str | None = None
     limit: int = 20
 
@@ -208,9 +180,8 @@ class FriendRecordRead(TimestampedSchema):
     read_status: int | None = None
     security_id: str | None = None
     self_id: str | None = None
-    job_id: int | None = None
-    encrypt_job_id: str | None = None
-    encrypt_boss_id: str
+    source_job_id: str | None = None
+    source_friend_id: str
     title: str
     name: str
     company: str | None = None
@@ -225,7 +196,7 @@ class FriendRecordRead(TimestampedSchema):
 
 class FriendMessagesResponse(BaseModel):
     gid: str
-    friend_id: str
+    source_friend_id: str
     security_id: str | None = None
     page: int
     count: int
@@ -240,7 +211,7 @@ class SendMessagePayload(BaseModel):
 
 class SendMessageResponse(BaseModel):
     gid: str
-    friend_id: str
+    source_friend_id: str
     content: str
     status: str
     raw_payload: dict[str, Any] = Field(default_factory=dict)

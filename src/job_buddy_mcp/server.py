@@ -81,7 +81,7 @@ def _attach_raw(result: dict[str, Any], raw: Any, include_raw: bool) -> dict[str
 
 def _summarize_job(job: dict[str, Any]) -> dict[str, Any]:
     return {
-        "job_id": job.get("source_job_id"),
+        "source_job_id": job.get("source_job_id"),
         "title": job.get("title"),
         "company": job.get("company"),
         "city": job.get("city"),
@@ -92,7 +92,7 @@ def _summarize_job(job: dict[str, Any]) -> dict[str, Any]:
         "boss_active_text": job.get("boss_active_text"),
         "job_active_time": job.get("job_active_time"),
         "job_url": job.get("job_url"),
-        "encrypt_boss_id": job.get("encrypt_boss_id"),
+        "source_friend_id": job.get("source_friend_id"),
         "match_status": job.get("match_status"),
         "greeted": job.get("greeted"),
         "search_count": job.get("search_count"),
@@ -145,11 +145,11 @@ def _summarize_greeting_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _summarize_friend(friend: dict[str, Any]) -> dict[str, Any]:
     return {
-        "friend_id": friend.get("encrypt_boss_id"),
+        "source_friend_id": friend.get("source_friend_id"),
         "name": friend.get("name"),
         "title": friend.get("title"),
         "company": friend.get("company"),
-        "encrypt_job_id": friend.get("encrypt_job_id"),
+        "source_job_id": friend.get("source_job_id"),
         "security_id": friend.get("security_id"),
         "self_id": friend.get("self_id"),
         "last_message": friend.get("last_message"),
@@ -177,7 +177,6 @@ def _summarize_collection_record(record: dict[str, Any]) -> dict[str, Any]:
         "task_id": record.get("task_id"),
         "target_profile_id": record.get("target_profile_id"),
         "source_job_id": record.get("source_job_id"),
-        "job_id": record.get("job_id"),
         "security_id": record.get("security_id"),
         "title": record.get("title"),
         "company": record.get("company"),
@@ -376,16 +375,16 @@ async def search_jobs(
 
 @mcp.tool
 async def job_detail(
-    job_id: str,
+    source_job_id: str,
     security_id: str | None = None,
     force_refresh: bool = False,
     include_raw: bool = False,
 ) -> dict[str, Any]:
     """查看职位详情，支持强制重新从 BOSS 拉取。"""
     params = _compact_dict({"security_id": security_id, "force_refresh": str(force_refresh).lower()})
-    ok, payload, error = await _request_json("GET", f"/boss/jobs/{job_id}/detail", params=params)
+    ok, payload, error = await _request_json("GET", f"/boss/jobs/{source_job_id}/detail", params=params)
     if not ok:
-        return error or _error_result(f"获取职位详情失败: {job_id}")
+        return error or _error_result(f"获取职位详情失败: {source_job_id}")
     data = payload if isinstance(payload, dict) else {}
     job = data.get("job", {}) if isinstance(data.get("job"), dict) else {}
     detail_payload = job.get("detail_payload", {}) if isinstance(job.get("detail_payload"), dict) else {}
@@ -486,7 +485,7 @@ async def sync_friends(include_raw: bool = False) -> dict[str, Any]:
 
 @mcp.tool
 async def chat_history(
-    friend_id: str,
+    source_friend_id: str,
     page: int = 1,
     count: int = 100,
     cached_only: bool = False,
@@ -494,15 +493,15 @@ async def chat_history(
 ) -> dict[str, Any]:
     """查看或同步与指定好友的聊天记录。"""
     params = {"page": page, "count": count, "cached_only": str(cached_only).lower()}
-    ok, payload, error = await _request_json("GET", f"/boss/friends/{friend_id}/messages", params=params)
+    ok, payload, error = await _request_json("GET", f"/boss/friends/{source_friend_id}/messages", params=params)
     if not ok:
-        return error or _error_result(f"获取聊天记录失败: {friend_id}")
+        return error or _error_result(f"获取聊天记录失败: {source_friend_id}")
     data = payload if isinstance(payload, dict) else {}
     messages = data.get("messages", []) if isinstance(data.get("messages"), list) else []
     result = {
         "success": True,
         "friend": {
-            "friend_id": data.get("friend_id"),
+            "source_friend_id": data.get("source_friend_id"),
             "gid": data.get("gid"),
             "security_id": data.get("security_id"),
         },
@@ -516,19 +515,19 @@ async def chat_history(
 
 
 @mcp.tool
-async def send_message(friend_id: str, content: str, include_raw: bool = False) -> dict[str, Any]:
+async def send_message(source_friend_id: str, content: str, include_raw: bool = False) -> dict[str, Any]:
     """向指定好友发送消息。"""
     ok, payload, error = await _request_json(
         "POST",
-        f"/boss/friends/{friend_id}/messages/send",
+        f"/boss/friends/{source_friend_id}/messages/send",
         json={"content": content},
     )
     if not ok:
-        return error or _error_result(f"发送消息失败: {friend_id}")
+        return error or _error_result(f"发送消息失败: {source_friend_id}")
     data = payload if isinstance(payload, dict) else {}
     result = {
         "success": True,
-        "friend_id": data.get("friend_id"),
+        "source_friend_id": data.get("source_friend_id"),
         "gid": data.get("gid"),
         "content": data.get("content"),
         "status": data.get("status"),
@@ -562,7 +561,7 @@ async def start_search_task(
 @mcp.tool
 async def start_greet_task(
     target_profile_id: str | None = None,
-    job_ids: list[str] | None = None,
+    source_job_ids: list[str] | None = None,
     greeting_message: str | None = None,
     limit: int = 20,
     include_raw: bool = False,
@@ -570,7 +569,7 @@ async def start_greet_task(
     """触发批量打招呼任务。"""
     payload = {
         "target_profile_id": target_profile_id,
-        "job_ids": job_ids or [],
+        "source_job_ids": source_job_ids or [],
         "greeting_message": greeting_message,
         "limit": limit,
     }

@@ -64,9 +64,8 @@ class TargetProfile(DocumentModel):
 class JobLead(DocumentModel):
     source: str = "boss"
     source_job_id: str
-    job_id: int | None = None
     security_id: str | None = None
-    encrypt_boss_id: str | None = None
+    source_friend_id: str | None = None
     contact: bool | None = None
     boss_online: bool | None = None
     boss_active_text: str | None = None
@@ -95,7 +94,6 @@ class JobCollectionRecord(DocumentModel):
     target_profile_id: str | None = None
     source: str = "boss"
     source_job_id: str
-    job_id: int | None = None
     security_id: str | None = None
     title: str
     company: str
@@ -162,9 +160,8 @@ class FriendRecord(DocumentModel):
     read_status: int | None = None
     security_id: str | None = None
     self_id: str | None = None
-    job_id: int | None = None
-    encrypt_job_id: str | None = None
-    encrypt_boss_id: str
+    source_job_id: str | None = None
+    source_friend_id: str
     title: str
     name: str = ""
     company: str | None = None

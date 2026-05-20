@@ -118,7 +118,7 @@ async def trigger_greet_task(
     target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
     task = await greeting_service.run_greetings(
         target=target,
-        job_ids=payload.job_ids,
+        source_job_ids=payload.source_job_ids,
         greeting_message=payload.greeting_message,
         limit=payload.limit,
     )
@@ -159,24 +159,24 @@ async def sync_friends(
     return FriendSyncResponse(count=count)
 
 
-@router.get("/friends/{friend_id}/messages", response_model=FriendMessagesResponse, tags=["friends"], operation_id="get_friend_messages")
+@router.get("/friends/{source_friend_id}/messages", response_model=FriendMessagesResponse, tags=["friends"], operation_id="get_friend_messages")
 async def get_friend_messages(
-    friend_id: str,
+    source_friend_id: str,
     page: int = Query(default=1, ge=1),
     count: int = Query(default=20, le=100),
     cached_only: bool = Query(default=False, description="Only return cached messages, skip BOSS fetch"),
     service: FriendService = Depends(get_friend_service),
 ) -> FriendMessagesResponse:
-    return await service.get_friend_messages(friend_id=friend_id, page=page, count=count, cached_only=cached_only)
+    return await service.get_friend_messages(source_friend_id=source_friend_id, page=page, count=count, cached_only=cached_only)
 
 
-@router.post("/friends/{friend_id}/messages/send", response_model=SendMessageResponse, tags=["friends"], operation_id="send_friend_message")
+@router.post("/friends/{source_friend_id}/messages/send", response_model=SendMessageResponse, tags=["friends"], operation_id="send_friend_message")
 async def send_friend_message(
-    friend_id: str,
+    source_friend_id: str,
     payload: SendMessagePayload,
     service: FriendService = Depends(get_friend_service),
 ) -> SendMessageResponse:
-    return await service.send_friend_message(friend_id=friend_id, content=payload.content)
+    return await service.send_friend_message(source_friend_id=source_friend_id, content=payload.content)
 
 
 @router.get("/system/doctor", response_model=DoctorResponse, tags=["system"], operation_id="run_boss_doctor")

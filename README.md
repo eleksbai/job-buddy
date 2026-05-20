@@ -134,6 +134,13 @@ uv run python scripts/setup_skill.py --force
 - `references/job_preferences.md`
 - `references/greeting_style.md`
 
+## MCP 使用约束
+
+- Job Buddy MCP 的调用应按串行方式执行，不要并发同时发起多个 MCP 请求。
+- 典型做法是上一条 MCP 调用完成并返回结果后，再发起下一条调用。
+- 特别是在搜索职位、拉取职位详情、同步好友、同步聊天记录、发送消息这些会触发 BOSS 侧状态变化或页面操作的场景，禁止并发请求。
+- 如果 agent 需要多步操作，应该按“读取结果 -> 做判断 -> 发起下一步调用”的顺序执行。
+
 ## 目录
 
 ```text

@@ -123,6 +123,8 @@ class FakeJobCollection:
     async def find_one(self, filters: dict):
         if filters.get("_id") == self.job_id:
             return self.payload
+        if filters.get("source_job_id") == self.payload["source_job_id"]:
+            return self.payload
         return None
 
     async def update_one(self, filters: dict, updates: dict):
@@ -153,7 +155,7 @@ def test_run_greetings_records_mapped_auth_errors():
     service.records = FakeGreetingRecordCollection()
     service.jobs = FakeJobCollection()
 
-    task = asyncio.run(service.run_greetings(target=None, job_ids=[], greeting_message=None, limit=5))
+    task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
 
     assert task.status.value == "failed"
     assert task.result_summary == {"total": 1, "succeeded": 0, "failed": 1}
@@ -168,9 +170,30 @@ def test_run_greetings_marks_job_as_contacted_after_success():
     service.records = FakeGreetingRecordCollection()
     service.jobs = FakeJobCollection()
 
-    task = asyncio.run(service.run_greetings(target=None, job_ids=[], greeting_message=None, limit=5))
+    task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
 
     assert task.status.value == "succeeded"
     assert service.jobs.updated[-1][1]["greeted"] is True
     assert service.jobs.updated[-1][1]["match_status"] == "contacted"
     assert service.jobs.updated[-1][1]["contact"] is True
+
+
+def test_run_greetings_accepts_source_job_id_list():
+    service = GreetingService.__new__(GreetingService)
+    service.boss_client = SuccessfulGreetingClient()
+    service.tasks = FakeTaskCollection()
+    service.records = FakeGreetingRecordCollection()
+    service.jobs = FakeJobCollection()
+
+    task = asyncio.run(
+        service.run_greetings(
+            target=None,
+            source_job_ids=["source-job-1"],
+            greeting_message=None,
+            limit=1,
+        )
+    )
+
+    assert task.status.value == "succeeded"
+    assert service.records.items[0].source_job_id == "source-job-1"
+    assert service.jobs.updated[-1][1]["greeted"] is True

@@ -55,7 +55,7 @@ async def test_job_detail_supports_force_refresh_and_raw(monkeypatch: pytest.Mon
                         "boss_online": False,
                         "boss_active_text": "本周活跃",
                         "job_active_time": 1779249002309,
-                        "encrypt_boss_id": "boss-1",
+                        "source_friend_id": "boss-1",
                         "detail_text": "职位描述",
                         "detail_payload": {
                             "detail_payload": {
@@ -75,6 +75,7 @@ async def test_job_detail_supports_force_refresh_and_raw(monkeypatch: pytest.Mon
 
     assert result["success"] is True
     assert result["cached"] is False
+    assert result["source_job_id"] == "job-1"
     assert result["job_active_time"] == 1779249002309
     assert result["boss"]["name"] == "Alice"
     assert result["raw"]["job"]["source_job_id"] == "job-1"
@@ -105,7 +106,7 @@ async def test_search_jobs_returns_agent_friendly_items(monkeypatch: pytest.Monk
                             "boss_active_text": "刚刚活跃",
                             "job_active_time": 1779249002309,
                             "job_url": "https://example.com/job-1",
-                            "encrypt_boss_id": "boss-1",
+                            "source_friend_id": "boss-1",
                         }
                     ],
                 },
@@ -130,7 +131,7 @@ async def test_chat_history_supports_cached_only(monkeypatch: pytest.MonkeyPatch
                 200,
                 {
                     "gid": "gid-1",
-                    "friend_id": "boss-1",
+                    "source_friend_id": "boss-1",
                     "security_id": "sec-1",
                     "page": 1,
                     "count": 100,
@@ -158,6 +159,7 @@ async def test_chat_history_supports_cached_only(monkeypatch: pytest.MonkeyPatch
 
     assert result["success"] is True
     assert result["friend"]["security_id"] == "sec-1"
+    assert result["friend"]["source_friend_id"] == "boss-1"
     assert result["messages"][0]["from_name"] == "Alice"
     assert client.calls == [
         ("GET", "/boss/friends/boss-1/messages", {"page": 1, "count": 100, "cached_only": "true"}, None)

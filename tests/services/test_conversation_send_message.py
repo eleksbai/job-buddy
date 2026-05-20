@@ -82,15 +82,15 @@ class FakeMessageClient:
         )
 
 
-def test_send_friend_message_uses_encrypt_boss_id():
+def test_send_friend_message_uses_source_friend_id():
     record = {
         "_id": "friend-1",
-        "encrypt_job_id": "encrypt-1",
+        "source_job_id": "encrypt-1",
         "gid": "gid-1",
         "boss_uid": "gid-1",
         "self_id": "uid-2",
         "security_id": "sec-1",
-        "encrypt_boss_id": "boss-1",
+        "source_friend_id": "boss-1",
         "raw_payload": {"uid": "uid-1"},
     }
     service = FriendService.__new__(FriendService)
@@ -99,7 +99,7 @@ def test_send_friend_message_uses_encrypt_boss_id():
 
     result = asyncio.run(service.send_friend_message("boss-1", "  你好  "))
 
-    assert service.friends.record.last_filter == {"encrypt_boss_id": "boss-1"}
+    assert service.friends.record.last_filter == {"source_friend_id": "boss-1"}
     assert service.boss_client.calls == [
         SendMessageIn(
             job_id="encrypt-1",
@@ -114,7 +114,7 @@ def test_send_friend_message_uses_encrypt_boss_id():
     ]
     assert result.status == "sent"
     assert result.gid == "gid-1"
-    assert result.friend_id == "boss-1"
+    assert result.source_friend_id == "boss-1"
 
 
 def test_send_friend_message_missing_friend_returns_404_error():
@@ -126,7 +126,7 @@ def test_send_friend_message_missing_friend_returns_404_error():
         asyncio.run(service.send_friend_message("boss-1", "你好"))
     except BossOperationError as exc:
         assert exc.status_code == 404
-        assert "未找到 friend_id=boss-1 的好友记录" in exc.message
+        assert "未找到 source_friend_id=boss-1 的好友记录" in exc.message
     else:
         raise AssertionError("expected BossOperationError")
 
@@ -134,12 +134,12 @@ def test_send_friend_message_missing_friend_returns_404_error():
 def test_send_friend_message_syncs_friends_before_failing_missing_friend():
     record = {
         "_id": "friend-1",
-        "encrypt_job_id": "encrypt-1",
+        "source_job_id": "encrypt-1",
         "gid": "gid-1",
         "boss_uid": "gid-1",
         "self_id": "uid-2",
         "security_id": "sec-1",
-        "encrypt_boss_id": "boss-1",
+        "source_friend_id": "boss-1",
         "raw_payload": {"uid": "uid-1"},
     }
     service = FriendService.__new__(FriendService)
@@ -151,7 +151,6 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
             "friend_source": 0,
             "relation_type": 2,
             "read_status": 1,
-            "job_id": 123,
             "encrypt_job_id": "encrypt-1",
             "encrypt_boss_id": "boss-1",
             "security_id": "sec-1",
@@ -168,7 +167,7 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
     async def update_one(filters: dict, updates: dict, upsert: bool = False):
         _ = upsert
         service.friends.updated.append((filters, updates))
-        if filters == {"encrypt_boss_id": "boss-1"}:
+        if filters == {"source_friend_id": "boss-1"}:
             service.friends.record.record = record | updates["$set"]
         return None
 
@@ -177,7 +176,7 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
     result = asyncio.run(service.send_friend_message("boss-1", "你好"))
 
     assert service.boss_client.calls
-    assert result.friend_id == "boss-1"
+    assert result.source_friend_id == "boss-1"
 
 
 def test_get_friend_messages_replaces_cached_messages_on_sync():
@@ -186,7 +185,7 @@ def test_get_friend_messages_replaces_cached_messages_on_sync():
         "gid": "gid-1",
         "boss_uid": "uid-1",
         "security_id": "sec-1",
-        "encrypt_boss_id": "boss-1",
+        "source_friend_id": "boss-1",
         "messages": [
             {
                 "message_id": "old-1",

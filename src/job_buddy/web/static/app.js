@@ -14,15 +14,14 @@ const state = {
   jobDetailSourceJobId: null,
   jobDetailPageSourceJobId: null,
   jobDetailPageName: null,
-  jobDetailPageFriendId: null,
+  jobDetailPageSourceFriendId: null,
   jobDetailPageSecurityId: null,
   jobDetailPageForceContact: false,
   jobDetailPagePayload: null,
   jobs: [],
-  chatHistoryGid: null,
+  chatHistorySourceFriendId: null,
   chatHistoryPage: 1,
   chatHistoryName: "",
-  chatHistoryFriendId: null,
 };
 
 function getSafeStorage() {
@@ -220,11 +219,11 @@ function renderTable(containerId, columns, rows) {
 }
 
 function renderJobDetailAction(row) {
-  const encryptJobId = row.source_job_id;
-  if (!encryptJobId) {
+  const sourceJobId = row.source_job_id;
+  if (!sourceJobId) {
     return "-";
   }
-  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(encryptJobId)}">查看详情</button>`;
+  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(sourceJobId)}">查看详情</button>`;
 }
 
 function renderDetailStateBadge(fetchedAt) {
@@ -477,7 +476,7 @@ function buildJobDetailHtml(payload) {
 
   const metaHtml = [
     cachedBadge,
-    `<span>${escapeHtml(job.source_job_id || job.job_id || "-")}</span>`,
+    `<span>${escapeHtml(job.source_job_id || "-")}</span>`,
     `<span>${escapeHtml(formatDate(job.detail_fetched_at))}</span>`,
   ].join("");
 
@@ -622,8 +621,8 @@ function summarizeTaskInput(inputPayload) {
   if (Array.isArray(inputPayload.keywords)) {
     return inputPayload.keywords.join(", ");
   }
-  if (Array.isArray(inputPayload.job_ids) && inputPayload.job_ids.length) {
-    return `指定职位 ${inputPayload.job_ids.length} 个`;
+  if (Array.isArray(inputPayload.source_job_ids) && inputPayload.source_job_ids.length) {
+    return `指定职位 ${inputPayload.source_job_ids.length} 个`;
   }
   if (inputPayload.limit) {
     return `limit=${inputPayload.limit}`;
@@ -918,19 +917,19 @@ function messageTypeLabel(type) {
   return map[type] || `类型${type}`;
 }
 
-function messageSenderLabel(message, friendId, friendName) {
+function messageSenderLabel(message, sourceFriendId, friendName) {
   if (message?.from_name) {
     return escapeHtml(message.from_name);
   }
   const fromId = message?.from_id;
-  if (!friendId) return "对方";
-  if (fromId && String(fromId) === String(friendId)) {
+  if (!sourceFriendId) return "对方";
+  if (fromId && String(fromId) === String(sourceFriendId)) {
     return escapeHtml(friendName || "对方");
   }
   return "我";
 }
 
-function renderChatHistoryMessages(messages, friendId, friendName) {
+function renderChatHistoryMessages(messages, sourceFriendId, friendName) {
   if (!messages.length) {
     return '<div class="empty">暂无聊天记录。</div>';
   }
@@ -938,7 +937,7 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
     .slice()
     .reverse()
     .map((m) => {
-      const sender = messageSenderLabel(m, friendId, friendName);
+      const sender = messageSenderLabel(m, sourceFriendId, friendName);
       const isSelf = sender === "我";
       const typeLabel = messageTypeLabel(m.type);
       const time = m.created_at ? formatDate(m.created_at) : "-";
@@ -954,24 +953,23 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
     .join("");
 }
 
-async function loadFriendMessages(friendId, page) {
+async function loadFriendMessages(sourceFriendId, page) {
   return await fetchJson(
-    `/boss/friends/${encodeURIComponent(friendId)}/messages?page=${page || 1}&count=100`
+    `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=${page || 1}&count=100`
   );
 }
 
-async function openFriendChat(friendId, name, bossUid) {
-  if (!friendId) return;
+async function openFriendChat(sourceFriendId, name) {
+  if (!sourceFriendId) return;
   clearError();
-  state.chatHistoryGid = friendId;
+  state.chatHistorySourceFriendId = sourceFriendId;
   state.chatHistoryPage = 1;
   state.chatHistoryName = name;
-  state.chatHistoryFriendId = bossUid;
   setChatHistoryDrawerOpen(true);
   renderChatHistoryDrawerLoading(name);
 
   try {
-    const payload = await loadFriendMessages(friendId, 1);
+    const payload = await loadFriendMessages(sourceFriendId, 1);
     renderChatHistoryDrawer(payload);
   } catch (error) {
     renderChatHistoryDrawerError(error.message || "聊天记录获取失败");
@@ -980,7 +978,7 @@ async function openFriendChat(friendId, name, bossUid) {
 
 function renderChatHistoryDrawer(payload) {
   const name = state.chatHistoryName;
-  const friendId = state.chatHistoryFriendId;
+  const sourceFriendId = state.chatHistorySourceFriendId;
   document.getElementById("chatHistoryTitle").textContent = `与 ${escapeHtml(name)} 的聊天记录`;
   document.getElementById("chatHistoryMeta").innerHTML = [
     `<span>共 ${payload.total} 条消息</span>`,
@@ -988,7 +986,7 @@ function renderChatHistoryDrawer(payload) {
 
   document.getElementById("chatHistoryContent").innerHTML = renderChatHistoryMessages(
     payload.messages || [],
-    friendId,
+    sourceFriendId,
     name
   );
 }
@@ -996,13 +994,13 @@ function renderChatHistoryDrawer(payload) {
 async function goChatHistoryPage(delta) {
   const nextPage = state.chatHistoryPage + delta;
   if (nextPage < 1) return;
-  const { chatHistoryGid, chatHistoryName } = state;
-  if (!chatHistoryGid) return;
+  const { chatHistorySourceFriendId } = state;
+  if (!chatHistorySourceFriendId) return;
 
   setButtonBusy("chatHistoryPrevPageButton", true, "加载中");
   setButtonBusy("chatHistoryNextPageButton", true, "加载中");
   try {
-    const payload = await loadFriendMessages(chatHistoryGid, nextPage);
+    const payload = await loadFriendMessages(chatHistorySourceFriendId, nextPage);
     state.chatHistoryPage = nextPage;
     renderChatHistoryDrawer(payload);
   } catch (error) {
@@ -1013,10 +1011,9 @@ async function goChatHistoryPage(delta) {
 }
 
 function closeChatHistoryDrawer() {
-  state.chatHistoryGid = null;
+  state.chatHistorySourceFriendId = null;
   state.chatHistoryPage = 1;
   state.chatHistoryName = "";
-  state.chatHistoryFriendId = null;
   setChatHistoryDrawerOpen(false);
 }
 
@@ -1077,8 +1074,8 @@ async function loadJobDetailPage(sourceJobId, options = {}) {
   loadJobDetailPageCachedChat(sourceJobId);
 }
 
-function getCurrentJobDetailFriendId() {
-  return state.jobDetailPageFriendId || state.jobDetailPagePayload?.job?.encrypt_boss_id || "";
+function getCurrentJobDetailSourceFriendId() {
+  return state.jobDetailPageSourceFriendId || state.jobDetailPagePayload?.job?.source_friend_id || "";
 }
 
 function canLoadJobDetailChat() {
@@ -1098,11 +1095,11 @@ async function loadJobDetailPageCachedChat(sourceJobId) {
     renderJobDetailChatUnavailable();
     return;
   }
-  const friendId = getCurrentJobDetailFriendId();
-  if (!friendId) return;
+  const sourceFriendId = getCurrentJobDetailSourceFriendId();
+  if (!sourceFriendId) return;
   try {
     const chatPayload = await fetchJson(
-      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100&cached_only=true`
+      `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=1&count=100&cached_only=true`
     );
     if (chatPayload.messages && chatPayload.messages.length > 0) {
       renderJobDetailPageChat(chatPayload);
@@ -1114,7 +1111,7 @@ async function loadJobDetailPageCachedChat(sourceJobId) {
 
 function renderJobDetailPageChat(payload) {
   const name = state.jobDetailPageName || "";
-  const friendId = state.jobDetailPageFriendId || "";
+  const sourceFriendId = state.jobDetailPageSourceFriendId || "";
   const messages = payload?.messages || [];
   const total = payload?.total || messages.length;
 
@@ -1124,7 +1121,7 @@ function renderJobDetailPageChat(payload) {
   document.getElementById("jobDetailChatMeta").textContent = `共 ${total} 条消息`;
   document.getElementById("jobDetailChatContent").innerHTML = renderChatHistoryMessages(
     messages,
-    friendId,
+    sourceFriendId,
     name
   );
 }
@@ -1146,8 +1143,8 @@ function renderJobDetailPageDetail(payload) {
 
 async function greetCurrentJobDetail() {
   const job = state.jobDetailPagePayload?.job;
-  if (!job?.id) {
-    showError("缺少职位记录 ID");
+  if (!job?.source_job_id) {
+    showError("缺少职位主键");
     return;
   }
 
@@ -1156,7 +1153,7 @@ async function greetCurrentJobDetail() {
   try {
     const result = await fetchJson("/boss/tasks/greet", {
       method: "POST",
-      body: JSON.stringify({ job_ids: [job.id], limit: 1 }),
+      body: JSON.stringify({ source_job_ids: [job.source_job_id], limit: 1 }),
     });
     showNotice(`已触发打招呼任务 ${result.task_id}`, 5000);
     await Promise.all([loadJobDetailPage(state.jobDetailPageSourceJobId), loadJobs(), loadTasks(), loadSummaryCards()]);
@@ -1187,9 +1184,9 @@ async function syncChatHistoryForJobDetail() {
     renderJobDetailChatUnavailable();
     return;
   }
-  const friendId = getCurrentJobDetailFriendId();
-  if (!friendId) {
-    showError("缺少好友 ID");
+  const sourceFriendId = getCurrentJobDetailSourceFriendId();
+  if (!sourceFriendId) {
+    showError("缺少好友主键");
     return;
   }
   clearError();
@@ -1197,7 +1194,7 @@ async function syncChatHistoryForJobDetail() {
   try {
     await fetchJson("/boss/friends/sync", { method: "POST" });
     const payload = await fetchJson(
-      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100`
+      `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("聊天记录已同步", 3000);
@@ -1213,11 +1210,11 @@ async function sendMessageForJobDetail() {
     renderJobDetailChatUnavailable();
     return;
   }
-  const friendId = getCurrentJobDetailFriendId();
+  const sourceFriendId = getCurrentJobDetailSourceFriendId();
   const input = document.getElementById("jobDetailMessageInput");
   const content = input.value.trim();
-  if (!friendId) {
-    showError("缺少好友 ID");
+  if (!sourceFriendId) {
+    showError("缺少好友主键");
     return;
   }
   if (!content) {
@@ -1228,13 +1225,13 @@ async function sendMessageForJobDetail() {
   clearError();
   setButtonBusy("jobDetailSendMessageButton", true, "发送中");
   try {
-    await fetchJson(`/boss/friends/${encodeURIComponent(friendId)}/messages/send`, {
+    await fetchJson(`/boss/friends/${encodeURIComponent(sourceFriendId)}/messages/send`, {
       method: "POST",
       body: JSON.stringify({ content }),
     });
     input.value = "";
     const payload = await fetchJson(
-      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100`
+      `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("消息已发送", 3000);
@@ -1285,20 +1282,19 @@ function renderReadStatus(status) {
 }
 
 function renderChatHistoryAction(row) {
-  const friendId = row.encrypt_boss_id;
-  if (!friendId) return "-";
+  const sourceFriendId = row.source_friend_id;
+  if (!sourceFriendId) return "-";
   const name = row.name || "";
-  const bossUid = row.gid || "";
-  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(friendId)}|${escapeHtml(name)}|${escapeHtml(bossUid)}">查看聊天</button>`;
+  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(sourceFriendId)}|${escapeHtml(name)}">查看聊天</button>`;
 }
 
 function renderJobDetailPageAction(row) {
-  const sourceJobId = row.encrypt_job_id;
+  const sourceJobId = row.source_job_id;
   if (!sourceJobId) return "-";
   const name = row.name || "";
-  const friendId = row.encrypt_boss_id || "";
+  const sourceFriendId = row.source_friend_id || "";
   const securityId = row.security_id || "";
-  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(sourceJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}|${escapeHtml(securityId)}">职位详情</button>`;
+  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(sourceJobId)}|${escapeHtml(name)}|${escapeHtml(sourceFriendId)}|${escapeHtml(securityId)}">职位详情</button>`;
 }
 
 function renderLogs(payload) {
@@ -1543,7 +1539,7 @@ function bindEvents() {
     if (detailButton) {
       event.preventDefault();
       state.jobDetailPageName = "";
-      state.jobDetailPageFriendId = "";
+      state.jobDetailPageSourceFriendId = "";
       state.jobDetailPageSecurityId = "";
       state.jobDetailPageForceContact = false;
       navigateTo("job-detail", { sourceJobId: detailButton.dataset.jobDetail });
@@ -1567,7 +1563,7 @@ function bindEvents() {
     if (chatButton) {
       event.preventDefault();
       const parts = chatButton.dataset.chatHistory.split("|");
-      openFriendChat(parts[0], decodeURIComponent(parts[1] || ""), parts[2] || "").catch(
+      openFriendChat(parts[0], decodeURIComponent(parts[1] || "")).catch(
         (error) => showError(error.message || "聊天历史获取失败")
       );
       return;
@@ -1578,7 +1574,7 @@ function bindEvents() {
       event.preventDefault();
       const parts = jobDetailPageButton.dataset.jobDetailPage.split("|");
       state.jobDetailPageName = decodeURIComponent(parts[1] || "");
-      state.jobDetailPageFriendId = parts[2] || "";
+      state.jobDetailPageSourceFriendId = parts[2] || "";
       state.jobDetailPageSecurityId = parts[3] || "";
       state.jobDetailPageForceContact = true;
       navigateTo("job-detail", { sourceJobId: parts[0] });

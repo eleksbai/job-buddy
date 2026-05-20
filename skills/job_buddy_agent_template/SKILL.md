@@ -32,6 +32,13 @@ description: 使用 Job Buddy MCP 和本地简历材料，协助求职场景下�
 - `references/job_preferences.md`
 - `references/greeting_style.md`
 
+## MCP 调用约束
+
+- 所有 Job Buddy MCP 调用都必须串行执行，不能并发同时请求。
+- 必须等待上一条 MCP 调用完成并拿到结果后，再决定是否发起下一条调用。
+- 不要同时并发调用多个 `search_jobs`、`job_detail`、`chat_history`、`send_message`、`sync_friends`。
+- 凡是可能触发 BOSS 页面操作、状态刷新或登录态依赖的调用，都按单线程工作流处理。
+
 ## 工作流
 
 ### 1. 开始前先建立上下文

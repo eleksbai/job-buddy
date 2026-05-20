@@ -10,11 +10,11 @@ class FakeFriendService:
     def __init__(self) -> None:
         self.sent: tuple[str, str] | None = None
 
-    async def send_friend_message(self, friend_id: str, content: str):
-        self.sent = (friend_id, content)
+    async def send_friend_message(self, source_friend_id: str, content: str):
+        self.sent = (source_friend_id, content)
         return {
             "gid": "gid-1",
-            "friend_id": friend_id,
+            "source_friend_id": source_friend_id,
             "content": content,
             "status": "sent",
             "raw_payload": {"provider": "patchright"},
@@ -34,3 +34,4 @@ async def test_send_friend_message_routes_to_friend_service():
     assert response.status_code == 200
     assert service.sent == ("boss-1", "你好")
     assert response.json()["status"] == "sent"
+    assert response.json()["source_friend_id"] == "boss-1"
