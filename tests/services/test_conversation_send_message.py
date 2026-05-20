@@ -1,7 +1,7 @@
 import asyncio
 
 from job_buddy.core.boss import BossOperationError
-from job_buddy.modules.conversations import ConversationService
+from job_buddy.services import ConversationService
 
 
 class FakeCollection:
@@ -16,7 +16,10 @@ class FakeCollection:
 
 class FakeConversationRepository:
     def __init__(self, record: dict | None) -> None:
-        self.collection = FakeCollection(record)
+        self.record = FakeCollection(record)
+
+    async def find_one(self, filters: dict):
+        return await self.record.find_one(filters)
 
 
 class FakeMessageClient:
@@ -32,6 +35,7 @@ def test_send_message_uses_encrypt_job_id_only():
     record = {
         "encrypt_job_id": "encrypt-1",
         "gid": "gid-1",
+        "self_id": "uid-2",
         "security_id": "sec-1",
         "encrypt_boss_id": "boss-1",
         "raw_payload": {"uid": "uid-1"},
@@ -42,7 +46,7 @@ def test_send_message_uses_encrypt_job_id_only():
 
     result = asyncio.run(service.send_message("encrypt-1", "  你好  "))
 
-    assert service.conversations.collection.last_filter == {"encrypt_job_id": "encrypt-1"}
+    assert service.conversations.record.last_filter == {"encrypt_job_id": "encrypt-1"}
     assert service.boss_client.calls == [(record, "你好")]
     assert result.status == "sent"
     assert result.gid == "gid-1"

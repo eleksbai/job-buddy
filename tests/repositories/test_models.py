@@ -1,6 +1,6 @@
 from bson import ObjectId
 
-from job_buddy.modules.targets import TargetProfile
+from job_buddy.models import TargetProfile
 
 
 def test_document_model_round_trip():

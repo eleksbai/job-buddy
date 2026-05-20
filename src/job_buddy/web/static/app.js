@@ -384,7 +384,7 @@ async function loadSearchOptions() {
   if (state.searchOptionsLoaded) {
     return;
   }
-  const options = await fetchJson("/api/system/search-options");
+  const options = await fetchJson("/web/system/search-options");
   buildSelectOptions("searchCitySelect", options.cities || []);
   buildSelectOptions("searchSalarySelect", options.salary_ranges || []);
   buildSelectOptions("searchExperienceSelect", options.experience_levels || []);
@@ -534,7 +534,7 @@ function renderJobDetailDrawer(payload) {
 }
 
 async function loadAuthStatus() {
-  const status = await fetchJson("/api/system/auth");
+  const status = await fetchJson("/boss/system/auth");
   state.auth = status;
   renderAuthStrip(status);
   renderAuthDetail(status);
@@ -581,14 +581,14 @@ function renderDoctor(doctor) {
 }
 
 async function loadDoctor() {
-  const doctor = await fetchJson("/api/system/doctor");
+  const doctor = await fetchJson("/boss/system/doctor");
   state.doctor = doctor;
   renderDoctor(doctor);
   return doctor;
 }
 
 async function loadSummaryCards() {
-  const summary = await fetchJson("/api/dashboard");
+  const summary = await fetchJson("/web/dashboard");
   const labels = {
     targets: "目标岗位",
     jobs: "职位线索",
@@ -624,7 +624,7 @@ function summarizeTaskInput(inputPayload) {
 }
 
 async function loadTasks(limit = 100) {
-  const items = await fetchJson(`/api/tasks?limit=${limit}`);
+  const items = await fetchJson(`/boss/tasks?limit=${limit}`);
   renderTable(
     "tasksTable",
     [
@@ -654,7 +654,7 @@ function renderDashboardTasks(items) {
 }
 
 async function loadJobs() {
-  state.jobs = await fetchJson("/api/jobs");
+  state.jobs = await fetchJson("/boss/jobs");
   renderJobsTable();
   return state.jobs;
 }
@@ -814,7 +814,7 @@ function setSearchPageValue(page) {
 }
 
 async function loadCurrentSearchResults() {
-  const tasks = await fetchJson("/api/tasks?limit=100");
+  const tasks = await fetchJson("/boss/tasks?limit=100");
   const latestSearchTask = tasks.find((item) => item.task_type === "search");
   if (!latestSearchTask) {
     renderLatestSearchMeta(null, []);
@@ -822,7 +822,7 @@ async function loadCurrentSearchResults() {
     return [];
   }
 
-  const rows = await fetchJson(`/api/jobs/collections?task_id=${encodeURIComponent(latestSearchTask.id)}&limit=200`);
+  const rows = await fetchJson(`/boss/jobs/collections?task_id=${encodeURIComponent(latestSearchTask.id)}&limit=200`);
   renderLatestSearchMeta(latestSearchTask, rows);
   renderTable(
     "searchResultsTable",
@@ -854,7 +854,7 @@ async function openJobDetail(sourceJobId) {
   setJobDetailDrawerOpen(true);
   renderJobDetailDrawerLoading(sourceJobId);
   try {
-    const payload = await fetchJson(`/api/jobs/${encodeURIComponent(sourceJobId)}/detail`);
+    const payload = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/detail`);
     state.jobDetail = payload;
     renderJobDetailDrawer(payload);
     if (payload.cached) {
@@ -941,7 +941,7 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
 
 async function loadChatHistory(jobId, page) {
   return await fetchJson(
-    `/api/conversations/${encodeURIComponent(jobId)}/messages?page=${page || 1}&count=100`
+    `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=${page || 1}&count=100`
   );
 }
 
@@ -1033,8 +1033,8 @@ async function loadJobDetailPage(jobId) {
 
   const securityId = state.jobDetailPageSecurityId || "";
   const detailUrl = securityId
-    ? `/api/jobs/${encodeURIComponent(jobId)}/detail?security_id=${encodeURIComponent(securityId)}`
-    : `/api/jobs/${encodeURIComponent(jobId)}/detail`;
+    ? `/boss/jobs/${encodeURIComponent(jobId)}/detail?security_id=${encodeURIComponent(securityId)}`
+    : `/boss/jobs/${encodeURIComponent(jobId)}/detail`;
 
   try {
     const detailResult = await fetchJson(detailUrl);
@@ -1054,7 +1054,7 @@ async function loadJobDetailPage(jobId) {
 async function loadJobDetailPageCachedChat(jobId) {
   try {
     const chatPayload = await fetchJson(
-      `/api/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100&cached_only=true`
+      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100&cached_only=true`
     );
     if (chatPayload.messages && chatPayload.messages.length > 0) {
       renderJobDetailPageChat(chatPayload);
@@ -1100,7 +1100,7 @@ async function greetCurrentJobDetail() {
   clearError();
   setButtonBusy("jobDetailGreetButton", true, "发送中");
   try {
-    const result = await fetchJson("/api/tasks/greet", {
+    const result = await fetchJson("/boss/tasks/greet", {
       method: "POST",
       body: JSON.stringify({ job_ids: [job.id], limit: 1 }),
     });
@@ -1118,10 +1118,10 @@ async function syncChatHistoryForJobDetail() {
   setButtonBusy("jobDetailSyncChatButton", true, "同步中");
   try {
     // Sync conversation list first to ensure conversation record exists
-    await fetchJson("/api/conversations/sync", { method: "POST" });
+    await fetchJson("/boss/conversations/sync", { method: "POST" });
     // Fetch chat history from BOSS (no caching)
     const payload = await fetchJson(
-      `/api/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
+      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("聊天记录已同步", 3000);
@@ -1148,13 +1148,13 @@ async function sendMessageForJobDetail() {
   clearError();
   setButtonBusy("jobDetailSendMessageButton", true, "发送中");
   try {
-    await fetchJson(`/api/conversations/${encodeURIComponent(jobId)}/messages/send`, {
+    await fetchJson(`/boss/conversations/${encodeURIComponent(jobId)}/messages/send`, {
       method: "POST",
       body: JSON.stringify({ content }),
     });
     input.value = "";
     const payload = await fetchJson(
-      `/api/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
+      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("消息已发送", 3000);
@@ -1164,7 +1164,7 @@ async function sendMessageForJobDetail() {
 }
 
 async function loadConversations() {
-  const items = await fetchJson("/api/conversations");
+  const items = await fetchJson("/boss/conversations");
   document.getElementById("conversationsCount").textContent = `共 ${items.length} 条`;
   renderTable(
     "conversationsTable",
@@ -1244,7 +1244,7 @@ function renderLogs(payload) {
 }
 
 async function loadLogs() {
-  const payload = await fetchJson(`/api/system/logs?limit=${DEFAULT_LOG_LIMIT}`);
+  const payload = await fetchJson(`/web/system/logs?limit=${DEFAULT_LOG_LIMIT}`);
   renderLogs(payload);
   return payload;
 }
@@ -1254,7 +1254,7 @@ async function loadDashboardView() {
     loadSummaryCards(),
     loadAuthStatus(),
     loadDoctor(),
-    fetchJson("/api/tasks?limit=5"),
+    fetchJson("/boss/tasks?limit=5"),
   ]);
   renderDashboardTasks(tasks);
   return { auth, doctor, tasks };
@@ -1293,7 +1293,7 @@ async function toggleAuth() {
   clearError();
   setButtonBusy("authActionButton", true, "处理中");
   try {
-    const endpoint = state.auth?.logged_in ? "/api/system/auth/logout" : "/api/system/auth/login";
+    const endpoint = state.auth?.logged_in ? "/boss/system/auth/logout" : "/boss/system/auth/login";
     const status = await fetchJson(endpoint, { method: "POST" });
     state.auth = status;
     renderAuthStrip(status);
@@ -1336,7 +1336,7 @@ async function triggerSearchWithPayload({ buttonId, busyText, payload, onSuccess
   clearError();
   setButtonBusy(buttonId, true, busyText);
   try {
-    const result = await fetchJson("/api/tasks/search", {
+    const result = await fetchJson("/boss/tasks/search", {
       method: "POST",
       body: JSON.stringify({ query_override: payload }),
     });
@@ -1345,7 +1345,7 @@ async function triggerSearchWithPayload({ buttonId, busyText, payload, onSuccess
       loadJobs(),
       loadTasks(),
       loadSummaryCards(),
-      fetchJson("/api/tasks?limit=5").then(renderDashboardTasks),
+      fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks),
     ]);
     if (onSuccess) {
       onSuccess(rows);
@@ -1364,11 +1364,11 @@ async function triggerGreeting() {
   clearError();
   setButtonBusy("greetButton", true, "执行中");
   try {
-    const result = await fetchJson("/api/tasks/greet", {
+    const result = await fetchJson("/boss/tasks/greet", {
       method: "POST",
       body: JSON.stringify({ limit: 5 }),
     });
-    await Promise.all([loadJobs(), loadTasks(), loadSummaryCards(), fetchJson("/api/tasks?limit=5").then(renderDashboardTasks)]);
+    await Promise.all([loadJobs(), loadTasks(), loadSummaryCards(), fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks)]);
     showNotice(`已触发打招呼任务 ${result.task_id}`);
   } finally {
     setButtonBusy("greetButton", false);
@@ -1379,7 +1379,7 @@ async function syncConversations() {
   clearError();
   setButtonBusy("syncConversationsButton", true, "同步中");
   try {
-    const result = await fetchJson("/api/conversations/sync", { method: "POST" });
+    const result = await fetchJson("/boss/conversations/sync", { method: "POST" });
     await Promise.all([loadConversations(), loadSummaryCards()]);
     showNotice(`已同步 ${result.count} 条会话`, 5000);
   } finally {
@@ -1396,11 +1396,11 @@ async function clearData() {
   clearError();
   setButtonBusy("clearDataButton", true, "清除中");
   try {
-    const result = await fetchJson("/api/system/data/clear", { method: "POST" });
+    const result = await fetchJson("/web/system/data/clear", { method: "POST" });
     state.jobs = [];
     await Promise.all([
       loadSummaryCards(),
-      fetchJson("/api/tasks?limit=5").then(renderDashboardTasks),
+      fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks),
       state.activeView === "jobs" ? loadJobs() : Promise.resolve(),
       state.activeView === "tasks" ? loadTasks() : Promise.resolve(),
       state.activeView === "conversations" ? loadConversations() : Promise.resolve(),

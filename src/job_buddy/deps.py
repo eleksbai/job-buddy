@@ -4,12 +4,14 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from job_buddy.core.boss import BossDoctorRunner
 from job_buddy.core.config import Settings
 from job_buddy.core.engines.runtime import EngineRuntimeManager
-from job_buddy.modules.conversations import ConversationService
-from job_buddy.modules.dashboard import DashboardService
-from job_buddy.modules.jobs import JobCollectionService
-from job_buddy.modules.system import AuthStateRepository, SystemService
-from job_buddy.modules.targets import TargetProfileService
-from job_buddy.modules.tasks import GreetingService
+from job_buddy.services import (
+    ConversationService,
+    DashboardService,
+    GreetingService,
+    JobCollectionService,
+    SystemService,
+    TargetProfileService,
+)
 
 
 async def get_database(request: Request) -> AsyncIOMotorDatabase:
@@ -58,10 +60,4 @@ async def get_system_service(
     settings: Settings = Depends(get_settings),
     runtime: EngineRuntimeManager = Depends(get_runtime),
 ) -> SystemService:
-    return SystemService(
-        BossDoctorRunner(settings),
-        settings,
-        runtime,
-        AuthStateRepository(db),
-        db,
-    )
+    return SystemService(BossDoctorRunner(settings), settings, runtime, db)

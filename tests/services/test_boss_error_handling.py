@@ -1,8 +1,10 @@
 import asyncio
 
+from bson import ObjectId
+
 from job_buddy.core.boss import BossOperationError
-from job_buddy.modules.conversations import ConversationService
-from job_buddy.modules.tasks import GreetingRecord, GreetingService
+from job_buddy.models import GreetingRecord
+from job_buddy.services import ConversationService, GreetingService
 
 
 class AuthRequired(Exception):
@@ -19,9 +21,10 @@ class ExplodingConversationClient:
         raise AuthRequired()
 
 
-class FakeConversationRepository:
-    async def create(self, record):
-        return record
+class FakeConversationCollection:
+    async def update_one(self, filters: dict, updates: dict, upsert: bool = False):
+        _ = filters, updates, upsert
+        return None
 
 
 class ExplodingGreetingClient:
@@ -30,33 +33,43 @@ class ExplodingGreetingClient:
         raise AuthRequired()
 
 
-class FakeTaskRepository:
+class FakeTaskCollection:
     def __init__(self) -> None:
-        self.task = None
+        self.task: dict | None = None
 
-    async def create(self, task):
-        task.id = "task-1"
-        self.task = task
-        return task
+    async def insert_one(self, payload: dict):
+        payload = dict(payload)
+        payload["_id"] = ObjectId()
+        self.task = payload
+        return type("InsertResult", (), {"inserted_id": payload["_id"]})()
 
-    async def get(self, entity_id: str):
-        _ = entity_id
+    async def find_one(self, filters: dict):
+        _ = filters
         return self.task
 
-    async def update(self, task_id: str, updates: dict):
-        _ = task_id
-        for key, value in updates.items():
-            setattr(self.task, key, value)
-        return self.task
+    async def update_one(self, filters: dict, updates: dict):
+        _ = filters
+        if self.task is not None:
+            self.task.update(updates["$set"])
+        return None
 
 
-class FakeGreetingRecordRepository:
+class FakeGreetingRecordCollection:
     def __init__(self) -> None:
         self.items: list[GreetingRecord] = []
+        self.payloads: list[dict] = []
 
-    async def create(self, record: GreetingRecord) -> GreetingRecord:
-        self.items.append(record)
-        return record
+    async def insert_one(self, payload: dict):
+        payload = dict(payload)
+        payload["_id"] = ObjectId()
+        self.payloads.append(payload)
+        self.items.append(GreetingRecord.from_mongo(payload))
+        return type("InsertResult", (), {"inserted_id": payload["_id"]})()
+
+    async def find_one(self, filters: dict):
+        if not self.payloads:
+            return None
+        return self.payloads[-1]
 
 
 class FakeJob:
@@ -68,23 +81,51 @@ class FakeJob:
         self.company = "Demo Tech"
 
 
-class FakeJobRepository:
+class FakeJobCursor:
+    def __init__(self, items: list[dict]) -> None:
+        self._items = items
+
+    def sort(self, *args, **kwargs):
+        _ = args, kwargs
+        return self
+
+    def limit(self, limit: int):
+        self._items = self._items[:limit]
+        return self
+
+    async def to_list(self, length=None):
+        _ = length
+        return self._items
+
+
+class FakeJobCollection:
     def __init__(self) -> None:
         self.updated: list[tuple[str, dict]] = []
+        self.job_id = ObjectId()
 
-    async def list_filtered(self, greeted: bool = False, limit: int = 20):
-        _ = greeted, limit
-        return [FakeJob()]
+    def find(self, filters: dict):
+        _ = filters
+        return FakeJobCursor(
+            [
+                {
+                    "_id": self.job_id,
+                    "source_job_id": "source-job-1",
+                    "security_id": "sec-1",
+                    "title": "Python Backend Engineer",
+                    "company": "Demo Tech",
+                }
+            ]
+        )
 
-    async def update(self, entity_id: str, updates: dict):
-        self.updated.append((entity_id, updates))
+    async def update_one(self, filters: dict, updates: dict):
+        self.updated.append((str(filters["_id"]), updates["$set"]))
         return None
 
 
 def test_sync_conversations_maps_auth_errors():
     service = ConversationService.__new__(ConversationService)
     service.boss_client = ExplodingConversationClient()
-    service.conversations = FakeConversationRepository()
+    service.conversations = FakeConversationCollection()
 
     try:
         asyncio.run(service.sync_conversations())
@@ -98,9 +139,9 @@ def test_sync_conversations_maps_auth_errors():
 def test_run_greetings_records_mapped_auth_errors():
     service = GreetingService.__new__(GreetingService)
     service.boss_client = ExplodingGreetingClient()
-    service.tasks = FakeTaskRepository()
-    service.records = FakeGreetingRecordRepository()
-    service.jobs = FakeJobRepository()
+    service.tasks = FakeTaskCollection()
+    service.records = FakeGreetingRecordCollection()
+    service.jobs = FakeJobCollection()
 
     task = asyncio.run(service.run_greetings(target=None, job_ids=[], greeting_message=None, limit=5))
 

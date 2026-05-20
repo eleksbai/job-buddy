@@ -40,7 +40,7 @@ async def test_sync_conversations_returns_structured_auth_error():
     app.dependency_overrides[get_conversation_service] = lambda: FailingConversationService()
 
     async with api_client(app) as client:
-        response = await client.post("/api/conversations/sync")
+        response = await client.post("/boss/conversations/sync")
 
     assert response.status_code == 401
     assert response.json() == {
@@ -59,7 +59,7 @@ async def test_login_auth_returns_structured_account_risk_error():
     app.dependency_overrides[get_system_service] = lambda: FailingSystemService()
 
     async with api_client(app) as client:
-        response = await client.post("/api/system/auth/login")
+        response = await client.post("/boss/system/auth/login")
 
     assert response.status_code == 409
     assert response.json() == {
@@ -79,10 +79,10 @@ async def test_boss_error_handler_logs_raw_message(caplog):
 
     with caplog.at_level("ERROR"):
         async with api_client(app) as client:
-            response = await client.post("/api/system/auth/login")
+            response = await client.post("/boss/system/auth/login")
 
     assert response.status_code == 409
-    assert "Boss operation failed on POST /api/system/auth/login" in caplog.text
+    assert "Boss operation failed on POST /boss/system/auth/login" in caplog.text
     assert "BOSS 直聘风控拦截" in caplog.text
 
 

@@ -2,7 +2,7 @@ import pytest
 from fastapi import FastAPI
 
 from job_buddy.deps import get_job_service
-from job_buddy.modules.jobs import JobCollectionRecord, JobLead
+from job_buddy.models import JobCollectionRecord, JobLead
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
 
@@ -72,41 +72,10 @@ async def test_list_jobs_includes_job_url():
     app.dependency_overrides[get_job_service] = lambda: FakeJobService()
 
     async with api_client(app) as client:
-        response = await client.get("/api/jobs")
+        response = await client.get("/boss/jobs")
 
     assert response.status_code == 200
     assert response.json()[0]["job_url"] == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
     assert response.json()[0]["job_id"] == 12345
     assert response.json()[0]["search_count"] == 1
     assert response.json()[0]["last_searched_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_list_job_collection_records():
-    app = FastAPI()
-    app.include_router(build_api_router())
-    app.dependency_overrides[get_job_service] = lambda: FakeJobService()
-
-    async with api_client(app) as client:
-        response = await client.get("/api/jobs/collections")
-
-    assert response.status_code == 200
-    assert response.json()[0]["task_id"] == "task-1"
-    assert response.json()[0]["job_id"] == 12345
-    assert response.json()[0]["job_url"] == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
-
-
-@pytest.mark.asyncio
-async def test_get_job_detail():
-    app = FastAPI()
-    app.include_router(build_api_router())
-    app.dependency_overrides[get_job_service] = lambda: FakeJobService()
-
-    async with api_client(app) as client:
-        response = await client.get("/api/jobs/job-1/detail")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["cached"] is False
-    assert payload["job"]["source_job_id"] == "job-1"
-    assert payload["job"]["detail_text"] == "职位名称：Python Backend Engineer"

@@ -29,7 +29,7 @@ async def test_send_chat_message_routes_to_conversation_service():
     app.dependency_overrides[get_conversation_service] = lambda: service
 
     async with api_client(app) as client:
-        response = await client.post("/api/conversations/encrypt-1/messages/send", json={"content": "你好"})
+        response = await client.post("/boss/conversations/encrypt-1/messages/send", json={"content": "你好"})
 
     assert response.status_code == 200
     assert service.sent == ("encrypt-1", "你好")

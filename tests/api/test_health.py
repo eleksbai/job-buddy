@@ -18,7 +18,7 @@ async def test_health_endpoint():
     app.state.db = None
 
     async with api_client(app) as client:
-        response = await client.get("/api/health")
+        response = await client.get("/web/health")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"

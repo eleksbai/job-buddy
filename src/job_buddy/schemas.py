@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
+
+
+def _coerce_numeric_job_id(raw_payload: dict[str, Any]) -> int | None:
+    value = raw_payload.get("jobId")
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+class TimestampedSchema(BaseModel):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskTriggerResponse(BaseModel):
+    task_id: str
+    status: str
+
+
+class TargetProfileCreate(BaseModel):
+    name: str
+    keywords: list[str] = Field(default_factory=list)
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    filters: dict[str, Any] = Field(default_factory=dict)
+    greeting_template: str | None = None
+    is_active: bool = True
+
+
+class TargetProfileUpdate(BaseModel):
+    name: str | None = None
+    keywords: list[str] | None = None
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    filters: dict[str, Any] | None = None
+    greeting_template: str | None = None
+    is_active: bool | None = None
+
+
+class TargetProfileRead(TimestampedSchema):
+    name: str
+    keywords: list[str]
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    filters: dict[str, Any]
+    greeting_template: str | None = None
+    is_active: bool
+
+
+class JobLeadRead(TimestampedSchema):
+    source: str
+    source_job_id: str
+    job_id: int | None = None
+    security_id: str | None = None
+    title: str
+    company: str
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    job_url: str | None = None
+    match_status: str
+    search_count: int
+    last_searched_at: datetime | None = None
+    detail_fetched_at: datetime | None = None
+    detail_source_url: str | None = None
+    last_seen_at: datetime
+    greeted: bool
+    raw_payload: dict[str, Any]
+    detail_payload: dict[str, Any] = Field(default_factory=dict)
+    detail_text: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("job_id") is None:
+            raw_payload = data.get("raw_payload")
+            if isinstance(raw_payload, dict):
+                data["job_id"] = _coerce_numeric_job_id(raw_payload)
+        return data
+
+
+class JobLeadDetailRead(JobLeadRead):
+    pass
+
+
+class JobDetailResponse(BaseModel):
+    cached: bool
+    job: JobLeadDetailRead
+
+
+class SearchJobsRequest(BaseModel):
+    query: str
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    education: str | None = None
+    scale: str | None = None
+    industry: str | None = None
+    stage: str | None = None
+    job_type: str | None = None
+    page: int = 1
+
+
+class SearchJobsResponse(BaseModel):
+    success: bool
+    count: int
+    items: list[dict[str, Any]]
+    error: str | None = None
+    code: str | None = None
+
+
+class JobCollectionRecordRead(TimestampedSchema):
+    task_id: str
+    trace_id: str | None = None
+    target_profile_id: str | None = None
+    source: str
+    source_job_id: str
+    job_id: int | None = None
+    security_id: str | None = None
+    title: str
+    company: str
+    city: str | None = None
+    salary: str | None = None
+    experience: str | None = None
+    job_url: str | None = None
+    raw_payload: dict[str, Any]
+    collected_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_job_id_from_raw_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("job_id") is None:
+            raw_payload = data.get("raw_payload")
+            if isinstance(raw_payload, dict):
+                data["job_id"] = _coerce_numeric_job_id(raw_payload)
+        return data
+
+
+class SearchTaskRequest(BaseModel):
+    target_profile_id: str | None = None
+    query_override: dict[str, Any] = Field(default_factory=dict)
+
+
+class GreetTaskRequest(BaseModel):
+    target_profile_id: str | None = None
+    job_ids: list[str] = Field(default_factory=list)
+    greeting_message: str | None = None
+    limit: int = 20
+
+
+class GreetingTaskRead(TimestampedSchema):
+    task_type: str
+    status: str
+    target_profile_id: str | None = None
+    input_payload: dict[str, Any]
+    result_summary: dict[str, Any]
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class GreetingRecordRead(TimestampedSchema):
+    task_id: str
+    job_lead_id: str
+    source_job_id: str
+    status: str
+    message: str | None = None
+    response_payload: dict[str, Any]
+
+
+class TaskDetailResponse(BaseModel):
+    task: GreetingTaskRead
+    records: list[GreetingRecordRead]
+
+
+class ConversationRecordRead(TimestampedSchema):
+    source: str
+    source_conversation_id: str
+    gid: str
+    security_id: str | None = None
+    self_id: str | None = None
+    job_id: int | None = None
+    encrypt_job_id: str | None = None
+    encrypt_boss_id: str | None = None
+    title: str
+    name: str
+    company: str | None = None
+    avatar: str | None = None
+    last_message: str | None = None
+    unread_count: int
+    last_message_at: str | None = None
+    last_message_ts: float | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatMessageRead(TimestampedSchema):
+    conversation_id: str
+    message_id: str
+    from_id: str
+    content: str
+    msg_type: int | None = None
+    sent_at: int | None = None
+
+
+class ChatHistoryResponse(BaseModel):
+    gid: str
+    security_id: str | None = None
+    page: int
+    count: int
+    has_more: bool
+    total: int
+    messages: list[dict[str, Any]]
+
+
+class SendMessagePayload(BaseModel):
+    content: str
+
+
+class SendMessageResponse(BaseModel):
+    gid: str
+    job_id: str
+    content: str
+    status: str
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConversationSyncResponse(BaseModel):
+    count: int
+
+
+class DoctorCheckResponse(BaseModel):
+    name: str
+    status: str
+    detail: str
+    hint: str | None = None
+
+
+class DoctorErrorResponse(BaseModel):
+    code: str
+    message: str
+    recoverable: bool | None = None
+    recovery_action: str | None = None
+
+
+class DoctorResponse(BaseModel):
+    ok: bool
+    summary: str
+    data_dir: str | None = None
+    checks: list[DoctorCheckResponse]
+    next_actions: list[str]
+    stderr: str | None = None
+    exit_code: int
+    error: DoctorErrorResponse | None = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    mongodb: str
+    boss_client: str
+
+
+class AuthStatusResponse(BaseModel):
+    logged_in: bool
+    user_name: str | None = None
+    login_method: str | None = None
+    browser: str | None = None
+    last_login_at: datetime | None = None
+    last_logout_at: datetime | None = None
+    message: str
+    last_error: str | None = None
+
+
+class SearchOptionsResponse(BaseModel):
+    cities: list[str]
+    salary_ranges: list[str]
+    experience_levels: list[str]
+    education_levels: list[str]
+    industries: list[str]
+    scales: list[str]
+    stages: list[str]
+    job_types: list[str]
+
+
+class LogLineResponse(BaseModel):
+    text: str
+    level_hint: str = "info"
+
+
+class LogsResponse(BaseModel):
+    lines: list[LogLineResponse]
+    truncated: bool
+    source: str
+    updated_at: datetime
+
+
+class DataClearResponse(BaseModel):
+    deleted_counts: dict[str, int]
+    total_deleted: int

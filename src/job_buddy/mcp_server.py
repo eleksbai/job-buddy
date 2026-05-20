@@ -35,7 +35,7 @@ async def login() -> dict[str, Any]:
     """触发 BOSS直聘 登录流程。会在浏览器中打开登录页面，请扫码登录。"""
     async with _client() as client:
         try:
-            resp = await client.post("/api/system/auth/login")
+            resp = await client.post("/boss/system/auth/login")
             resp.raise_for_status()
             data = resp.json()
             return {
@@ -52,11 +52,11 @@ async def get_auth_status() -> dict[str, Any]:
     """查看当前 BOSS直聘 登录状态。"""
     async with _client() as client:
         try:
-            auth_resp = await client.get("/api/system/auth")
+            auth_resp = await client.get("/boss/system/auth")
             auth_resp.raise_for_status()
             auth_data = auth_resp.json()
 
-            health_resp = await client.get("/health")
+            health_resp = await client.get("/web/health")
             health_resp.raise_for_status()
             health_data = health_resp.json()
         except httpx.HTTPError as exc:
@@ -121,7 +121,7 @@ async def search_jobs(
 
     async with _client() as client:
         try:
-            resp = await client.post("/api/jobs/search", json=payload)
+            resp = await client.post("/boss/jobs/search", json=payload)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -142,7 +142,7 @@ async def get_job_detail(job_id: str) -> dict[str, Any]:
     """
     async with _client() as client:
         try:
-            resp = await client.get(f"/api/jobs/{job_id}/detail")
+            resp = await client.get(f"/boss/jobs/{job_id}/detail")
             if resp.status_code == 404:
                 return {
                     "success": False,
@@ -177,7 +177,7 @@ async def list_targets(limit: int = 100) -> list[dict[str, Any]]:
     """列出搜索目标配置。"""
     async with _client() as client:
         try:
-            resp = await client.get("/api/targets")
+            resp = await client.get("/web/targets")
             resp.raise_for_status()
             return resp.json()[:limit]
         except httpx.HTTPError as exc:
@@ -205,7 +205,7 @@ async def list_jobs(
 
     async with _client() as client:
         try:
-            resp = await client.get("/api/jobs", params=params)
+            resp = await client.get("/boss/jobs", params=params)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -217,7 +217,7 @@ async def list_job_collection_records(limit: int = 100) -> list[dict[str, Any]]:
     """列出职位采集原始记录。"""
     async with _client() as client:
         try:
-            resp = await client.get("/api/jobs/collections", params={"limit": str(limit)})
+            resp = await client.get("/boss/jobs/collections", params={"limit": str(limit)})
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -229,7 +229,7 @@ async def list_tasks(limit: int = 100) -> list[dict[str, Any]]:
     """列出异步任务记录。"""
     async with _client() as client:
         try:
-            resp = await client.get("/api/tasks", params={"limit": str(limit)})
+            resp = await client.get("/boss/tasks", params={"limit": str(limit)})
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -241,7 +241,7 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
     """查看指定任务的详情。"""
     async with _client() as client:
         try:
-            resp = await client.get(f"/api/tasks/{task_id}")
+            resp = await client.get(f"/boss/tasks/{task_id}")
             if resp.status_code == 404:
                 return None
             resp.raise_for_status()
@@ -255,7 +255,7 @@ async def list_conversations() -> list[dict[str, Any]]:
     """列出全部同步的对话记录。"""
     async with _client() as client:
         try:
-            resp = await client.get("/api/conversations")
+            resp = await client.get("/boss/conversations")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -267,7 +267,7 @@ async def sync_conversations() -> dict[str, Any]:
     """同步 BOSS直聘 沟通列表，返回同步数量。"""
     async with _client() as client:
         try:
-            resp = await client.post("/api/conversations/sync")
+            resp = await client.post("/boss/conversations/sync")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -286,7 +286,7 @@ async def get_chat_history(job_id: int, page: int = 1, count: int = 20) -> dict[
     params = {"page": str(page), "count": str(count)}
     async with _client() as client:
         try:
-            resp = await client.get(f"/api/conversations/{job_id}/messages", params=params)
+            resp = await client.get(f"/boss/conversations/{job_id}/messages", params=params)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -298,7 +298,7 @@ async def get_system_status() -> dict[str, Any]:
     """查看系统状态和 BOSS直聘 连接状态。"""
     async with _client() as client:
         try:
-            resp = await client.get("/health")
+            resp = await client.get("/web/health")
             resp.raise_for_status()
             data = resp.json()
             return {

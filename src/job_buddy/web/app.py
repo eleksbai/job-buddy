@@ -20,7 +20,7 @@ def register_web(app: FastAPI) -> None:
         response = await call_next(request)
         if response.status_code == 404:
             path = request.url.path
-            if not path.startswith(("/api/", "/docs", "/openapi.json")):
+            if not path.startswith(("/boss", "/web", "/docs", "/openapi.json")):
                 asset_candidate = STATIC_ROOT / path.lstrip("/")
                 if asset_candidate.is_file():
                     return FileResponse(asset_candidate)

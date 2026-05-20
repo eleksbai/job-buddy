@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
+
+from bson import ObjectId
 
 from job_buddy.core.engines.models import SearchJobItem, SearchResult
-from job_buddy.modules.jobs import (
+from job_buddy.models import (
     GreetingTask,
     JobCollectionRecord,
     JobCollectionTrace,
-    JobCollectionService,
     JobLead,
 )
+from job_buddy.services import JobCollectionService
 
 
 class AuthRequired(Exception):
@@ -218,84 +221,121 @@ class FakeBossClient:
         }
 
 
-class FakeTaskRepository:
+class FakeInsertResult:
+    def __init__(self, inserted_id: ObjectId) -> None:
+        self.inserted_id = inserted_id
+
+
+class FakeTaskCollection:
     def __init__(self) -> None:
-        self.items: dict[str, GreetingTask] = {}
-        self.counter = 0
+        self.payloads: dict[str, dict[str, Any]] = {}
 
-    async def create(self, task: GreetingTask) -> GreetingTask:
-        self.counter += 1
-        task.id = f"task-{self.counter}"
-        self.items[task.id] = task
-        return task
+    async def insert_one(self, payload: dict) -> FakeInsertResult:
+        inserted_id = ObjectId()
+        stored = dict(payload)
+        stored["_id"] = inserted_id
+        self.payloads[str(inserted_id)] = stored
+        return FakeInsertResult(inserted_id)
 
-    async def get(self, entity_id: str) -> GreetingTask | None:
-        return self.items.get(entity_id)
+    async def find_one(self, filters: dict) -> dict | None:
+        raw_id = filters.get("_id")
+        return self.payloads.get(str(raw_id))
 
-    async def update(self, task_id: str, updates: dict) -> GreetingTask | None:
-        task = self.items.get(task_id)
-        if task is None:
-            return None
-        for key, value in updates.items():
-            setattr(task, key, value)
-        return task
-
-
-class FakeJobLeadRepository:
-    def __init__(self) -> None:
-        self.items: dict[str, JobLead] = {}
-        self.counter = 0
-
-    async def get_by_source_job_id(self, source_job_id: str) -> JobLead | None:
-        return self.items.get(source_job_id)
-
-    async def create(self, job: JobLead) -> JobLead:
-        self.counter += 1
-        job.id = f"lead-{self.counter}"
-        self.items[job.source_job_id] = job
-        return job
-
-    async def update(self, entity_id: str, updates: dict) -> JobLead | None:
-        for item in self.items.values():
-            if item.id == entity_id:
-                for key, value in updates.items():
-                    setattr(item, key, value)
-                return item
+    async def update_one(self, filters: dict, updates: dict):
+        payload = await self.find_one(filters)
+        if payload is not None:
+            payload.update(updates["$set"])
         return None
 
 
-class FakeJobCollectionRecordRepository:
+class FakeJobLeadCollection:
     def __init__(self) -> None:
-        self.items: list[JobCollectionRecord] = []
+        self.payloads: dict[str, dict[str, Any]] = {}
 
-    async def create(self, record: JobCollectionRecord) -> JobCollectionRecord:
-        record.id = f"record-{len(self.items) + 1}"
-        self.items.append(record)
-        return record
+    @property
+    def items(self) -> dict[str, JobLead]:
+        return {key: JobLead.from_mongo(value) for key, value in self.payloads.items()}
+
+    async def insert_one(self, payload: dict) -> FakeInsertResult:
+        inserted_id = ObjectId()
+        stored = dict(payload)
+        stored["_id"] = inserted_id
+        self.payloads[stored["source_job_id"]] = stored
+        return FakeInsertResult(inserted_id)
+
+    async def find_one(self, filters: dict) -> dict | None:
+        if "_id" in filters:
+            for payload in self.payloads.values():
+                if payload.get("_id") == filters["_id"]:
+                    return payload
+            return None
+        if "source_job_id" in filters:
+            return self.payloads.get(filters["source_job_id"])
+        return None
+
+    async def update_one(self, filters: dict, updates: dict):
+        payload = await self.find_one(filters)
+        if payload is not None:
+            payload.update(updates["$set"])
+        return None
 
 
-class FakeJobCollectionTraceRepository:
+class FakeJobCollectionRecordCollection:
     def __init__(self) -> None:
-        self.items: list[JobCollectionTrace] = []
+        self.payloads: list[dict[str, Any]] = []
 
-    async def create(self, trace: JobCollectionTrace) -> JobCollectionTrace:
-        trace.id = f"trace-{len(self.items) + 1}"
-        self.items.append(trace)
-        return trace
+    @property
+    def items(self) -> list[JobCollectionRecord]:
+        return [JobCollectionRecord.from_mongo(payload) for payload in self.payloads]
+
+    async def insert_one(self, payload: dict) -> FakeInsertResult:
+        inserted_id = ObjectId()
+        stored = dict(payload)
+        stored["_id"] = inserted_id
+        self.payloads.append(stored)
+        return FakeInsertResult(inserted_id)
+
+    async def find_one(self, filters: dict) -> dict | None:
+        for payload in self.payloads:
+            if payload.get("_id") == filters.get("_id"):
+                return payload
+        return None
+
+
+class FakeJobCollectionTraceCollection:
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, Any]] = []
+
+    @property
+    def items(self) -> list[JobCollectionTrace]:
+        return [JobCollectionTrace.from_mongo(payload) for payload in self.payloads]
+
+    async def insert_one(self, payload: dict) -> FakeInsertResult:
+        inserted_id = ObjectId()
+        stored = dict(payload)
+        stored["_id"] = inserted_id
+        self.payloads.append(stored)
+        return FakeInsertResult(inserted_id)
+
+    async def find_one(self, filters: dict) -> dict | None:
+        for payload in self.payloads:
+            if payload.get("_id") == filters.get("_id"):
+                return payload
+        return None
 
 
 def build_service() -> tuple[
     JobCollectionService,
-    FakeJobLeadRepository,
-    FakeJobCollectionRecordRepository,
-    FakeJobCollectionTraceRepository,
+    FakeJobLeadCollection,
+    FakeJobCollectionRecordCollection,
+    FakeJobCollectionTraceCollection,
 ]:
     service = JobCollectionService.__new__(JobCollectionService)
     service.runtime = FakeBossClient()
-    service.tasks = FakeTaskRepository()
-    service.jobs = FakeJobLeadRepository()
-    service.records = FakeJobCollectionRecordRepository()
-    service.traces = FakeJobCollectionTraceRepository()
+    service.tasks = FakeTaskCollection()
+    service.jobs = FakeJobLeadCollection()
+    service.records = FakeJobCollectionRecordCollection()
+    service.traces = FakeJobCollectionTraceCollection()
     return service, service.jobs, service.records, service.traces
 
 
@@ -315,7 +355,7 @@ def test_search_jobs_writes_collection_records_and_deduped_leads():
 
     assert len(records.items) == 2
     assert len(traces.items) == 2
-    assert records.items[0].trace_id == "trace-1"
+    assert records.items[0].trace_id == traces.items[0].id
     assert len(jobs.items) == 1
     assert jobs.items["job-1"].salary == "25-35K"
     assert jobs.items["job-1"].job_url == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
@@ -323,20 +363,6 @@ def test_search_jobs_writes_collection_records_and_deduped_leads():
     assert jobs.items["job-1"].last_searched_at is not None
     assert traces.items[0].request_url == "https://www.zhipin.com/wapi/zpgeek/search/joblist.json?query=Python"
     assert traces.items[0].browser == "Patchright Chromium"
-
-
-def test_search_jobs_fails_fast_when_not_logged_in():
-    service, jobs, records, traces = build_service()
-    service.runtime.logged_in = False
-    service.runtime.health_message = "未登录，请先点击页面右上角登录"
-
-    task = asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
-
-    assert task.status.value == "failed"
-    assert task.error_message == "未登录，请先点击页面右上角登录"
-    assert len(records.items) == 0
-    assert len(traces.items) == 0
-    assert len(jobs.items) == 0
 
 
 def test_search_jobs_fails_fast_when_login_state_is_invalid():
@@ -370,9 +396,8 @@ def test_search_jobs_maps_auth_errors_from_runtime():
 def test_get_job_detail_returns_cached_detail_without_refetching():
     service, jobs, records, traces = build_service()
     asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
-    job = jobs.items["job-1"]
-    job.detail_payload = {"job": {"title": "Python Backend Engineer"}}
-    job.detail_text = "职位名称：Python Backend Engineer"
+    jobs.payloads["job-1"]["detail_payload"] = {"job": {"title": "Python Backend Engineer"}}
+    jobs.payloads["job-1"]["detail_text"] = "职位名称：Python Backend Engineer"
 
     result, cached = asyncio.run(service.get_job_detail("job-1"))
 

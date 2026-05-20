@@ -1,10 +1,13 @@
 import asyncio
 from pathlib import Path
 
+from bson import ObjectId
+
 from job_buddy.core.boss import BossDoctorResult, BossOperationError
 from job_buddy.core.config import Settings
 from job_buddy.core.engines.models import LoginResult
-from job_buddy.modules.system import AuthState, SystemService
+from job_buddy.models import AuthState
+from job_buddy.services import SystemService
 
 
 class AuthRequired(Exception):
@@ -55,17 +58,31 @@ class FakeRuntime:
         return self.local_status
 
 
-class FakeAuthStateRepository:
+class FakeAuthStateCollection:
     def __init__(self) -> None:
-        self.state: AuthState | None = None
+        self.payload: dict | None = None
 
-    async def get_current(self, provider: str = "zhipin") -> AuthState | None:
-        _ = provider
-        return self.state
+    @property
+    def state(self) -> AuthState | None:
+        if self.payload is None:
+            return None
+        return AuthState.from_mongo(self.payload)
 
-    async def upsert_current(self, state: AuthState) -> AuthState:
-        self.state = state
-        return state
+    async def find_one(self, filters: dict) -> dict | None:
+        _ = filters
+        return self.payload
+
+    async def insert_one(self, payload: dict):
+        payload = dict(payload)
+        payload["_id"] = ObjectId()
+        self.payload = payload
+        return type("InsertResult", (), {"inserted_id": payload["_id"]})()
+
+    async def update_one(self, filters: dict, updates: dict):
+        _ = filters
+        if self.payload is not None:
+            self.payload.update(updates["$set"])
+        return None
 
 
 class FakeDeleteResult:
@@ -86,17 +103,19 @@ class FakeCollection:
 
 class FakeDatabase:
     def __init__(self) -> None:
+        self.auth_states = FakeAuthStateCollection()
         self.collections = {
             name: FakeCollection(index + 1)
             for index, name in enumerate(SystemService.data_collection_names)
         }
+        self.collections["boss_auth_state"] = self.auth_states
 
     def __getitem__(self, collection_name: str) -> FakeCollection:
         return self.collections[collection_name]
 
 
 def test_run_doctor_returns_structured_response():
-    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeAuthStateRepository(), FakeDatabase())
+    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeDatabase())
 
     result = asyncio.run(service.run_doctor())
 
@@ -107,8 +126,8 @@ def test_run_doctor_returns_structured_response():
 
 def test_login_persists_auth_state():
     runtime = FakeRuntime()
-    auth_states = FakeAuthStateRepository()
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
+    database = FakeDatabase()
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, database)
 
     result = asyncio.run(service.login())
 
@@ -116,39 +135,39 @@ def test_login_persists_auth_state():
     assert result.logged_in is True
     assert result.user_name == "Alice"
     assert result.browser == "Patchright Chromium"
-    assert auth_states.state is not None
-    assert auth_states.state.login_method == "patchright"
+    assert database.auth_states.state is not None
+    assert database.auth_states.state.login_method == "patchright"
 
 
 def test_logout_clears_auth_state():
     runtime = FakeRuntime()
-    auth_states = FakeAuthStateRepository()
-    auth_states.state = AuthState(
+    database = FakeDatabase()
+    database.auth_states.payload = AuthState(
         logged_in=True,
         user_name="Alice",
         login_method="patchright",
         browser="Patchright Chromium",
-    )
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
+    ).to_mongo() | {"_id": ObjectId()}
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, database)
 
     result = asyncio.run(service.logout())
 
     assert runtime.logout_called is True
     assert result.logged_in is False
-    assert auth_states.state is not None
-    assert auth_states.state.logged_in is False
+    assert database.auth_states.state is not None
+    assert database.auth_states.state.logged_in is False
 
 
 def test_get_auth_status_hides_historical_identity_when_logged_out():
     runtime = FakeRuntime()
-    auth_states = FakeAuthStateRepository()
-    auth_states.state = AuthState(
+    database = FakeDatabase()
+    database.auth_states.payload = AuthState(
         logged_in=True,
         user_name="Alice",
         login_method="patchright",
         browser="Patchright Chromium",
-    )
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, auth_states, FakeDatabase())
+    ).to_mongo() | {"_id": ObjectId()}
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, database)
 
     result = asyncio.run(service.get_auth_status())
 
@@ -160,7 +179,7 @@ def test_get_auth_status_hides_historical_identity_when_logged_out():
 def test_login_maps_auth_errors():
     runtime = FakeRuntime()
     runtime.login_error = AuthRequired()
-    service = SystemService(FakeDoctorRunner(), Settings(), runtime, FakeAuthStateRepository(), FakeDatabase())
+    service = SystemService(FakeDoctorRunner(), Settings(), runtime, FakeDatabase())
 
     try:
         asyncio.run(service.login())
@@ -181,7 +200,6 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
         FakeDoctorRunner(),
         Settings(APP_LOG_DIR=str(log_dir)),
         FakeRuntime(),
-        FakeAuthStateRepository(),
         FakeDatabase(),
     )
 
@@ -196,10 +214,10 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
 
 def test_clear_data_deletes_business_collections():
     database = FakeDatabase()
-    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), FakeAuthStateRepository(), database)
+    service = SystemService(FakeDoctorRunner(), Settings(), FakeRuntime(), database)
 
     result = asyncio.run(service.clear_data())
 
     assert set(result.deleted_counts) == set(SystemService.data_collection_names)
     assert result.total_deleted == sum(range(1, len(SystemService.data_collection_names) + 1))
-    assert all(collection.delete_calls == 1 for collection in database.collections.values())
+    assert all(database.collections[name].delete_calls == 1 for name in SystemService.data_collection_names)
