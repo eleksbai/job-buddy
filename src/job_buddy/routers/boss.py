@@ -43,9 +43,14 @@ async def list_jobs(
 async def get_job_detail(
     source_job_id: str,
     security_id: str | None = Query(default=None, description="BOSS security_id, used when job is not yet in the database"),
+    force_refresh: bool = Query(default=False, description="Force re-fetch latest job detail from BOSS"),
     service: JobCollectionService = Depends(get_job_service),
 ) -> JobDetailResponse:
-    job, cached = await service.get_job_detail(source_job_id, security_id=security_id)
+    job, cached = await service.get_job_detail(
+        source_job_id,
+        security_id=security_id,
+        force_refresh=force_refresh,
+    )
     return JobDetailResponse(cached=cached, job=JobLeadDetailRead(**job.model_dump()))
 
 

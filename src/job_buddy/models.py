@@ -143,6 +143,7 @@ class GreetingRecord(DocumentModel):
 class FriendMessage(BaseModel):
     message_id: str
     from_id: str
+    from_name: str | None = None
     content: str = ""
     msg_type: int | None = None
     sent_at: int | None = None

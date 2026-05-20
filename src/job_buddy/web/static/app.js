@@ -16,6 +16,7 @@ const state = {
   jobDetailPageName: null,
   jobDetailPageFriendId: null,
   jobDetailPageSecurityId: null,
+  jobDetailPageForceContact: false,
   jobDetailPagePayload: null,
   jobs: [],
   chatHistoryGid: null,
@@ -907,7 +908,11 @@ function messageTypeLabel(type) {
   return map[type] || `类型${type}`;
 }
 
-function messageSenderLabel(fromId, friendId, friendName) {
+function messageSenderLabel(message, friendId, friendName) {
+  if (message?.from_name) {
+    return escapeHtml(message.from_name);
+  }
+  const fromId = message?.from_id;
   if (!friendId) return "对方";
   if (fromId && String(fromId) === String(friendId)) {
     return escapeHtml(friendName || "对方");
@@ -923,7 +928,7 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
     .slice()
     .reverse()
     .map((m) => {
-      const sender = messageSenderLabel(m.from_id, friendId, friendName);
+      const sender = messageSenderLabel(m, friendId, friendName);
       const isSelf = sender === "我";
       const typeLabel = messageTypeLabel(m.type);
       const time = m.created_at ? formatDate(m.created_at) : "-";
@@ -1007,11 +1012,12 @@ function closeChatHistoryDrawer() {
 
 // ── Job Detail Page ──
 
-async function loadJobDetailPage(sourceJobId) {
+async function loadJobDetailPage(sourceJobId, options = {}) {
   if (!sourceJobId) {
     showError("缺少职位主键");
     return;
   }
+  const forceRefresh = options.forceRefresh === true;
 
   state.jobDetailPageSourceJobId = sourceJobId;
   state.jobDetailPagePayload = null;
@@ -1032,12 +1038,22 @@ async function loadJobDetailPage(sourceJobId) {
   document.getElementById("jobDetailMessageInput").value = "";
 
   const securityId = state.jobDetailPageSecurityId || "";
-  const detailUrl = securityId
-    ? `/boss/jobs/${encodeURIComponent(sourceJobId)}/detail?security_id=${encodeURIComponent(securityId)}`
+  const params = new URLSearchParams();
+  if (securityId) {
+    params.set("security_id", securityId);
+  }
+  if (forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const detailUrl = params.size > 0
+    ? `/boss/jobs/${encodeURIComponent(sourceJobId)}/detail?${params.toString()}`
     : `/boss/jobs/${encodeURIComponent(sourceJobId)}/detail`;
 
   try {
     const detailResult = await fetchJson(detailUrl);
+    if (state.jobDetailPageForceContact && detailResult?.job) {
+      detailResult.job.contact = true;
+    }
     state.jobDetailPagePayload = detailResult;
     renderJobDetailPageDetail(detailResult);
   } catch (error) {
@@ -1109,7 +1125,7 @@ function renderJobDetailPageDetail(payload) {
   document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
   const contact = payload?.job?.contact;
-  document.getElementById("jobDetailGreetButton").hidden = contact !== false;
+  document.getElementById("jobDetailGreetButton").hidden = contact === true;
   document.getElementById("jobDetailSyncChatButton").hidden = contact !== true;
   document.getElementById("jobDetailMessageInput").hidden = contact !== true;
   document.getElementById("jobDetailSendMessageButton").hidden = contact !== true;
@@ -1136,6 +1152,23 @@ async function greetCurrentJobDetail() {
     await Promise.all([loadJobDetailPage(state.jobDetailPageSourceJobId), loadJobs(), loadTasks(), loadSummaryCards()]);
   } finally {
     setButtonBusy("jobDetailGreetButton", false);
+  }
+}
+
+async function syncJobDetailPageDetail() {
+  const sourceJobId = state.jobDetailPageSourceJobId;
+  if (!sourceJobId) {
+    showError("缺少职位主键");
+    return;
+  }
+
+  clearError();
+  setButtonBusy("jobDetailSyncDetailButton", true, "同步中");
+  try {
+    await loadJobDetailPage(sourceJobId, { forceRefresh: true });
+    showNotice("职位详情已同步", 3000);
+  } finally {
+    setButtonBusy("jobDetailSyncDetailButton", false);
   }
 }
 
@@ -1250,7 +1283,7 @@ function renderChatHistoryAction(row) {
 }
 
 function renderJobDetailPageAction(row) {
-  const sourceJobId = row.source_job_id;
+  const sourceJobId = row.encrypt_job_id;
   if (!sourceJobId) return "-";
   const name = row.name || "";
   const friendId = row.encrypt_boss_id || "";
@@ -1502,6 +1535,7 @@ function bindEvents() {
       state.jobDetailPageName = "";
       state.jobDetailPageFriendId = "";
       state.jobDetailPageSecurityId = "";
+      state.jobDetailPageForceContact = false;
       navigateTo("job-detail", { sourceJobId: detailButton.dataset.jobDetail });
       return;
     }
@@ -1536,6 +1570,7 @@ function bindEvents() {
       state.jobDetailPageName = decodeURIComponent(parts[1] || "");
       state.jobDetailPageFriendId = parts[2] || "";
       state.jobDetailPageSecurityId = parts[3] || "";
+      state.jobDetailPageForceContact = true;
       navigateTo("job-detail", { sourceJobId: parts[0] });
       return;
     }
@@ -1610,8 +1645,8 @@ function bindEvents() {
     .getElementById("jobDetailSyncChatButton")
     .addEventListener("click", () => syncChatHistoryForJobDetail().catch((error) => showError(error.message)));
   document
-    .getElementById("jobDetailRefreshButton")
-    .addEventListener("click", () => loadJobDetailPage(state.jobDetailPageSourceJobId).catch((error) => showError(error.message)));
+    .getElementById("jobDetailSyncDetailButton")
+    .addEventListener("click", () => syncJobDetailPageDetail().catch((error) => showError(error.message)));
   document
     .getElementById("jobDetailGreetButton")
     .addEventListener("click", () => greetCurrentJobDetail().catch((error) => showError(error.message)));

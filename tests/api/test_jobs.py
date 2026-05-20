@@ -8,6 +8,9 @@ from tests.api._client import api_client
 
 
 class FakeJobService:
+    def __init__(self) -> None:
+        self.detail_calls: list[tuple[str, str | None, bool]] = []
+
     async def list_jobs(self, match_status, greeted, limit):
         _ = match_status, greeted, limit
         return [
@@ -43,8 +46,8 @@ class FakeJobService:
             )
         ]
 
-    async def get_job_detail(self, source_job_id, security_id=None):
-        _ = source_job_id; _ = security_id
+    async def get_job_detail(self, source_job_id, security_id=None, force_refresh=False):
+        self.detail_calls.append((source_job_id, security_id, force_refresh))
         return (
             JobLead(
                 _id="6825fb1a7d4ce9adcc2d1a31",
@@ -87,7 +90,8 @@ async def test_list_jobs_includes_job_url():
 async def test_get_job_detail_includes_contact_state():
     app = FastAPI()
     app.include_router(build_api_router())
-    app.dependency_overrides[get_job_service] = lambda: FakeJobService()
+    service = FakeJobService()
+    app.dependency_overrides[get_job_service] = lambda: service
 
     async with api_client(app) as client:
         response = await client.get("/boss/jobs/job-1/detail")
@@ -95,3 +99,18 @@ async def test_get_job_detail_includes_contact_state():
     assert response.status_code == 200
     assert response.json()["job"]["contact"] is False
     assert response.json()["job"]["encrypt_boss_id"] == "boss-1"
+    assert service.detail_calls == [("job-1", None, False)]
+
+
+@pytest.mark.asyncio
+async def test_get_job_detail_supports_force_refresh():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    service = FakeJobService()
+    app.dependency_overrides[get_job_service] = lambda: service
+
+    async with api_client(app) as client:
+        response = await client.get("/boss/jobs/job-1/detail?security_id=sec-1&force_refresh=true")
+
+    assert response.status_code == 200
+    assert service.detail_calls == [("job-1", "sec-1", True)]

@@ -54,6 +54,31 @@ class ChatHistoryIn(BossSchema):
     count: int = 20
 
 
+class ChatHistoryMessageOut(BossSchema):
+    message_id: str
+    from_id: str
+    from_name: str
+    to_id: str
+    to_name: str
+    content: str
+    type: int
+    created_at: int
+    received: bool
+    status: int
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatHistoryOut(BossSchema):
+    boss_id: str
+    security_id: str
+    page: int
+    count: int
+    has_more: bool
+    total: int
+    messages: list[ChatHistoryMessageOut] = Field(default_factory=list)
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class SendMessageIn(BossSchema):
     job_id: str
     job_numeric_id: int | None = None

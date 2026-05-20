@@ -189,6 +189,7 @@ class TaskDetailResponse(BaseModel):
 class FriendMessageRead(BaseModel):
     message_id: str
     from_id: str
+    from_name: str | None = None
     content: str
     msg_type: int | None = None
     sent_at: int | None = None

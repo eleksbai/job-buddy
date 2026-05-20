@@ -33,6 +33,8 @@ from job_buddy.boss.config import (
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import (
     ChatHistoryIn,
+    ChatHistoryMessageOut,
+    ChatHistoryOut,
     FriendListIn,
     GreetJobIn,
     JobDetailIn,
@@ -538,7 +540,7 @@ class PatchrightEngine:
             "raw_payload": payload,
         }
 
-    async def chat_history(self, request: ChatHistoryIn) -> dict[str, Any]:
+    async def chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -568,26 +570,31 @@ class PatchrightEngine:
         if not isinstance(messages, list):
             messages = []
         messages = [m for m in messages if m.get("uncount") == 0]
-        return {
-            "boss_id": request.boss_id,
-            "security_id": request.security_id,
-            "page": request.page,
-            "count": request.count,
-            "has_more": bool(zp_data.get("hasMore", False)),
-            "total": len(messages),
-            "messages": [
-                {
-                    "message_id": str(m.get("mid") or ""),
-                    "from_id": str((m.get("from") or {}).get("uid") or ""),
-                    "content": _extract_message_content(m),
-                    "type": m.get("type"),
-                    "created_at": m.get("time"),
-                    "raw_payload": m,
-                }
+        return ChatHistoryOut(
+            boss_id=request.boss_id,
+            security_id=request.security_id,
+            page=request.page,
+            count=request.count,
+            has_more=bool(zp_data.get("hasMore", False)),
+            total=len(messages),
+            messages=[
+                ChatHistoryMessageOut(
+                    message_id=str(m.get("mid") or ""),
+                    from_id=str((m.get("from") or {}).get("uid") or ""),
+                    from_name=str((m.get("from") or {}).get("name") or ""),
+                    to_id=str((m.get("to") or {}).get("uid") or ""),
+                    to_name=str((m.get("to") or {}).get("name") or ""),
+                    content=str(_extract_message_content(m) or ""),
+                    type=int(m.get("type") or 0),
+                    created_at=int(m.get("time") or 0),
+                    received=bool(m.get("received", False)),
+                    status=int(m.get("status") or 0),
+                    raw_payload=m,
+                )
                 for m in messages
             ],
-            "raw_payload": payload,
-        }
+            raw_payload=payload,
+        )
 
     async def send_message(self, request: SendMessageIn) -> dict[str, Any]:
         await self.check_page_health()
@@ -1176,7 +1183,7 @@ class BossClient(PatchrightEngine):
     async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
         return await self.friend_list(FriendListIn(page=page))
 
-    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
+    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> ChatHistoryOut:
         return await self.chat_history(
             ChatHistoryIn(boss_id=boss_id, security_id=security_id, page=page, count=count)
         )

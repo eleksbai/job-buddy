@@ -1,7 +1,7 @@
 import asyncio
 
 from job_buddy.boss import BossOperationError
-from job_buddy.boss.schemas import SendMessageIn
+from job_buddy.boss.schemas import ChatHistoryMessageOut, ChatHistoryOut, SendMessageIn
 from job_buddy.services import FriendService
 
 
@@ -40,6 +40,46 @@ class FakeMessageClient:
     async def list_friends(self, page: int = 1) -> list[dict]:
         _ = page
         return list(self.friends_payload)
+
+    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> ChatHistoryOut:
+        _ = boss_id, security_id, page, count
+        return ChatHistoryOut(
+            boss_id="boss-1",
+            security_id="sec-1",
+            page=1,
+            count=2,
+            has_more=False,
+            total=2,
+            messages=[
+                ChatHistoryMessageOut(
+                    message_id="new-1",
+                    from_id="uid-1",
+                    from_name="Alice",
+                    to_id="uid-2",
+                    to_name="Bob",
+                    content="新消息1",
+                    type=1,
+                    created_at=1001,
+                    received=True,
+                    status=2,
+                    raw_payload={"mid": "new-1"},
+                ),
+                ChatHistoryMessageOut(
+                    message_id="new-2",
+                    from_id="uid-2",
+                    from_name="Bob",
+                    to_id="uid-1",
+                    to_name="Alice",
+                    content="新消息2",
+                    type=1,
+                    created_at=1002,
+                    received=False,
+                    status=1,
+                    raw_payload={"mid": "new-2"},
+                ),
+            ],
+            raw_payload={"code": 0},
+        )
 
 
 def test_send_friend_message_uses_encrypt_boss_id():
@@ -138,3 +178,34 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
 
     assert service.boss_client.calls
     assert result.friend_id == "boss-1"
+
+
+def test_get_friend_messages_replaces_cached_messages_on_sync():
+    record = {
+        "_id": "friend-1",
+        "gid": "gid-1",
+        "boss_uid": "uid-1",
+        "security_id": "sec-1",
+        "encrypt_boss_id": "boss-1",
+        "messages": [
+            {
+                "message_id": "old-1",
+                "from_id": "uid-1",
+                "content": "旧消息",
+                "msg_type": 1,
+                "sent_at": 999,
+                "raw_payload": {"mid": "old-1"},
+            }
+        ],
+    }
+    service = FriendService.__new__(FriendService)
+    service.friends = FakeFriendRepository(record)
+    service.boss_client = FakeMessageClient()
+
+    result = asyncio.run(service.get_friend_messages("boss-1", page=1, count=100))
+
+    stored_messages = service.friends.updated[-1][1]["$set"]["messages"]
+    assert [message["message_id"] for message in stored_messages] == ["new-1", "new-2"]
+    assert [message["from_name"] for message in stored_messages] == ["Alice", "Bob"]
+    assert result.total == 2
+    assert [message["message_id"] for message in result.messages] == ["new-1", "new-2"]

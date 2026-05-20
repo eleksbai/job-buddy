@@ -184,6 +184,7 @@ def _normalize_friend_messages(messages: list[dict[str, Any]]) -> list[FriendMes
         deduped[message_id] = FriendMessage(
             message_id=message_id,
             from_id=str(message.get("from_id") or ""),
+            from_name=message.get("from_name"),
             content=str(message.get("content") or ""),
             msg_type=message.get("type"),
             sent_at=message.get("created_at"),
@@ -207,6 +208,7 @@ def _merge_friend_messages(
                 {
                     "message_id": message.message_id,
                     "from_id": message.from_id,
+                    "from_name": message.from_name,
                     "content": message.content,
                     "type": message.msg_type,
                     "created_at": message.sent_at,
@@ -218,6 +220,7 @@ def _merge_friend_messages(
                 {
                     "message_id": message.get("message_id"),
                     "from_id": message.get("from_id"),
+                    "from_name": message.get("from_name"),
                     "content": message.get("content"),
                     "type": message.get("msg_type", message.get("type")),
                     "created_at": message.get("sent_at", message.get("created_at")),
@@ -304,7 +307,12 @@ class JobCollectionService:
             filters["source_job_id"] = source_job_id
         return await _list_models(self.records, JobCollectionRecord, filters=filters, limit=limit)
 
-    async def get_job_detail(self, source_job_id: str, security_id: str | None = None) -> tuple[JobLead, bool]:
+    async def get_job_detail(
+        self,
+        source_job_id: str,
+        security_id: str | None = None,
+        force_refresh: bool = False,
+    ) -> tuple[JobLead, bool]:
         job = await self._get_job_by_source_job_id(source_job_id)
         if job is None:
             if not security_id:
@@ -346,7 +354,7 @@ class JobCollectionService:
             await self._sync_job_to_friends(job)
             return job, False
 
-        if job.detail_payload and job.detail_text:
+        if not force_refresh and job.detail_payload and job.detail_text:
             return job, True
 
         try:
@@ -835,6 +843,7 @@ class FriendService:
                 {
                     "message_id": message.get("message_id"),
                     "from_id": message.get("from_id"),
+                    "from_name": message.get("from_name"),
                     "content": message.get("content", ""),
                     "type": message.get("msg_type"),
                     "created_at": message.get("sent_at"),
@@ -867,13 +876,13 @@ class FriendService:
             )
             raise map_boss_operation_error(exc) from exc
 
-        messages = result.get("messages", [])
+        messages = [message.model_dump() for message in result.messages]
         boss_uid = str(friend.get("boss_uid") or "")
         backfilled_self_id = _extract_self_id_from_messages(boss_uid, messages)
-        merged_messages = _merge_friend_messages(friend.get("messages"), messages)
+        refreshed_messages = _normalize_friend_messages(messages)
 
         updates: dict[str, Any] = {
-            "messages": [message.model_dump() for message in merged_messages],
+            "messages": [message.model_dump() for message in refreshed_messages],
             "updated_at": utc_now(),
         }
         if messages:
@@ -899,10 +908,10 @@ class FriendService:
             gid=gid,
             friend_id=friend_id,
             security_id=security_id,
-            page=result["page"],
-            count=result["count"],
-            has_more=result["has_more"],
-            total=result["total"],
+            page=result.page,
+            count=result.count,
+            has_more=result.has_more,
+            total=result.total,
             messages=messages,
         )
 
@@ -950,6 +959,7 @@ class FriendService:
                 {
                     "message_id": str(result.get("message_id") or result.get("mid") or f"local-{utc_now().timestamp()}"),
                     "from_id": str(result.get("self_id") or friend.get("self_id") or ""),
+                    "from_name": result.get("from_name"),
                     "content": content,
                     "type": result.get("type", 1),
                     "created_at": result.get("sent_at") or result.get("timestamp") or int(utc_now().timestamp() * 1000),
@@ -997,7 +1007,10 @@ class FriendService:
             logger.warning("BOSS send identity backfill failed: friend_id=%s error=%s", friend_id, exc)
             return friend
 
-        self_id = _extract_self_id_from_messages(boss_uid, result.get("messages", []))
+        self_id = _extract_self_id_from_messages(
+            boss_uid,
+            [message.model_dump() for message in result.messages],
+        )
         updates: dict[str, Any] = {}
         if self_id:
             updates["self_id"] = self_id
