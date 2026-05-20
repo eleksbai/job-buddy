@@ -154,9 +154,13 @@ JOB_TYPE_CODES = {
 def normalize_job(raw: dict[str, Any]) -> dict[str, Any]:
     job_id = str(raw.get("encryptJobId") or "")
     security_id = str(raw.get("securityId") or "") or None
+    encrypt_boss_id = str(raw.get("encryptBossId") or "") or None
+    contact = raw.get("contact") if isinstance(raw.get("contact"), bool) else None
     return {
         "job_id": job_id,
         "security_id": security_id,
+        "encrypt_boss_id": encrypt_boss_id,
+        "contact": contact,
         "title": str(raw.get("jobName") or ""),
         "company": str(raw.get("brandName") or ""),
         "city": raw.get("cityName"),
@@ -174,9 +178,19 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
     brand_info = dict(zp_data.get("brandComInfo") or {})
     boss_info = dict(zp_data.get("bossInfo") or {})
     fallback = dict(fallback or {})
+    relation_info = dict(zp_data.get("relationInfo") or {})
 
     job_id = str(job_info.get("encryptId") or fallback.get("job_id") or "")
     security_id = str(job_info.get("securityId") or fallback.get("security_id") or "") or None
+    encrypt_boss_id = str(
+        boss_info.get("encryptBossId")
+        or payload.get("encryptBossId")
+        or fallback.get("encrypt_boss_id")
+        or ""
+    ) or None
+    contact = relation_info.get("beFriend")
+    if not isinstance(contact, bool):
+        contact = fallback.get("contact")
     job_url = build_job_url(job_id, security_id) or fallback.get("job_url")
 
     job = {
@@ -230,6 +244,8 @@ def normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = 
     return {
         "job_id": job_id,
         "security_id": security_id,
+        "encrypt_boss_id": encrypt_boss_id,
+        "contact": contact,
         "job_url": job_url,
         "detail_payload": {
             "job": job,

@@ -32,16 +32,16 @@ from job_buddy.boss.config import (
 )
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import (
-    ChatHistoryRequest,
-    FriendListRequest,
-    GreetJobRequest,
-    JobDetailRequest,
-    LoginRequest,
-    LoginResult,
-    SearchJobItem,
-    SearchRequest,
-    SearchResult,
-    SendMessageRequest,
+    ChatHistoryIn,
+    FriendListIn,
+    GreetJobIn,
+    JobDetailIn,
+    LoginIn,
+    LoginOut,
+    SearchIn,
+    SearchJobItemOut,
+    SearchOut,
+    SendMessageIn,
 )
 from job_buddy.config import Settings
 
@@ -270,7 +270,7 @@ class PatchrightEngine:
         self._page_cache = page_payload if isinstance(page_payload, dict) else {}
         return self._page_cache
 
-    async def login(self, request: LoginRequest) -> LoginResult:
+    async def login(self, request: LoginIn) -> LoginOut:
         _ = request
         await self.check_page_health()
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
@@ -295,7 +295,7 @@ class PatchrightEngine:
 
         return await self._build_login_result()
 
-    async def get_auth_status(self) -> LoginResult:
+    async def get_auth_status(self) -> LoginOut:
         try:
             await self.check_page_health()
             await self.page.goto(HOME_URL, wait_until="domcontentloaded")
@@ -307,7 +307,7 @@ class PatchrightEngine:
             return await self._build_login_result()
         return await self._build_login_result()
 
-    async def logout(self) -> LoginResult:
+    async def logout(self) -> LoginOut:
         raise BossOperationError(
             code="ENGINE_UNAVAILABLE",
             message="PatchrightEngine 尚未接管退出登录",
@@ -315,7 +315,7 @@ class PatchrightEngine:
             status_code=501,
         )
 
-    async def search(self, request: SearchRequest) -> SearchResult:
+    async def search(self, request: SearchIn) -> SearchOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -358,13 +358,13 @@ class PatchrightEngine:
                 str(welfare),
             )
             trace["result_count"] = len(raw_items)
-            return SearchResult(items=[self._search_item_from_payload(item) for item in raw_items], trace=trace)
+            return SearchOut(items=[self._search_item_from_payload(item) for item in raw_items], trace=trace)
 
         items = [self._search_item_from_payload(self._normalize_raw_job(item)) for item in raw_items]
         trace["result_count"] = len(items)
-        return SearchResult(items=items, trace=trace)
+        return SearchOut(items=items, trace=trace)
 
-    async def detail(self, request: JobDetailRequest) -> dict[str, Any]:
+    async def detail(self, request: JobDetailIn) -> dict[str, Any]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -444,7 +444,7 @@ class PatchrightEngine:
             "detail_raw_payload": normalized.get("detail_raw_payload"),
         }
 
-    async def friend_list(self, request: FriendListRequest) -> list[dict[str, Any]]:
+    async def friend_list(self, request: FriendListIn) -> list[dict[str, Any]]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -478,11 +478,13 @@ class PatchrightEngine:
         return sorted(
             [
                 {
-                    "friend_id": str(f.get("encryptFriendId") or f.get("uid") or ""),
                     "gid": str(f.get("uid") or ""),
                     "job_id": f.get("jobId"),
                     "encrypt_job_id": str(f.get("encryptJobId") or "") or None,
                     "encrypt_boss_id": f.get("encryptBossId"),
+                    "friend_source": f.get("friendSource"),
+                    "relation_type": f.get("relationType"),
+                    "read_status": lmi(f).get("status"),
                     "name": str(f.get("name") or ""),
                     "title": str(f.get("title") or ""),
                     "company": str(f.get("brandName") or f.get("company") or ""),
@@ -500,7 +502,7 @@ class PatchrightEngine:
             reverse=True,
         )
 
-    async def greet(self, request: GreetJobRequest) -> dict[str, Any]:
+    async def greet(self, request: GreetJobIn) -> dict[str, Any]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -536,7 +538,7 @@ class PatchrightEngine:
             "raw_payload": payload,
         }
 
-    async def chat_history(self, request: ChatHistoryRequest) -> dict[str, Any]:
+    async def chat_history(self, request: ChatHistoryIn) -> dict[str, Any]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -587,7 +589,7 @@ class PatchrightEngine:
             "raw_payload": payload,
         }
 
-    async def send_message(self, request: SendMessageRequest) -> dict[str, Any]:
+    async def send_message(self, request: SendMessageIn) -> dict[str, Any]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
@@ -719,9 +721,6 @@ class PatchrightEngine:
                     const targetIds = [
                         request.boss_uid,
                         request.boss_id,
-                        request.raw_payload && request.raw_payload.uid,
-                        request.raw_payload && request.raw_payload.encryptUid,
-                        request.raw_payload && request.raw_payload.encryptBossId,
                     ].filter(Boolean).map((item) => String(item));
                     const list = document.querySelector(".chat-user");
                     const listVm = list && list.__vue__;
@@ -749,8 +748,8 @@ class PatchrightEngine:
                             encryptBossId: request.boss_id,
                             securityId: request.security_id,
                             encryptJobId: request.job_id,
-                            jobId: request.raw_payload && request.raw_payload.jobId,
-                            friendSource: (request.raw_payload && request.raw_payload.friendSource) || 0,
+                            jobId: request.job_numeric_id,
+                            friendSource: request.friend_source || 0,
                         };
                         try {
                             listVm.geekClick(friendData);
@@ -1079,10 +1078,12 @@ class PatchrightEngine:
         value = str(values[0]).strip()
         return value or None
 
-    def _search_item_from_payload(self, payload: dict[str, Any]) -> SearchJobItem:
-        return SearchJobItem(
+    def _search_item_from_payload(self, payload: dict[str, Any]) -> SearchJobItemOut:
+        return SearchJobItemOut(
             job_id=str(payload["job_id"]),
             security_id=payload.get("security_id"),
+            encrypt_boss_id=payload.get("encrypt_boss_id"),
+            contact=payload.get("contact"),
             title=str(payload["title"]),
             company=str(payload["company"]),
             city=payload.get("city"),
@@ -1092,16 +1093,16 @@ class PatchrightEngine:
             raw_payload=dict(payload.get("raw_payload") or payload),
         )
 
-    async def _build_login_result(self) -> LoginResult:
-        return LoginResult(
+    async def _build_login_result(self) -> LoginOut:
+        return LoginOut(
             logged_in=False,
             login_method="patchright",
             message="已通过 Patchright 启动浏览器并打开 BOSS 登录页，请在当前页面完成扫码登录",
             browser="Patchright Chromium",
         )
 
-    def _build_logged_in_result(self) -> LoginResult:
-        return LoginResult(
+    def _build_logged_in_result(self) -> LoginOut:
+        return LoginOut(
             logged_in=True,
             user_name=self._page_cache.get("name"),
             login_method="patchright",
@@ -1139,8 +1140,8 @@ class PatchrightEngine:
 
 class BossClient(PatchrightEngine):
     async def search_jobs(self, query: dict[str, Any]) -> list[dict[str, Any]]:
-        result = await self.search(SearchRequest(query=query))
-        return [item.__dict__ for item in result.items]
+        result = await self.search(SearchIn(query=query))
+        return [item.model_dump() for item in result.items]
 
     async def get_job_detail(
         self,
@@ -1151,7 +1152,7 @@ class BossClient(PatchrightEngine):
         company: str | None = None,
     ) -> dict[str, Any]:
         return await self.detail(
-            JobDetailRequest(
+            JobDetailIn(
                 job_id=job_id,
                 security_id=security_id,
                 job_url=job_url,
@@ -1170,14 +1171,14 @@ class BossClient(PatchrightEngine):
                 recoverable=False,
                 status_code=400,
             )
-        return await self.greet(GreetJobRequest(job_id=job_id, security_id=security_id, message=message))
+        return await self.greet(GreetJobIn(job_id=job_id, security_id=security_id, message=message))
 
     async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
-        return await self.friend_list(FriendListRequest(page=page))
+        return await self.friend_list(FriendListIn(page=page))
 
     async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
         return await self.chat_history(
-            ChatHistoryRequest(boss_id=boss_id, security_id=security_id, page=page, count=count)
+            ChatHistoryIn(boss_id=boss_id, security_id=security_id, page=page, count=count)
         )
 
 

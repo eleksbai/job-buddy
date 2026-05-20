@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 from job_buddy.boss.boss import PatchrightEngine
 from job_buddy.boss.exceptions import BossOperationError
-from job_buddy.boss.schemas import GreetJobRequest, JobDetailRequest, LoginRequest, SearchRequest, SendMessageRequest
+from job_buddy.boss.schemas import GreetJobIn, JobDetailIn, LoginIn, SearchIn, SendMessageIn
 from job_buddy.config import Settings
 
 
@@ -229,7 +229,7 @@ def test_patchright_login_returns_logged_in_result(monkeypatch):
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
     engine._page_cache = {"name": "Alice"}
 
-    result = asyncio.run(engine.login(LoginRequest()))
+    result = asyncio.run(engine.login(LoginIn()))
 
     assert result.logged_in is True
     assert result.user_name == "Alice"
@@ -286,7 +286,7 @@ def test_patchright_search_fetches_jobs_via_browser_context(monkeypatch):
 
     result = asyncio.run(
         engine.search(
-            SearchRequest(
+            SearchIn(
                 query={
                     "query": "python",
                     "city": "上海",
@@ -322,7 +322,7 @@ def test_patchright_search_accepts_keywords_array(monkeypatch):
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
-    asyncio.run(engine.search(SearchRequest(query={"keywords": ["Python", "FastAPI"], "page": 1})))
+    asyncio.run(engine.search(SearchIn(query={"keywords": ["Python", "FastAPI"], "page": 1})))
 
     assert page.last_fetch_url is not None
     parsed = urlparse(page.last_fetch_url)
@@ -341,7 +341,7 @@ def test_patchright_search_requires_login(monkeypatch):
     engine.is_login = _async_result(False)  # type: ignore[method-assign]
 
     try:
-        asyncio.run(engine.search(SearchRequest(query={"query": "python"})))
+        asyncio.run(engine.search(SearchIn(query={"query": "python"})))
     except BossOperationError as exc:
         assert exc.code == "AUTH_REQUIRED"
     else:
@@ -385,7 +385,7 @@ def test_patchright_search_filters_by_welfare(monkeypatch):
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
-    result = asyncio.run(engine.search(SearchRequest(query={"query": "python", "welfare": "双休,五险一金"})))
+    result = asyncio.run(engine.search(SearchIn(query={"query": "python", "welfare": "双休,五险一金"})))
 
     assert [item.job_id for item in result.items] == ["job-1"]
 
@@ -428,7 +428,7 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
 
     result = asyncio.run(
         engine.detail(
-            JobDetailRequest(
+            JobDetailIn(
                 job_id="job-1",
                 security_id="sec-1",
                 job_url="https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
@@ -458,7 +458,7 @@ def test_patchright_greet_posts_browser_request(monkeypatch):
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
-    result = asyncio.run(engine.greet(GreetJobRequest(job_id="job-1", security_id="sec-1", message="你好")))
+    result = asyncio.run(engine.greet(GreetJobIn(job_id="job-1", security_id="sec-1", message="你好")))
 
     assert result["job_id"] == "job-1"
     assert result["security_id"] == "sec-1"
@@ -479,7 +479,7 @@ def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
 
     result = asyncio.run(
         engine.send_message(
-            SendMessageRequest(
+            SendMessageIn(
                 job_id="encrypt-1",
                 gid="gid-1",
                 self_id="self-1",

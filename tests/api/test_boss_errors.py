@@ -2,15 +2,14 @@ import pytest
 from fastapi import FastAPI
 
 from job_buddy.boss import BossOperationError
-from job_buddy.deps import get_conversation_service, get_system_service
+from job_buddy.deps import get_friend_service, get_system_service
 from job_buddy.main import register_exception_handlers
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
 
 
-class FailingConversationService:
-    async def sync_conversations(self, limit: int = 20) -> int:
-        _ = limit
+class FailingFriendService:
+    async def sync_friends(self) -> int:
         raise BossOperationError(
             code="AUTH_REQUIRED",
             message="未登录，请先点击页面右上角登录",
@@ -33,14 +32,14 @@ class FailingSystemService:
 
 
 @pytest.mark.asyncio
-async def test_sync_conversations_returns_structured_auth_error():
+async def test_sync_friends_returns_structured_auth_error():
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(build_api_router())
-    app.dependency_overrides[get_conversation_service] = lambda: FailingConversationService()
+    app.dependency_overrides[get_friend_service] = lambda: FailingFriendService()
 
     async with api_client(app) as client:
-        response = await client.post("/boss/conversations/sync")
+        response = await client.post("/boss/friends/sync")
 
     assert response.status_code == 401
     assert response.json() == {

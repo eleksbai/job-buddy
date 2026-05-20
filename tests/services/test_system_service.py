@@ -5,7 +5,7 @@ from bson import ObjectId
 
 from job_buddy.boss.boss import BossDoctorResult
 from job_buddy.boss.exceptions import BossOperationError
-from job_buddy.boss.schemas import LoginResult
+from job_buddy.boss.schemas import LoginOut
 from job_buddy.config import Settings
 from job_buddy.models import AuthState
 from job_buddy.services import SystemService
@@ -31,20 +31,20 @@ class FakeDoctorRunner:
 
 class FakeRuntime:
     def __init__(self) -> None:
-        self.local_status = LoginResult(logged_in=False, message="未登录")
+        self.local_status = LoginOut(logged_in=False, message="未登录")
         self.login_called = False
         self.logout_called = False
         self.login_error: Exception | None = None
 
-    async def get_auth_status(self) -> LoginResult:
+    async def get_auth_status(self) -> LoginOut:
         return self.local_status
 
-    async def login(self, request) -> LoginResult:
+    async def login(self, request) -> LoginOut:
         _ = request
         if self.login_error is not None:
             raise self.login_error
         self.login_called = True
-        self.local_status = LoginResult(
+        self.local_status = LoginOut(
             logged_in=True,
             user_name="Alice",
             login_method="patchright",
@@ -53,9 +53,9 @@ class FakeRuntime:
         )
         return self.local_status
 
-    async def logout(self) -> LoginResult:
+    async def logout(self) -> LoginOut:
         self.logout_called = True
-        self.local_status = LoginResult(logged_in=False, message="已退出登录")
+        self.local_status = LoginOut(logged_in=False, message="已退出登录")
         return self.local_status
 
 

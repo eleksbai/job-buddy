@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, Query, status
 
 from job_buddy.boss import BossOperationError
-from job_buddy.deps import get_conversation_service, get_greeting_service, get_job_service, get_system_service, get_target_service
+from job_buddy.deps import get_friend_service, get_greeting_service, get_job_service, get_system_service, get_target_service
 from job_buddy.schemas import (
     AuthStatusResponse,
-    ChatHistoryResponse,
-    ConversationRecordRead,
-    ConversationSyncResponse,
     DoctorResponse,
+    FriendMessagesResponse,
+    FriendRecordRead,
+    FriendSyncResponse,
     GreetTaskRequest,
     JobCollectionRecordRead,
     JobDetailResponse,
@@ -23,7 +23,7 @@ from job_buddy.schemas import (
     TaskTriggerResponse,
     TaskDetailResponse,
 )
-from job_buddy.services import ConversationService, GreetingService, JobCollectionService, SystemService, TargetProfileService
+from job_buddy.services import FriendService, GreetingService, JobCollectionService, SystemService, TargetProfileService
 
 router = APIRouter(prefix="/boss")
 
@@ -138,40 +138,40 @@ async def get_task(task_id: str, greeting_service: GreetingService = Depends(get
     )
 
 
-@router.get("/conversations", response_model=list[ConversationRecordRead], tags=["conversations"], operation_id="list_conversations")
-async def list_conversations(
-    service: ConversationService = Depends(get_conversation_service),
-) -> list[ConversationRecordRead]:
-    conversations = await service.list_conversations()
-    return [ConversationRecordRead(**item.model_dump()) for item in conversations]
+@router.get("/friends", response_model=list[FriendRecordRead], tags=["friends"], operation_id="list_friends")
+async def list_friends(
+    service: FriendService = Depends(get_friend_service),
+) -> list[FriendRecordRead]:
+    friends = await service.list_friends()
+    return [FriendRecordRead(**item.model_dump()) for item in friends]
 
 
-@router.post("/conversations/sync", response_model=ConversationSyncResponse, status_code=status.HTTP_202_ACCEPTED, tags=["conversations"], operation_id="sync_conversations")
-async def sync_conversations(
-    service: ConversationService = Depends(get_conversation_service),
-) -> ConversationSyncResponse:
-    count = await service.sync_conversations()
-    return ConversationSyncResponse(count=count)
+@router.post("/friends/sync", response_model=FriendSyncResponse, status_code=status.HTTP_202_ACCEPTED, tags=["friends"], operation_id="sync_friends")
+async def sync_friends(
+    service: FriendService = Depends(get_friend_service),
+) -> FriendSyncResponse:
+    count = await service.sync_friends()
+    return FriendSyncResponse(count=count)
 
 
-@router.get("/conversations/{job_id}/messages", response_model=ChatHistoryResponse, tags=["conversations"], operation_id="get_chat_history")
-async def get_chat_history(
-    job_id: str,
+@router.get("/friends/{friend_id}/messages", response_model=FriendMessagesResponse, tags=["friends"], operation_id="get_friend_messages")
+async def get_friend_messages(
+    friend_id: str,
     page: int = Query(default=1, ge=1),
     count: int = Query(default=20, le=100),
     cached_only: bool = Query(default=False, description="Only return cached messages, skip BOSS fetch"),
-    service: ConversationService = Depends(get_conversation_service),
-) -> ChatHistoryResponse:
-    return await service.get_chat_history(job_id=job_id, page=page, count=count, cached_only=cached_only)
+    service: FriendService = Depends(get_friend_service),
+) -> FriendMessagesResponse:
+    return await service.get_friend_messages(friend_id=friend_id, page=page, count=count, cached_only=cached_only)
 
 
-@router.post("/conversations/{job_id}/messages/send", response_model=SendMessageResponse, tags=["conversations"], operation_id="send_chat_message")
-async def send_chat_message(
-    job_id: str,
+@router.post("/friends/{friend_id}/messages/send", response_model=SendMessageResponse, tags=["friends"], operation_id="send_friend_message")
+async def send_friend_message(
+    friend_id: str,
     payload: SendMessagePayload,
-    service: ConversationService = Depends(get_conversation_service),
+    service: FriendService = Depends(get_friend_service),
 ) -> SendMessageResponse:
-    return await service.send_message(job_id=job_id, content=payload.content)
+    return await service.send_friend_message(friend_id=friend_id, content=payload.content)
 
 
 @router.get("/system/doctor", response_model=DoctorResponse, tags=["system"], operation_id="run_boss_doctor")

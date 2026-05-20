@@ -5,7 +5,7 @@ from typing import Any
 
 from bson import ObjectId
 
-from job_buddy.boss.schemas import SearchJobItem, SearchResult
+from job_buddy.boss.schemas import SearchJobItemOut, SearchOut
 from job_buddy.models import (
     GreetingTask,
     JobCollectionRecord,
@@ -54,14 +54,14 @@ class FakeBossClient:
             ],
         ]
 
-    async def search(self, request) -> SearchResult:
+    async def search(self, request) -> SearchOut:
         query = request.query
         _ = query
         if self.search_error is not None:
             raise self.search_error
-        return SearchResult(
+        return SearchOut(
             items=[
-                SearchJobItem(
+                SearchJobItemOut(
                     job_id=item["job_id"],
                     security_id=item.get("security_id"),
                     title=item["title"],

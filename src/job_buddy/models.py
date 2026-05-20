@@ -66,6 +66,8 @@ class JobLead(DocumentModel):
     source_job_id: str
     job_id: int | None = None
     security_id: str | None = None
+    encrypt_boss_id: str | None = None
+    contact: bool | None = None
     title: str
     company: str
     city: str | None = None
@@ -138,15 +140,27 @@ class GreetingRecord(DocumentModel):
     response_payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConversationRecord(DocumentModel):
+class FriendMessage(BaseModel):
+    message_id: str
+    from_id: str
+    content: str = ""
+    msg_type: int | None = None
+    sent_at: int | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class FriendRecord(DocumentModel):
     source: str = "boss"
-    source_conversation_id: str
     gid: str = ""
+    boss_uid: str | None = None
+    friend_source: int | None = None
+    relation_type: int | None = None
+    read_status: int | None = None
     security_id: str | None = None
     self_id: str | None = None
     job_id: int | None = None
     encrypt_job_id: str | None = None
-    encrypt_boss_id: str | None = None
+    encrypt_boss_id: str
     title: str
     name: str = ""
     company: str | None = None
@@ -156,16 +170,7 @@ class ConversationRecord(DocumentModel):
     last_message_at: str | None = None
     last_message_ts: float | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class ChatMessage(DocumentModel):
-    conversation_id: str
-    message_id: str
-    from_id: str
-    content: str = ""
-    msg_type: int | None = None
-    sent_at: int | None = None
-    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    messages: list[FriendMessage] = Field(default_factory=list)
 
 
 class AuthState(DocumentModel):

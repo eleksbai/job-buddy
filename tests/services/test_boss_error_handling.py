@@ -4,24 +4,24 @@ from bson import ObjectId
 
 from job_buddy.boss import BossOperationError
 from job_buddy.models import GreetingRecord
-from job_buddy.services import ConversationService, GreetingService
+from job_buddy.services import FriendService, GreetingService
 
 
 class AuthRequired(Exception):
     pass
 
 
-class ExplodingConversationClient:
+class ExplodingFriendClient:
     async def list_friends(self, page: int = 1) -> list[dict]:
         _ = page
         raise AuthRequired()
 
-    async def list_conversations(self, limit: int = 20) -> list[dict]:
-        _ = limit
-        raise AuthRequired()
 
+class FakeFriendCollection:
+    async def find_one(self, filters: dict):
+        _ = filters
+        return None
 
-class FakeConversationCollection:
     async def update_one(self, filters: dict, updates: dict, upsert: bool = False):
         _ = filters, updates, upsert
         return None
@@ -31,6 +31,12 @@ class ExplodingGreetingClient:
     async def greet_job(self, job: dict, message: str | None = None) -> dict:
         _ = job, message
         raise AuthRequired()
+
+
+class SuccessfulGreetingClient:
+    async def greet_job(self, job: dict, message: str | None = None) -> dict:
+        _ = message
+        return {"job_id": job["source_job_id"], "status": "ok"}
 
 
 class FakeTaskCollection:
@@ -102,33 +108,37 @@ class FakeJobCollection:
     def __init__(self) -> None:
         self.updated: list[tuple[str, dict]] = []
         self.job_id = ObjectId()
+        self.payload = {
+            "_id": self.job_id,
+            "source_job_id": "source-job-1",
+            "security_id": "sec-1",
+            "title": "Python Backend Engineer",
+            "company": "Demo Tech",
+        }
 
     def find(self, filters: dict):
         _ = filters
-        return FakeJobCursor(
-            [
-                {
-                    "_id": self.job_id,
-                    "source_job_id": "source-job-1",
-                    "security_id": "sec-1",
-                    "title": "Python Backend Engineer",
-                    "company": "Demo Tech",
-                }
-            ]
-        )
+        return FakeJobCursor([self.payload])
+
+    async def find_one(self, filters: dict):
+        if filters.get("_id") == self.job_id:
+            return self.payload
+        return None
 
     async def update_one(self, filters: dict, updates: dict):
         self.updated.append((str(filters["_id"]), updates["$set"]))
+        if filters.get("_id") == self.job_id:
+            self.payload.update(updates["$set"])
         return None
 
 
-def test_sync_conversations_maps_auth_errors():
-    service = ConversationService.__new__(ConversationService)
-    service.boss_client = ExplodingConversationClient()
-    service.conversations = FakeConversationCollection()
+def test_sync_friends_maps_auth_errors():
+    service = FriendService.__new__(FriendService)
+    service.boss_client = ExplodingFriendClient()
+    service.friends = FakeFriendCollection()
 
     try:
-        asyncio.run(service.sync_conversations())
+        asyncio.run(service.sync_friends())
     except BossOperationError as exc:
         assert exc.code == "AUTH_REQUIRED"
         assert exc.message == "未登录，请先点击页面右上角登录"
@@ -149,3 +159,18 @@ def test_run_greetings_records_mapped_auth_errors():
     assert task.result_summary == {"total": 1, "succeeded": 0, "failed": 1}
     assert service.records.items[0].response_payload == {"error": "未登录，请先点击页面右上角登录"}
     assert service.jobs.updated == []
+
+
+def test_run_greetings_marks_job_as_contacted_after_success():
+    service = GreetingService.__new__(GreetingService)
+    service.boss_client = SuccessfulGreetingClient()
+    service.tasks = FakeTaskCollection()
+    service.records = FakeGreetingRecordCollection()
+    service.jobs = FakeJobCollection()
+
+    task = asyncio.run(service.run_greetings(target=None, job_ids=[], greeting_message=None, limit=5))
+
+    assert task.status.value == "succeeded"
+    assert service.jobs.updated[-1][1]["greeted"] is True
+    assert service.jobs.updated[-1][1]["match_status"] == "contacted"
+    assert service.jobs.updated[-1][1]["contact"] is True

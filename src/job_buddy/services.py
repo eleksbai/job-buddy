@@ -29,13 +29,13 @@ from job_buddy.boss.config import (
     SCALE_CODES,
     STAGE_CODES,
 )
-from job_buddy.boss.schemas import LoginRequest, LoginResult, SearchRequest
+from job_buddy.boss.schemas import LoginIn, LoginOut, SearchIn, SendMessageIn
 from job_buddy.config import Settings
 from job_buddy.models import (
     AuthState,
-    ChatMessage,
-    ConversationRecord,
     DocumentModel,
+    FriendMessage,
+    FriendRecord,
     GreetingRecord,
     GreetingTask,
     JobCollectionRecord,
@@ -48,12 +48,14 @@ from job_buddy.models import (
 )
 from job_buddy.schemas import (
     AuthStatusResponse,
-    ChatHistoryResponse,
     DataClearResponse,
     DoctorCheckResponse,
     DoctorErrorResponse,
     DoctorResponse,
+    FriendMessagesResponse,
     HealthResponse,
+    FriendSyncResponse,
+    FriendRecordRead,
     LogLineResponse,
     LogsResponse,
     SearchOptionsResponse,
@@ -146,7 +148,7 @@ def _format_last_time(ts_ms: float) -> str:
 
 def _extract_self_id(item: dict[str, Any]) -> str | None:
     raw = item.get("raw_payload", item)
-    boss_uid = raw.get("uid") or item.get("boss_uid")
+    boss_uid = item.get("boss_uid") or raw.get("uid")
     last_message_info = raw.get("lastMessageInfo") or {}
     if not boss_uid or not isinstance(last_message_info, dict):
         return None
@@ -171,6 +173,62 @@ def _extract_self_id_from_messages(boss_uid: str | None, messages: list[dict[str
         if to_id is not None and str(to_id) == str(boss_uid) and from_id is not None:
             return str(from_id)
     return None
+
+
+def _normalize_friend_messages(messages: list[dict[str, Any]]) -> list[FriendMessage]:
+    deduped: dict[str, FriendMessage] = {}
+    for message in messages:
+        message_id = str(message.get("message_id") or "")
+        if not message_id:
+            continue
+        deduped[message_id] = FriendMessage(
+            message_id=message_id,
+            from_id=str(message.get("from_id") or ""),
+            content=str(message.get("content") or ""),
+            msg_type=message.get("type"),
+            sent_at=message.get("created_at"),
+            raw_payload=dict(message.get("raw_payload") or message),
+        )
+    return sorted(
+        deduped.values(),
+        key=lambda item: (item.sent_at if item.sent_at is not None else -1, item.message_id),
+    )
+
+
+def _merge_friend_messages(
+    existing: list[dict[str, Any]] | list[FriendMessage] | None,
+    incoming: list[dict[str, Any]],
+    limit: int = 100,
+) -> list[FriendMessage]:
+    merged_inputs: list[dict[str, Any]] = []
+    for message in existing or []:
+        if isinstance(message, FriendMessage):
+            merged_inputs.append(
+                {
+                    "message_id": message.message_id,
+                    "from_id": message.from_id,
+                    "content": message.content,
+                    "type": message.msg_type,
+                    "created_at": message.sent_at,
+                    "raw_payload": message.raw_payload,
+                }
+            )
+        elif isinstance(message, dict):
+            merged_inputs.append(
+                {
+                    "message_id": message.get("message_id"),
+                    "from_id": message.get("from_id"),
+                    "content": message.get("content"),
+                    "type": message.get("msg_type", message.get("type")),
+                    "created_at": message.get("sent_at", message.get("created_at")),
+                    "raw_payload": message.get("raw_payload", message),
+                }
+            )
+    merged_inputs.extend(incoming)
+    normalized = _normalize_friend_messages(merged_inputs)
+    if len(normalized) > limit:
+        normalized = normalized[-limit:]
+    return normalized
 
 
 def _detect_log_level(line: str) -> str:
@@ -218,6 +276,7 @@ class JobCollectionService:
         self.records = database["job_collection_records"]
         self.traces = database["job_collection_traces"]
         self.tasks = database["greeting_tasks"]
+        self.friends = database["friend_records"]
         self.boss_client = boss_client
 
     async def list_jobs(self, match_status: str | None, greeted: bool | None, limit: int) -> list[JobLead]:
@@ -269,6 +328,8 @@ class JobCollectionService:
                 JobLead(
                     source_job_id=source_job_id,
                     security_id=security_id,
+                    encrypt_boss_id=detail_result.get("encrypt_boss_id"),
+                    contact=detail_result.get("contact"),
                     title=str(detail_result.get("job", {}).get("title") or source_job_id),
                     company=str(detail_result.get("company", {}).get("name") or ""),
                     city=detail_result.get("job", {}).get("city"),
@@ -282,6 +343,7 @@ class JobCollectionService:
                 ),
                 JobLead,
             )
+            await self._sync_job_to_friends(job)
             return job, False
 
         if job.detail_payload and job.detail_text:
@@ -312,6 +374,8 @@ class JobCollectionService:
                 "city": detail_result.get("job", {}).get("city") or job.city,
                 "salary": detail_result.get("job", {}).get("salary") or job.salary,
                 "experience": detail_result.get("job", {}).get("experience") or job.experience,
+                "encrypt_boss_id": detail_result.get("encrypt_boss_id") or job.encrypt_boss_id,
+                "contact": detail_result.get("contact") if detail_result.get("contact") is not None else job.contact,
                 "job_url": detail_result.get("job_url") or job.job_url,
                 "detail_payload": dict(detail_result.get("detail_payload") or {}),
                 "detail_text": str(detail_result.get("detail_text") or ""),
@@ -321,6 +385,7 @@ class JobCollectionService:
         )
         if updated is None:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Job update failed.")
+        await self._sync_job_to_friends(updated)
         return updated, False
 
     async def search_jobs_readonly(self, query: dict[str, Any]) -> list[dict[str, Any]]:
@@ -339,7 +404,7 @@ class JobCollectionService:
                 stage_codes=STAGE_CODES,
                 job_type_codes=JOB_TYPE_CODES,
             )
-            search_result = await self.boss_client.search(SearchRequest(query=normalized_query))
+            search_result = await self.boss_client.search(SearchIn(query=normalized_query))
         except Exception as exc:
             logger.warning("BOSS search (readonly) failed: query=%s health=%s error=%s", query, health, exc)
             raise map_boss_operation_error(exc) from exc
@@ -432,7 +497,7 @@ class JobCollectionService:
                 stage_codes=STAGE_CODES,
                 job_type_codes=JOB_TYPE_CODES,
             )
-            search_result = await self.boss_client.search(SearchRequest(query=normalized_query))
+            search_result = await self.boss_client.search(SearchIn(query=normalized_query))
         except Exception as exc:
             logger.warning("BOSS search failed: task_id=%s query=%s health=%s error=%s", task.id, query, health, exc)
             raise map_boss_operation_error(exc) from exc
@@ -496,6 +561,8 @@ class JobCollectionService:
                         source_job_id=item.job_id,
                         job_id=job_id,
                         security_id=item.security_id,
+                        encrypt_boss_id=item.encrypt_boss_id,
+                        contact=item.contact,
                         title=item.title,
                         company=item.company,
                         city=item.city,
@@ -518,6 +585,8 @@ class JobCollectionService:
                     {
                         "security_id": item.security_id,
                         "job_id": job_id,
+                        "encrypt_boss_id": item.encrypt_boss_id or existing.encrypt_boss_id,
+                        "contact": item.contact if item.contact is not None else existing.contact,
                         "title": item.title,
                         "company": item.company,
                         "city": item.city,
@@ -556,6 +625,19 @@ class JobCollectionService:
         if not payload:
             return None
         return JobLead.from_mongo(payload)
+
+    async def _sync_job_to_friends(self, job: JobLead) -> None:
+        if not job.encrypt_boss_id:
+            return
+        updates: dict[str, Any] = {
+            "title": job.title,
+            "company": job.company,
+            "security_id": job.security_id,
+            "job_id": job.job_id,
+            "encrypt_job_id": job.source_job_id,
+            "updated_at": utc_now(),
+        }
+        await self.friends.update_one({"encrypt_boss_id": job.encrypt_boss_id}, {"$set": updates})
 
 
 class GreetingService:
@@ -655,7 +737,12 @@ class GreetingService:
                     ),
                     GreetingRecord,
                 )
-                await _update_model(self.jobs, JobLead, job.id, {"greeted": True, "match_status": "contacted"})
+                await _update_model(
+                    self.jobs,
+                    JobLead,
+                    job.id,
+                    {"greeted": True, "match_status": "contacted", "contact": True},
+                )
                 success_count += 1
             except Exception as exc:
                 await _create_model(
@@ -703,107 +790,114 @@ class GreetingService:
         return await _list_models(self.tasks, GreetingTask, limit=limit)
 
 
-class ConversationService:
+class FriendService:
     def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
-        self.conversations = database["conversation_records"]
-        self.messages = database["chat_messages"]
+        self.friends = database["friend_records"]
         self.boss_client = boss_client
 
-    async def list_conversations(self) -> list[ConversationRecord]:
+    async def _load_friend(self, friend_id: str, *, allow_sync: bool) -> dict[str, Any] | None:
+        friend = await self.friends.find_one({"encrypt_boss_id": friend_id})
+        if friend or not allow_sync:
+            return friend
+
+        await self.sync_friends()
+        return await self.friends.find_one({"encrypt_boss_id": friend_id})
+
+    async def list_friends(self) -> list[FriendRecord]:
         now_cst = datetime.now(tz=_CST)
         today_start = now_cst.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_start = today_start + timedelta(days=1)
         filters = {"updated_at": {"$gte": today_start, "$lt": tomorrow_start}}
-        cursor = self.conversations.find(filters).sort("last_message_ts", -1)
-        return [ConversationRecord.from_mongo(item) for item in await cursor.to_list(length=None)]
+        cursor = self.friends.find(filters).sort("last_message_ts", -1)
+        return [FriendRecord.from_mongo(item) for item in await cursor.to_list(length=None)]
 
-    async def get_chat_history(
+    async def get_friend_messages(
         self,
-        job_id: str,
+        friend_id: str,
         page: int = 1,
         count: int = 20,
         cached_only: bool = False,
-    ) -> ChatHistoryResponse:
-        filters: list[dict[str, Any]] = [{"encrypt_job_id": job_id}]
-        if job_id.isdigit():
-            filters.append({"job_id": int(job_id)})
-        conv = await self.conversations.find_one({"$or": filters})
-        if not conv:
+    ) -> FriendMessagesResponse:
+        friend = await self._load_friend(friend_id, allow_sync=not cached_only)
+        if not friend:
             raise BossOperationError(
                 code="REQUEST_FAILED",
-                message=f"未找到 job_id={job_id} 的会话记录",
+                message=f"未找到 friend_id={friend_id} 的好友记录",
                 recoverable=False,
                 status_code=404,
             )
 
-        gid = conv.get("gid", "")
-        security_id = conv.get("security_id")
+        gid = str(friend.get("gid") or "")
+        security_id = friend.get("security_id")
         if cached_only:
-            cached = await self.messages.find({"conversation_id": gid}).sort("sent_at", 1).to_list(length=count)
-            return ChatHistoryResponse(
+            cached_messages = friend.get("messages") or []
+            messages = [
+                {
+                    "message_id": message.get("message_id"),
+                    "from_id": message.get("from_id"),
+                    "content": message.get("content", ""),
+                    "type": message.get("msg_type"),
+                    "created_at": message.get("sent_at"),
+                    "raw_payload": message.get("raw_payload", message),
+                }
+                for message in cached_messages[-count:]
+            ]
+            return FriendMessagesResponse(
                 gid=gid,
+                friend_id=friend_id,
                 security_id=security_id,
                 page=1,
-                count=len(cached),
+                count=len(messages),
                 has_more=False,
-                total=len(cached),
-                messages=[
-                    {
-                        "message_id": m["message_id"],
-                        "from_id": m["from_id"],
-                        "content": m.get("content", ""),
-                        "type": m.get("msg_type"),
-                        "created_at": m.get("sent_at"),
-                        "raw_payload": m.get("raw_payload", m),
-                    }
-                    for m in cached
-                ],
+                total=len(cached_messages),
+                messages=messages,
             )
 
-        boss_id = conv.get("encrypt_boss_id")
         try:
             result = await self.boss_client.get_chat_history(
-                boss_id=boss_id,
+                boss_id=friend_id,
                 security_id=security_id,
                 page=page,
                 count=count,
             )
         except Exception as exc:
             logger.warning(
-                "BOSS chat history fetch failed: job_id=%s gid=%s page=%s count=%s error=%s",
-                job_id, gid, page, count, exc,
+                "BOSS friend message fetch failed: friend_id=%s gid=%s page=%s count=%s error=%s",
+                friend_id, gid, page, count, exc,
             )
             raise map_boss_operation_error(exc) from exc
 
         messages = result.get("messages", [])
-        boss_uid = str(conv.get("gid") or (conv.get("raw_payload") or {}).get("uid") or "")
+        boss_uid = str(friend.get("boss_uid") or "")
         backfilled_self_id = _extract_self_id_from_messages(boss_uid, messages)
-        if backfilled_self_id and backfilled_self_id != conv.get("self_id"):
-            await self.conversations.update_one(
-                {"_id": conv["_id"]},
-                {"$set": {"self_id": backfilled_self_id, "updated_at": utc_now()}},
+        merged_messages = _merge_friend_messages(friend.get("messages"), messages)
+
+        updates: dict[str, Any] = {
+            "messages": [message.model_dump() for message in merged_messages],
+            "updated_at": utc_now(),
+        }
+        if messages:
+            last_message = messages[-1]
+            updates["last_message"] = last_message.get("content") or friend.get("last_message")
+            if last_message.get("created_at") is not None:
+                try:
+                    last_ts = float(last_message["created_at"])
+                    updates["last_message_ts"] = last_ts
+                    updates["last_message_at"] = _format_last_time(last_ts)
+                except (TypeError, ValueError):
+                    pass
+        if backfilled_self_id and backfilled_self_id != friend.get("self_id"):
+            updates["self_id"] = backfilled_self_id
+        if updates:
+            await self.friends.update_one(
+                {"_id": friend["_id"]},
+                {"$set": updates},
             )
-            conv["self_id"] = backfilled_self_id
+            friend.update(updates)
 
-        for message in messages:
-            existing = await self.messages.find_one({"message_id": message["message_id"]})
-            if not existing:
-                await _create_model(
-                    self.messages,
-                    ChatMessage(
-                        conversation_id=gid,
-                        message_id=message["message_id"],
-                        from_id=message["from_id"],
-                        content=message.get("content", ""),
-                        msg_type=message.get("type"),
-                        sent_at=message.get("created_at"),
-                        raw_payload=message.get("raw_payload", message),
-                    ),
-                    ChatMessage,
-                )
-
-        return ChatHistoryResponse(
+        return FriendMessagesResponse(
             gid=gid,
+            friend_id=friend_id,
             security_id=security_id,
             page=result["page"],
             count=result["count"],
@@ -812,7 +906,7 @@ class ConversationService:
             messages=messages,
         )
 
-    async def send_message(self, job_id: str, content: str) -> SendMessageResponse:
+    async def send_friend_message(self, friend_id: str, content: str) -> SendMessageResponse:
         content = content.strip()
         if not content:
             raise BossOperationError(
@@ -821,38 +915,77 @@ class ConversationService:
                 recoverable=False,
                 status_code=400,
             )
-        conv = await self.conversations.find_one({"encrypt_job_id": job_id})
-        if not conv:
+        friend = await self._load_friend(friend_id, allow_sync=True)
+        if not friend:
             raise BossOperationError(
                 code="REQUEST_FAILED",
-                message=f"未找到 job_id={job_id} 的会话记录",
+                message=f"未找到 friend_id={friend_id} 的好友记录",
                 recoverable=False,
                 status_code=404,
             )
-        conv = await self._ensure_send_identity(conv, job_id)
+        friend = await self._ensure_send_identity(friend, friend_id)
         try:
-            result = await self.boss_client.send_message(conv, content)
+            raw_payload = friend.get("raw_payload") or {}
+            result = await self.boss_client.send_message(
+                SendMessageIn(
+                    job_id=str(friend.get("encrypt_job_id") or ""),
+                    job_numeric_id=friend.get("job_id"),
+                    gid=str(friend.get("gid") or ""),
+                    self_id=str(friend.get("self_id") or ""),
+                    boss_uid=str(friend.get("boss_uid") or ""),
+                    boss_id=str(friend.get("encrypt_boss_id") or ""),
+                    friend_source=int(friend.get("friend_source") or 0),
+                    security_id=friend.get("security_id"),
+                    content=content,
+                    raw_payload=raw_payload,
+                )
+            )
         except Exception as exc:
-            logger.warning("BOSS send message failed: job_id=%s error=%s", job_id, exc)
+            logger.warning("BOSS send friend message failed: friend_id=%s error=%s", friend_id, exc)
             raise map_boss_operation_error(exc) from exc
+
+        outgoing_messages = _merge_friend_messages(
+            friend.get("messages"),
+            [
+                {
+                    "message_id": str(result.get("message_id") or result.get("mid") or f"local-{utc_now().timestamp()}"),
+                    "from_id": str(result.get("self_id") or friend.get("self_id") or ""),
+                    "content": content,
+                    "type": result.get("type", 1),
+                    "created_at": result.get("sent_at") or result.get("timestamp") or int(utc_now().timestamp() * 1000),
+                    "raw_payload": result,
+                }
+            ],
+        )
+        try:
+            last_ts = float(outgoing_messages[-1].sent_at) if outgoing_messages and outgoing_messages[-1].sent_at is not None else None
+        except (TypeError, ValueError):
+            last_ts = None
+        friend_updates: dict[str, Any] = {
+            "messages": [message.model_dump() for message in outgoing_messages],
+            "last_message": content,
+            "updated_at": utc_now(),
+        }
+        if last_ts is not None:
+            friend_updates["last_message_ts"] = last_ts
+            friend_updates["last_message_at"] = _format_last_time(last_ts)
+        await self.friends.update_one({"_id": friend["_id"]}, {"$set": friend_updates})
         return SendMessageResponse(
-            gid=str(conv.get("gid") or ""),
-            job_id=job_id,
+            gid=str(friend.get("gid") or ""),
+            friend_id=friend_id,
             content=content,
             status=str(result.get("status") or "sent"),
             raw_payload=result,
         )
 
-    async def _ensure_send_identity(self, conv: dict[str, Any], job_id: str) -> dict[str, Any]:
-        raw_payload = conv.get("raw_payload") or {}
-        boss_uid = str(conv.get("gid") or raw_payload.get("uid") or "")
-        boss_id = conv.get("encrypt_boss_id") or raw_payload.get("encryptBossId") or raw_payload.get("encryptUid")
-        if conv.get("self_id") and boss_uid and boss_id:
-            return conv
-        boss_id_for_history = conv.get("encrypt_boss_id")
-        security_id = conv.get("security_id")
+    async def _ensure_send_identity(self, friend: dict[str, Any], friend_id: str) -> dict[str, Any]:
+        boss_uid = str(friend.get("boss_uid") or "")
+        if friend.get("self_id") and boss_uid and friend.get("encrypt_boss_id"):
+            return friend
+        boss_id_for_history = friend.get("encrypt_boss_id")
+        security_id = friend.get("security_id")
         if not boss_id_for_history or not security_id:
-            return conv
+            return friend
         try:
             result = await self.boss_client.get_chat_history(
                 boss_id=boss_id_for_history,
@@ -861,8 +994,8 @@ class ConversationService:
                 count=20,
             )
         except Exception as exc:
-            logger.warning("BOSS send identity backfill failed: job_id=%s error=%s", job_id, exc)
-            return conv
+            logger.warning("BOSS send identity backfill failed: friend_id=%s error=%s", friend_id, exc)
+            return friend
 
         self_id = _extract_self_id_from_messages(boss_uid, result.get("messages", []))
         updates: dict[str, Any] = {}
@@ -872,22 +1005,21 @@ class ConversationService:
             updates["boss_uid"] = boss_uid
         if updates:
             updates["updated_at"] = utc_now()
-            await self.conversations.update_one({"_id": conv["_id"]}, {"$set": updates})
-            conv.update(updates)
-        return conv
+            await self.friends.update_one({"_id": friend["_id"]}, {"$set": updates})
+            friend.update(updates)
+        return friend
 
-    async def sync_conversations(self) -> int:
+    async def sync_friends(self) -> int:
         try:
             friends = await self.boss_client.list_friends(page=1)
         except Exception as exc:
-            logger.warning("BOSS conversation sync failed: error=%s", exc)
+            logger.warning("BOSS friend sync failed: error=%s", exc)
             raise map_boss_operation_error(exc) from exc
 
         synced = 0
         for item in friends:
-            job_id = item.get("job_id")
-            friend_id = item.get("friend_id") or item.get("gid", "")
-            if not job_id and not friend_id:
+            friend_id = item.get("encrypt_boss_id")
+            if not friend_id:
                 continue
 
             last_message_ts = None
@@ -899,17 +1031,21 @@ class ConversationService:
 
             last_message_at = _format_last_time(last_message_ts) if last_message_ts else None
             self_id = _extract_self_id(item)
-            filter_doc = {"job_id": job_id} if job_id else {"source_conversation_id": friend_id}
-            await self.conversations.update_one(
-                filter_doc,
+            existing = await self.friends.find_one({"encrypt_boss_id": friend_id})
+            messages = existing.get("messages", []) if existing else []
+            await self.friends.update_one(
+                {"encrypt_boss_id": friend_id},
                 {
                     "$set": {
-                        "source_conversation_id": friend_id,
                         "gid": item.get("gid", ""),
+                        "boss_uid": item.get("gid", ""),
+                        "friend_source": item.get("friend_source"),
+                        "relation_type": item.get("relation_type"),
+                        "read_status": item.get("read_status"),
                         "self_id": self_id,
-                        "job_id": job_id,
+                        "job_id": item.get("job_id"),
                         "encrypt_job_id": item.get("encrypt_job_id"),
-                        "encrypt_boss_id": item.get("encrypt_boss_id"),
+                        "encrypt_boss_id": friend_id,
                         "security_id": item.get("security_id"),
                         "name": item.get("name", ""),
                         "title": item.get("title", ""),
@@ -920,6 +1056,7 @@ class ConversationService:
                         "last_message_at": last_message_at,
                         "last_message_ts": last_message_ts,
                         "raw_payload": item.get("raw_payload", item),
+                        "messages": messages,
                         "updated_at": utc_now(),
                     }
                 },
@@ -934,14 +1071,14 @@ class DashboardService:
         self.targets = database["target_profiles"]
         self.jobs = database["job_leads"]
         self.tasks = database["greeting_tasks"]
-        self.conversations = database["conversation_records"]
+        self.friends = database["friend_records"]
 
     async def get_summary(self) -> dict[str, int]:
         return {
             "targets": await self.targets.count_documents({}),
             "jobs": await self.jobs.count_documents({}),
             "tasks": await self.tasks.count_documents({}),
-            "conversations": await self.conversations.count_documents({}),
+            "friends": await self.friends.count_documents({}),
         }
 
 
@@ -953,8 +1090,7 @@ class SystemService:
         "job_collection_traces",
         "greeting_tasks",
         "greeting_records",
-        "conversation_records",
-        "chat_messages",
+        "friend_records",
     )
 
     def __init__(
@@ -994,7 +1130,7 @@ class SystemService:
 
     async def login(self, timeout: int = 120) -> AuthStatusResponse:
         try:
-            local = await self.boss_client.login(LoginRequest(timeout=timeout))
+            local = await self.boss_client.login(LoginIn(timeout=timeout))
         except Exception as exc:
             mapped = map_boss_operation_error(exc)
             await self._persist_login_error(mapped.message)
@@ -1075,7 +1211,7 @@ class SystemService:
 
     async def _sync_auth_state(
         self,
-        local: LoginResult,
+        local: LoginOut,
         stored: AuthState | None,
         *,
         mark_login: bool = False,
@@ -1114,7 +1250,7 @@ class SystemService:
         current.updated_at = utc_now()
         await self._upsert_auth_state(current)
 
-    def _build_auth_response(self, local: LoginResult, state: AuthState) -> AuthStatusResponse:
+    def _build_auth_response(self, local: LoginOut, state: AuthState) -> AuthStatusResponse:
         user_name = local.user_name if local.logged_in else None
         login_method = local.login_method if local.logged_in else None
         return AuthStatusResponse(

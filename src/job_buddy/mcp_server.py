@@ -251,11 +251,11 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
 
 
 @mcp.tool
-async def list_conversations() -> list[dict[str, Any]]:
-    """列出全部同步的对话记录。"""
+async def list_friends() -> list[dict[str, Any]]:
+    """列出全部同步的好友记录。"""
     async with _client() as client:
         try:
-            resp = await client.get("/boss/conversations")
+            resp = await client.get("/boss/friends")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -263,11 +263,11 @@ async def list_conversations() -> list[dict[str, Any]]:
 
 
 @mcp.tool
-async def sync_conversations() -> dict[str, Any]:
-    """同步 BOSS直聘 沟通列表，返回同步数量。"""
+async def sync_friends() -> dict[str, Any]:
+    """同步 BOSS直聘 好友列表，返回同步数量。"""
     async with _client() as client:
         try:
-            resp = await client.post("/boss/conversations/sync")
+            resp = await client.post("/boss/friends/sync")
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:
@@ -275,18 +275,18 @@ async def sync_conversations() -> dict[str, Any]:
 
 
 @mcp.tool
-async def get_chat_history(job_id: int, page: int = 1, count: int = 20) -> dict[str, Any]:
+async def get_friend_messages(friend_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
     """获取与指定好友的聊天消息历史。
 
     Args:
-        job_id: 职位 ID（从 list_conversations 获取）
+        friend_id: 好友 ID（encryptBossId，从 list_friends 获取）
         page: 页码，默认 1
         count: 每页消息数，默认 20
     """
     params = {"page": str(page), "count": str(count)}
     async with _client() as client:
         try:
-            resp = await client.get(f"/boss/conversations/{job_id}/messages", params=params)
+            resp = await client.get(f"/boss/friends/{friend_id}/messages", params=params)
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPError as exc:

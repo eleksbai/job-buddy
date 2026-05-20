@@ -12,7 +12,7 @@ const state = {
   jobDetail: null,
   jobDetailLoading: false,
   jobDetailSourceJobId: null,
-  jobDetailPageJobId: null,
+  jobDetailPageSourceJobId: null,
   jobDetailPageName: null,
   jobDetailPageFriendId: null,
   jobDetailPageSecurityId: null,
@@ -267,7 +267,7 @@ function getViewFromHash() {
   const hash = window.location.hash.replace(/^#/, "");
   if (!hash) return { view: "dashboard", params: {} };
   const detailMatch = hash.match(/^job-detail\/([^/]+)$/);
-  if (detailMatch) return { view: "job-detail", params: { jobId: decodeURIComponent(detailMatch[1]) } };
+  if (detailMatch) return { view: "job-detail", params: { sourceJobId: decodeURIComponent(detailMatch[1]) } };
   const viewId = decodeURIComponent(hash);
   return { view: VIEW_IDS.includes(viewId) ? viewId : "dashboard", params: {} };
 }
@@ -276,8 +276,8 @@ function navigateTo(viewId, params = {}, updateHash = true) {
   const valid = VIEW_IDS.includes(viewId) || viewId === "job-detail";
   const nextView = valid ? viewId : "dashboard";
   let nextHash = nextView;
-  if (viewId === "job-detail" && params.jobId) {
-    nextHash = `job-detail/${encodeURIComponent(params.jobId)}`;
+  if (viewId === "job-detail" && params.sourceJobId) {
+    nextHash = `job-detail/${encodeURIComponent(params.sourceJobId)}`;
   }
   if (updateHash && window.location.hash === `#${nextHash}`) {
     setActiveView(nextView);
@@ -593,7 +593,7 @@ async function loadSummaryCards() {
     targets: "目标岗位",
     jobs: "职位线索",
     tasks: "任务记录",
-    conversations: "沟通记录",
+    friends: "沟通记录",
   };
   document.getElementById("summaryCards").innerHTML = Object.entries(summary)
     .map(
@@ -939,24 +939,24 @@ function renderChatHistoryMessages(messages, friendId, friendName) {
     .join("");
 }
 
-async function loadChatHistory(jobId, page) {
+async function loadFriendMessages(friendId, page) {
   return await fetchJson(
-    `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=${page || 1}&count=100`
+    `/boss/friends/${encodeURIComponent(friendId)}/messages?page=${page || 1}&count=100`
   );
 }
 
-async function openConversationChat(jobId, name, friendId) {
-  if (!jobId) return;
+async function openFriendChat(friendId, name, bossUid) {
+  if (!friendId) return;
   clearError();
-  state.chatHistoryGid = jobId;
+  state.chatHistoryGid = friendId;
   state.chatHistoryPage = 1;
   state.chatHistoryName = name;
-  state.chatHistoryFriendId = friendId;
+  state.chatHistoryFriendId = bossUid;
   setChatHistoryDrawerOpen(true);
   renderChatHistoryDrawerLoading(name);
 
   try {
-    const payload = await loadChatHistory(jobId, 1);
+    const payload = await loadFriendMessages(friendId, 1);
     renderChatHistoryDrawer(payload);
   } catch (error) {
     renderChatHistoryDrawerError(error.message || "聊天记录获取失败");
@@ -987,7 +987,7 @@ async function goChatHistoryPage(delta) {
   setButtonBusy("chatHistoryPrevPageButton", true, "加载中");
   setButtonBusy("chatHistoryNextPageButton", true, "加载中");
   try {
-    const payload = await loadChatHistory(chatHistoryGid, nextPage);
+    const payload = await loadFriendMessages(chatHistoryGid, nextPage);
     state.chatHistoryPage = nextPage;
     renderChatHistoryDrawer(payload);
   } catch (error) {
@@ -1007,13 +1007,13 @@ function closeChatHistoryDrawer() {
 
 // ── Job Detail Page ──
 
-async function loadJobDetailPage(jobId) {
-  if (!jobId) {
-    showError("缺少职位 ID");
+async function loadJobDetailPage(sourceJobId) {
+  if (!sourceJobId) {
+    showError("缺少职位主键");
     return;
   }
 
-  state.jobDetailPageJobId = jobId;
+  state.jobDetailPageSourceJobId = sourceJobId;
   state.jobDetailPagePayload = null;
   clearError();
 
@@ -1033,8 +1033,8 @@ async function loadJobDetailPage(jobId) {
 
   const securityId = state.jobDetailPageSecurityId || "";
   const detailUrl = securityId
-    ? `/boss/jobs/${encodeURIComponent(jobId)}/detail?security_id=${encodeURIComponent(securityId)}`
-    : `/boss/jobs/${encodeURIComponent(jobId)}/detail`;
+    ? `/boss/jobs/${encodeURIComponent(sourceJobId)}/detail?security_id=${encodeURIComponent(securityId)}`
+    : `/boss/jobs/${encodeURIComponent(sourceJobId)}/detail`;
 
   try {
     const detailResult = await fetchJson(detailUrl);
@@ -1048,13 +1048,35 @@ async function loadJobDetailPage(jobId) {
   }
 
   // After job detail loaded, try loading cached chat messages
-  loadJobDetailPageCachedChat(jobId);
+  loadJobDetailPageCachedChat(sourceJobId);
 }
 
-async function loadJobDetailPageCachedChat(jobId) {
+function getCurrentJobDetailFriendId() {
+  return state.jobDetailPageFriendId || state.jobDetailPagePayload?.job?.encrypt_boss_id || "";
+}
+
+function canLoadJobDetailChat() {
+  return state.jobDetailPagePayload?.job?.contact === true;
+}
+
+function renderJobDetailChatUnavailable() {
+  document.getElementById("jobDetailChatTitle").textContent = "聊天记录";
+  document.getElementById("jobDetailChatMeta").textContent = "";
+  document.getElementById("jobDetailChatContent").innerHTML =
+    '<div class="empty">尚未沟通，无需加载聊天记录</div>';
+  document.getElementById("jobDetailMessageInput").value = "";
+}
+
+async function loadJobDetailPageCachedChat(sourceJobId) {
+  if (!canLoadJobDetailChat()) {
+    renderJobDetailChatUnavailable();
+    return;
+  }
+  const friendId = getCurrentJobDetailFriendId();
+  if (!friendId) return;
   try {
     const chatPayload = await fetchJson(
-      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100&cached_only=true`
+      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100&cached_only=true`
     );
     if (chatPayload.messages && chatPayload.messages.length > 0) {
       renderJobDetailPageChat(chatPayload);
@@ -1086,8 +1108,14 @@ function renderJobDetailPageDetail(payload) {
   document.getElementById("jobDetailPageTitle").textContent = title;
   document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
-  const contact = payload?.job?.raw_payload?.contact;
+  const contact = payload?.job?.contact;
   document.getElementById("jobDetailGreetButton").hidden = contact !== false;
+  document.getElementById("jobDetailSyncChatButton").hidden = contact !== true;
+  document.getElementById("jobDetailMessageInput").hidden = contact !== true;
+  document.getElementById("jobDetailSendMessageButton").hidden = contact !== true;
+  if (contact !== true) {
+    renderJobDetailChatUnavailable();
+  }
 }
 
 async function greetCurrentJobDetail() {
@@ -1105,23 +1133,28 @@ async function greetCurrentJobDetail() {
       body: JSON.stringify({ job_ids: [job.id], limit: 1 }),
     });
     showNotice(`已触发打招呼任务 ${result.task_id}`, 5000);
-    await Promise.all([loadJobDetailPage(state.jobDetailPageJobId), loadJobs(), loadTasks(), loadSummaryCards()]);
+    await Promise.all([loadJobDetailPage(state.jobDetailPageSourceJobId), loadJobs(), loadTasks(), loadSummaryCards()]);
   } finally {
     setButtonBusy("jobDetailGreetButton", false);
   }
 }
 
 async function syncChatHistoryForJobDetail() {
-  const jobId = state.jobDetailPageJobId;
-  if (!jobId) return;
+  if (!canLoadJobDetailChat()) {
+    renderJobDetailChatUnavailable();
+    return;
+  }
+  const friendId = getCurrentJobDetailFriendId();
+  if (!friendId) {
+    showError("缺少好友 ID");
+    return;
+  }
   clearError();
   setButtonBusy("jobDetailSyncChatButton", true, "同步中");
   try {
-    // Sync conversation list first to ensure conversation record exists
-    await fetchJson("/boss/conversations/sync", { method: "POST" });
-    // Fetch chat history from BOSS (no caching)
+    await fetchJson("/boss/friends/sync", { method: "POST" });
     const payload = await fetchJson(
-      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
+      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("聊天记录已同步", 3000);
@@ -1133,11 +1166,15 @@ async function syncChatHistoryForJobDetail() {
 }
 
 async function sendMessageForJobDetail() {
-  const jobId = state.jobDetailPageJobId;
+  if (!canLoadJobDetailChat()) {
+    renderJobDetailChatUnavailable();
+    return;
+  }
+  const friendId = getCurrentJobDetailFriendId();
   const input = document.getElementById("jobDetailMessageInput");
   const content = input.value.trim();
-  if (!jobId) {
-    showError("缺少职位 ID");
+  if (!friendId) {
+    showError("缺少好友 ID");
     return;
   }
   if (!content) {
@@ -1148,13 +1185,13 @@ async function sendMessageForJobDetail() {
   clearError();
   setButtonBusy("jobDetailSendMessageButton", true, "发送中");
   try {
-    await fetchJson(`/boss/conversations/${encodeURIComponent(jobId)}/messages/send`, {
+    await fetchJson(`/boss/friends/${encodeURIComponent(friendId)}/messages/send`, {
       method: "POST",
       body: JSON.stringify({ content }),
     });
     input.value = "";
     const payload = await fetchJson(
-      `/boss/conversations/${encodeURIComponent(jobId)}/messages?page=1&count=100`
+      `/boss/friends/${encodeURIComponent(friendId)}/messages?page=1&count=100`
     );
     renderJobDetailPageChat(payload);
     showNotice("消息已发送", 3000);
@@ -1163,8 +1200,8 @@ async function sendMessageForJobDetail() {
   }
 }
 
-async function loadConversations() {
-  const items = await fetchJson("/boss/conversations");
+async function loadFriends() {
+  const items = await fetchJson("/boss/friends");
   document.getElementById("conversationsCount").textContent = `共 ${items.length} 条`;
   renderTable(
     "conversationsTable",
@@ -1172,9 +1209,9 @@ async function loadConversations() {
       { label: "姓名", render: (row) => escapeHtml(row.name || row.title) },
       { label: "职位", render: (row) => escapeHtml(row.title) },
       { label: "公司", render: (row) => escapeHtml(row.company || "-") },
-      { label: "发起方", render: (row) => renderRelationType(row.raw_payload) },
+      { label: "发起方", render: (row) => renderRelationType(row.relation_type) },
       { label: "未读", render: (row) => renderUnreadBadge(row.unread_count) },
-      { label: "状态", render: (row) => renderReadStatus(row.raw_payload) },
+      { label: "状态", render: (row) => renderReadStatus(row.read_status) },
       { label: "最近消息", render: (row) => escapeHtml(row.last_message || "-") },
       { label: "最近时间", render: (row) => escapeHtml(row.last_message_at || "-") },
       { label: "聊天", render: (row) => renderChatHistoryAction(row) },
@@ -1185,10 +1222,10 @@ async function loadConversations() {
   return items;
 }
 
-function renderRelationType(rawPayload) {
-  if (!rawPayload || !rawPayload.relationType) return "-";
+function renderRelationType(relationType) {
+  if (!relationType) return "-";
   const map = { 1: "对方主动", 2: "我主动", 3: "投递" };
-  return escapeHtml(map[rawPayload.relationType] || "-");
+  return escapeHtml(map[relationType] || "-");
 }
 
 function renderUnreadBadge(count) {
@@ -1198,28 +1235,27 @@ function renderUnreadBadge(count) {
   return `<span class="status-badge status-ok">0</span>`;
 }
 
-function renderReadStatus(rawPayload) {
-  const status = rawPayload?.lastMessageInfo?.status;
+function renderReadStatus(status) {
   if (status === 2) return '<span class="status-badge status-warn">未读</span>';
   if (status === 1) return '<span class="status-badge status-ok">已读</span>';
   return "-";
 }
 
 function renderChatHistoryAction(row) {
-  const encryptJobId = row.encrypt_job_id;
-  if (!encryptJobId) return "-";
+  const friendId = row.encrypt_boss_id;
+  if (!friendId) return "-";
   const name = row.name || "";
-  const friendId = row.source_conversation_id || "";
-  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(encryptJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}">查看聊天</button>`;
+  const bossUid = row.gid || "";
+  return `<button type="button" class="button-link" data-chat-history="${escapeHtml(friendId)}|${escapeHtml(name)}|${escapeHtml(bossUid)}">查看聊天</button>`;
 }
 
 function renderJobDetailPageAction(row) {
-  const encryptJobId = row.encrypt_job_id;
-  if (!encryptJobId) return "-";
+  const sourceJobId = row.source_job_id;
+  if (!sourceJobId) return "-";
   const name = row.name || "";
-  const friendId = row.source_conversation_id || "";
+  const friendId = row.encrypt_boss_id || "";
   const securityId = row.security_id || "";
-  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(encryptJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}|${escapeHtml(securityId)}">职位详情</button>`;
+  return `<button type="button" class="button-link" data-job-detail-page="${escapeHtml(sourceJobId)}|${escapeHtml(name)}|${escapeHtml(friendId)}|${escapeHtml(securityId)}">职位详情</button>`;
 }
 
 function renderLogs(payload) {
@@ -1375,12 +1411,12 @@ async function triggerGreeting() {
   }
 }
 
-async function syncConversations() {
+async function syncFriends() {
   clearError();
   setButtonBusy("syncConversationsButton", true, "同步中");
   try {
-    const result = await fetchJson("/boss/conversations/sync", { method: "POST" });
-    await Promise.all([loadConversations(), loadSummaryCards()]);
+    const result = await fetchJson("/boss/friends/sync", { method: "POST" });
+    await Promise.all([loadFriends(), loadSummaryCards()]);
     showNotice(`已同步 ${result.count} 条会话`, 5000);
   } finally {
     setButtonBusy("syncConversationsButton", false);
@@ -1403,7 +1439,7 @@ async function clearData() {
       fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks),
       state.activeView === "jobs" ? loadJobs() : Promise.resolve(),
       state.activeView === "tasks" ? loadTasks() : Promise.resolve(),
-      state.activeView === "conversations" ? loadConversations() : Promise.resolve(),
+      state.activeView === "conversations" ? loadFriends() : Promise.resolve(),
       state.activeView === "search" ? loadCurrentSearchResults() : Promise.resolve(),
     ]);
     showNotice(`已清除 ${result.total_deleted} 条数据`, 5000);
@@ -1429,7 +1465,7 @@ async function loadView(viewId, params = {}) {
       await loadTasks();
       break;
     case "conversations":
-      await loadConversations();
+      await loadFriends();
       break;
     case "doctor":
       await Promise.all([loadAuthStatus(), loadDoctor()]);
@@ -1438,7 +1474,7 @@ async function loadView(viewId, params = {}) {
       await loadLogs();
       break;
     case "job-detail":
-      await loadJobDetailPage(params.jobId);
+      await loadJobDetailPage(params.sourceJobId);
       break;
     default:
       await loadDashboardView();
@@ -1448,7 +1484,7 @@ async function loadView(viewId, params = {}) {
 async function refreshCurrentView() {
   clearNotice();
   if (state.activeView === "job-detail") {
-    await loadView(state.activeView, { jobId: state.jobDetailPageJobId });
+    await loadView(state.activeView, { sourceJobId: state.jobDetailPageSourceJobId });
   } else {
     await loadView(state.activeView);
   }
@@ -1466,7 +1502,7 @@ function bindEvents() {
       state.jobDetailPageName = "";
       state.jobDetailPageFriendId = "";
       state.jobDetailPageSecurityId = "";
-      navigateTo("job-detail", { jobId: detailButton.dataset.jobDetail });
+      navigateTo("job-detail", { sourceJobId: detailButton.dataset.jobDetail });
       return;
     }
 
@@ -1487,7 +1523,7 @@ function bindEvents() {
     if (chatButton) {
       event.preventDefault();
       const parts = chatButton.dataset.chatHistory.split("|");
-      openConversationChat(parts[0], decodeURIComponent(parts[1] || ""), parts[2] || "").catch(
+      openFriendChat(parts[0], decodeURIComponent(parts[1] || ""), parts[2] || "").catch(
         (error) => showError(error.message || "聊天历史获取失败")
       );
       return;
@@ -1500,7 +1536,7 @@ function bindEvents() {
       state.jobDetailPageName = decodeURIComponent(parts[1] || "");
       state.jobDetailPageFriendId = parts[2] || "";
       state.jobDetailPageSecurityId = parts[3] || "";
-      navigateTo("job-detail", { jobId: parts[0] });
+      navigateTo("job-detail", { sourceJobId: parts[0] });
       return;
     }
 
@@ -1557,25 +1593,25 @@ function bindEvents() {
     .addEventListener("click", () => triggerGreeting().catch((error) => showError(error.message)));
   document
     .getElementById("syncConversationsButton")
-    .addEventListener("click", () => syncConversations().catch((error) => showError(error.message)));
+    .addEventListener("click", () => syncFriends().catch((error) => showError(error.message)));
   document
     .getElementById("refreshTasksButton")
     .addEventListener("click", () => loadTasks().catch((error) => showError(error.message)));
   document
     .getElementById("refreshConversationsButton")
-    .addEventListener("click", () => loadConversations().catch((error) => showError(error.message)));
+    .addEventListener("click", () => loadFriends().catch((error) => showError(error.message)));
   document
     .getElementById("refreshLogsButton")
     .addEventListener("click", () => loadLogs().catch((error) => showError(error.message)));
   document
     .getElementById("syncConversationsFromChatButton")
-    .addEventListener("click", () => syncConversations().catch((error) => showError(error.message)));
+    .addEventListener("click", () => syncFriends().catch((error) => showError(error.message)));
   document
     .getElementById("jobDetailSyncChatButton")
     .addEventListener("click", () => syncChatHistoryForJobDetail().catch((error) => showError(error.message)));
   document
     .getElementById("jobDetailRefreshButton")
-    .addEventListener("click", () => loadJobDetailPage(state.jobDetailPageJobId).catch((error) => showError(error.message)));
+    .addEventListener("click", () => loadJobDetailPage(state.jobDetailPageSourceJobId).catch((error) => showError(error.message)));
   document
     .getElementById("jobDetailGreetButton")
     .addEventListener("click", () => greetCurrentJobDetail().catch((error) => showError(error.message)));
@@ -1601,8 +1637,9 @@ function bindEvents() {
 
 bindSearchFormPersistence();
 bindEvents();
-setActiveView(getViewFromHash().view);
+const initialRoute = getViewFromHash();
+setActiveView(initialRoute.view);
 
-Promise.all([loadAuthStatus(), loadView(state.activeView)])
+Promise.all([loadAuthStatus(), loadView(initialRoute.view, initialRoute.params)])
   .then(() => clearNotice())
   .catch((error) => showError(error.message || "页面初始化失败"));

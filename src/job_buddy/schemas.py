@@ -63,6 +63,8 @@ class JobLeadRead(TimestampedSchema):
     source_job_id: str
     job_id: int | None = None
     security_id: str | None = None
+    encrypt_boss_id: str | None = None
+    contact: bool | None = None
     title: str
     company: str
     city: str | None = None
@@ -184,15 +186,27 @@ class TaskDetailResponse(BaseModel):
     records: list[GreetingRecordRead]
 
 
-class ConversationRecordRead(TimestampedSchema):
+class FriendMessageRead(BaseModel):
+    message_id: str
+    from_id: str
+    content: str
+    msg_type: int | None = None
+    sent_at: int | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class FriendRecordRead(TimestampedSchema):
     source: str
-    source_conversation_id: str
     gid: str
+    boss_uid: str | None = None
+    friend_source: int | None = None
+    relation_type: int | None = None
+    read_status: int | None = None
     security_id: str | None = None
     self_id: str | None = None
     job_id: int | None = None
     encrypt_job_id: str | None = None
-    encrypt_boss_id: str | None = None
+    encrypt_boss_id: str
     title: str
     name: str
     company: str | None = None
@@ -202,19 +216,12 @@ class ConversationRecordRead(TimestampedSchema):
     last_message_at: str | None = None
     last_message_ts: float | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+    messages: list[FriendMessageRead] = Field(default_factory=list)
 
 
-class ChatMessageRead(TimestampedSchema):
-    conversation_id: str
-    message_id: str
-    from_id: str
-    content: str
-    msg_type: int | None = None
-    sent_at: int | None = None
-
-
-class ChatHistoryResponse(BaseModel):
+class FriendMessagesResponse(BaseModel):
     gid: str
+    friend_id: str
     security_id: str | None = None
     page: int
     count: int
@@ -229,13 +236,13 @@ class SendMessagePayload(BaseModel):
 
 class SendMessageResponse(BaseModel):
     gid: str
-    job_id: str
+    friend_id: str
     content: str
     status: str
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConversationSyncResponse(BaseModel):
+class FriendSyncResponse(BaseModel):
     count: int
 
 

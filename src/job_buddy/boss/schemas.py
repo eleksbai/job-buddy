@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class LoginRequest:
+
+class BossSchema(BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class LoginIn(BossSchema):
     timeout: int = 120
 
 
-@dataclass
-class LoginResult:
+class LoginOut(BossSchema):
     logged_in: bool
     user_name: str | None = None
     login_method: str | None = None
@@ -22,13 +25,11 @@ class LoginResult:
     last_logout_at: datetime | None = None
 
 
-@dataclass
-class SearchRequest:
+class SearchIn(BossSchema):
     query: dict[str, Any]
 
 
-@dataclass
-class JobDetailRequest:
+class JobDetailIn(BossSchema):
     job_id: str
     security_id: str | None = None
     job_url: str | None = None
@@ -36,52 +37,50 @@ class JobDetailRequest:
     company: str | None = None
 
 
-@dataclass
-class GreetJobRequest:
+class GreetJobIn(BossSchema):
     job_id: str
     security_id: str
     message: str | None = None
 
 
-@dataclass
-class FriendListRequest:
+class FriendListIn(BossSchema):
     page: int = 1
 
 
-@dataclass
-class ChatHistoryRequest:
+class ChatHistoryIn(BossSchema):
     boss_id: str
     security_id: str
     page: int = 1
     count: int = 20
 
 
-@dataclass
-class SendMessageRequest:
+class SendMessageIn(BossSchema):
     job_id: str
+    job_numeric_id: int | None = None
     gid: str
     self_id: str
     boss_uid: str
     boss_id: str
+    friend_source: int = 0
     security_id: str | None
     content: str
-    raw_payload: dict[str, Any] = field(default_factory=dict)
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class SearchJobItem:
+class SearchJobItemOut(BossSchema):
     job_id: str
     security_id: str | None = None
+    encrypt_boss_id: str | None = None
+    contact: bool | None = None
     title: str = ""
     company: str = ""
     city: str | None = None
     salary: str | None = None
     experience: str | None = None
     job_url: str | None = None
-    raw_payload: dict[str, Any] = field(default_factory=dict)
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class SearchResult:
-    items: list[SearchJobItem]
-    trace: dict[str, Any] = field(default_factory=dict)
+class SearchOut(BossSchema):
+    items: list[SearchJobItemOut]
+    trace: dict[str, Any] = Field(default_factory=dict)

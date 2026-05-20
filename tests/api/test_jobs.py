@@ -51,6 +51,8 @@ class FakeJobService:
                 source_job_id="job-1",
                 job_id=12345,
                 security_id="sec-1",
+                encrypt_boss_id="boss-1",
+                contact=False,
                 title="Python Backend Engineer",
                 company="Demo Tech",
                 city="Shanghai",
@@ -79,3 +81,17 @@ async def test_list_jobs_includes_job_url():
     assert response.json()[0]["job_id"] == 12345
     assert response.json()[0]["search_count"] == 1
     assert response.json()[0]["last_searched_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_job_detail_includes_contact_state():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    app.dependency_overrides[get_job_service] = lambda: FakeJobService()
+
+    async with api_client(app) as client:
+        response = await client.get("/boss/jobs/job-1/detail")
+
+    assert response.status_code == 200
+    assert response.json()["job"]["contact"] is False
+    assert response.json()["job"]["encrypt_boss_id"] == "boss-1"

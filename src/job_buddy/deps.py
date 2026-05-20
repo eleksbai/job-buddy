@@ -4,8 +4,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from job_buddy.boss import BossClient, BossDoctorRunner
 from job_buddy.config import Settings
 from job_buddy.services import (
-    ConversationService,
     DashboardService,
+    FriendService,
     GreetingService,
     JobCollectionService,
     SystemService,
@@ -43,11 +43,11 @@ async def get_greeting_service(
     return GreetingService(db, boss_client)
 
 
-async def get_conversation_service(
+async def get_friend_service(
     db: AsyncIOMotorDatabase = Depends(get_database),
     boss_client: BossClient = Depends(get_boss_client),
-) -> ConversationService:
-    return ConversationService(db, boss_client)
+) -> FriendService:
+    return FriendService(db, boss_client)
 
 
 async def get_dashboard_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> DashboardService:
