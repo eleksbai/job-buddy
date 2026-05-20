@@ -11,17 +11,15 @@ from bson import ObjectId
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
-from job_buddy.core.boss import (
-    BossClientProtocol,
+from job_buddy.boss import (
+    BossClient,
     BossDoctorRunner,
     BossOperationError,
     map_boss_operation_error,
+    normalize_search_query,
     raise_for_boss_healthcheck,
 )
-from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import JobDetailRequest, LoginRequest, LoginResult, SearchRequest
-from job_buddy.core.engines.runtime import EngineRuntimeManager
-from job_buddy.core.zhipin_api import (
+from job_buddy.boss.config import (
     CITY_CODES,
     EDUCATION_CODES,
     EXPERIENCE_CODES,
@@ -31,6 +29,8 @@ from job_buddy.core.zhipin_api import (
     SCALE_CODES,
     STAGE_CODES,
 )
+from job_buddy.boss.schemas import LoginRequest, LoginResult, SearchRequest
+from job_buddy.config import Settings
 from job_buddy.models import (
     AuthState,
     ChatMessage,
@@ -213,12 +213,12 @@ class TargetProfileService:
 
 
 class JobCollectionService:
-    def __init__(self, database: AsyncIOMotorDatabase, runtime: EngineRuntimeManager) -> None:
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
         self.jobs = database["job_leads"]
         self.records = database["job_collection_records"]
         self.traces = database["job_collection_traces"]
         self.tasks = database["greeting_tasks"]
-        self.runtime = runtime
+        self.boss_client = boss_client
 
     async def list_jobs(self, match_status: str | None, greeted: bool | None, limit: int) -> list[JobLead]:
         filters: dict[str, Any] = {}
@@ -251,14 +251,12 @@ class JobCollectionService:
             if not security_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
             try:
-                detail_result = await self.runtime.detail(
-                    JobDetailRequest(
-                        job_id=source_job_id,
-                        security_id=security_id,
-                        job_url=None,
-                        title=source_job_id,
-                        company="",
-                    )
+                detail_result = await self.boss_client.get_job_detail(
+                    job_id=source_job_id,
+                    security_id=security_id,
+                    job_url=None,
+                    title=source_job_id,
+                    company="",
                 )
             except Exception as exc:
                 logger.warning(
@@ -290,14 +288,12 @@ class JobCollectionService:
             return job, True
 
         try:
-            detail_result = await self.runtime.detail(
-                JobDetailRequest(
-                    job_id=job.source_job_id,
-                    security_id=job.security_id,
-                    job_url=job.job_url,
-                    title=job.title,
-                    company=job.company,
-                )
+            detail_result = await self.boss_client.get_job_detail(
+                job_id=job.source_job_id,
+                security_id=job.security_id,
+                job_url=job.job_url,
+                title=job.title,
+                company=job.company,
             )
         except Exception as exc:
             logger.warning(
@@ -330,9 +326,20 @@ class JobCollectionService:
     async def search_jobs_readonly(self, query: dict[str, Any]) -> list[dict[str, Any]]:
         health = None
         try:
-            health = await self.runtime.healthcheck()
+            health = await self.boss_client.healthcheck()
             raise_for_boss_healthcheck(health)
-            search_result = await self.runtime.search(SearchRequest(query=query))
+            normalized_query = normalize_search_query(
+                query,
+                city_codes=CITY_CODES,
+                salary_codes=SALARY_CODES,
+                experience_codes=EXPERIENCE_CODES,
+                education_codes=EDUCATION_CODES,
+                industry_codes=INDUSTRY_CODES,
+                scale_codes=SCALE_CODES,
+                stage_codes=STAGE_CODES,
+                job_type_codes=JOB_TYPE_CODES,
+            )
+            search_result = await self.boss_client.search(SearchRequest(query=normalized_query))
         except Exception as exc:
             logger.warning("BOSS search (readonly) failed: query=%s health=%s error=%s", query, health, exc)
             raise map_boss_operation_error(exc) from exc
@@ -412,9 +419,20 @@ class JobCollectionService:
         await self._update_task_step(task.id, "healthcheck")
         health = None
         try:
-            health = await self.runtime.healthcheck()
+            health = await self.boss_client.healthcheck()
             raise_for_boss_healthcheck(health)
-            search_result = await self.runtime.search(SearchRequest(query=query))
+            normalized_query = normalize_search_query(
+                query,
+                city_codes=CITY_CODES,
+                salary_codes=SALARY_CODES,
+                experience_codes=EXPERIENCE_CODES,
+                education_codes=EDUCATION_CODES,
+                industry_codes=INDUSTRY_CODES,
+                scale_codes=SCALE_CODES,
+                stage_codes=STAGE_CODES,
+                job_type_codes=JOB_TYPE_CODES,
+            )
+            search_result = await self.boss_client.search(SearchRequest(query=normalized_query))
         except Exception as exc:
             logger.warning("BOSS search failed: task_id=%s query=%s health=%s error=%s", task.id, query, health, exc)
             raise map_boss_operation_error(exc) from exc
@@ -541,7 +559,7 @@ class JobCollectionService:
 
 
 class GreetingService:
-    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClientProtocol) -> None:
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
         self.tasks = database["greeting_tasks"]
         self.records = database["greeting_records"]
         self.jobs = database["job_leads"]
@@ -686,7 +704,7 @@ class GreetingService:
 
 
 class ConversationService:
-    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClientProtocol) -> None:
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
         self.conversations = database["conversation_records"]
         self.messages = database["chat_messages"]
         self.boss_client = boss_client
@@ -943,12 +961,12 @@ class SystemService:
         self,
         doctor_runner: BossDoctorRunner,
         settings: Settings,
-        runtime: EngineRuntimeManager,
+        boss_client: BossClient,
         database: AsyncIOMotorDatabase,
     ) -> None:
         self.doctor_runner = doctor_runner
         self.settings = settings
-        self.runtime = runtime
+        self.boss_client = boss_client
         self.auth_states = database["boss_auth_state"]
         self.database = database
 
@@ -967,7 +985,7 @@ class SystemService:
 
     async def get_auth_status(self) -> AuthStatusResponse:
         try:
-            local = await self.runtime.get_auth_status()
+            local = await self.boss_client.get_auth_status()
         except Exception as exc:
             raise map_boss_operation_error(exc) from exc
         stored = await self._get_current_auth_state()
@@ -976,7 +994,7 @@ class SystemService:
 
     async def login(self, timeout: int = 120) -> AuthStatusResponse:
         try:
-            local = await self.runtime.login(LoginRequest(timeout=timeout))
+            local = await self.boss_client.login(LoginRequest(timeout=timeout))
         except Exception as exc:
             mapped = map_boss_operation_error(exc)
             await self._persist_login_error(mapped.message)
@@ -987,7 +1005,7 @@ class SystemService:
 
     async def logout(self) -> AuthStatusResponse:
         try:
-            local = await self.runtime.logout()
+            local = await self.boss_client.logout()
         except Exception as exc:
             raise map_boss_operation_error(exc) from exc
         stored = await self._get_current_auth_state()

@@ -2,7 +2,7 @@ import asyncio
 
 from bson import ObjectId
 
-from job_buddy.core.boss import BossOperationError
+from job_buddy.boss import BossOperationError
 from job_buddy.models import GreetingRecord
 from job_buddy.services import ConversationService, GreetingService
 

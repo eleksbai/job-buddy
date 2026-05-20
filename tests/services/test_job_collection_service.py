@@ -5,7 +5,7 @@ from typing import Any
 
 from bson import ObjectId
 
-from job_buddy.core.engines.models import SearchJobItem, SearchResult
+from job_buddy.boss.schemas import SearchJobItem, SearchResult
 from job_buddy.models import (
     GreetingTask,
     JobCollectionRecord,
@@ -88,8 +88,15 @@ class FakeBossClient:
             },
         )
 
-    async def detail(self, request) -> dict:
-        _ = request
+    async def get_job_detail(
+        self,
+        job_id: str,
+        security_id: str | None = None,
+        job_url: str | None = None,
+        title: str | None = None,
+        company: str | None = None,
+    ) -> dict:
+        _ = job_id, security_id, job_url, title, company
         if self.detail_error is not None:
             raise self.detail_error
         return self.detail_payload or {
@@ -331,7 +338,7 @@ def build_service() -> tuple[
     FakeJobCollectionTraceCollection,
 ]:
     service = JobCollectionService.__new__(JobCollectionService)
-    service.runtime = FakeBossClient()
+    service.boss_client = FakeBossClient()
     service.tasks = FakeTaskCollection()
     service.jobs = FakeJobLeadCollection()
     service.records = FakeJobCollectionRecordCollection()
@@ -367,9 +374,9 @@ def test_search_jobs_writes_collection_records_and_deduped_leads():
 
 def test_search_jobs_fails_fast_when_login_state_is_invalid():
     service, jobs, records, traces = build_service()
-    service.runtime.logged_in = False
-    service.runtime.health_message = "登录态无效，请重新登录"
-    service.runtime.health_last_error = "userinfo failed"
+    service.boss_client.logged_in = False
+    service.boss_client.health_message = "登录态无效，请重新登录"
+    service.boss_client.health_last_error = "userinfo failed"
 
     task = asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
 
@@ -382,7 +389,7 @@ def test_search_jobs_fails_fast_when_login_state_is_invalid():
 
 def test_search_jobs_maps_auth_errors_from_runtime():
     service, jobs, records, traces = build_service()
-    service.runtime.search_error = AuthRequired()
+    service.boss_client.search_error = AuthRequired()
 
     task = asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
 

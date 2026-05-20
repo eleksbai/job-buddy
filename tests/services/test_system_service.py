@@ -3,9 +3,10 @@ from pathlib import Path
 
 from bson import ObjectId
 
-from job_buddy.core.boss import BossDoctorResult, BossOperationError
-from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import LoginResult
+from job_buddy.boss.boss import BossDoctorResult
+from job_buddy.boss.exceptions import BossOperationError
+from job_buddy.boss.schemas import LoginResult
+from job_buddy.config import Settings
 from job_buddy.models import AuthState
 from job_buddy.services import SystemService
 

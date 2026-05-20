@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from datetime import UTC, datetime
 import os
+from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlencode, urlparse
-from pathlib import Path
 from typing import Any
-from datetime import UTC, datetime
 
 from patchright.async_api import async_playwright
 
-from job_buddy.core.boss import BossOperationError, filter_jobs_by_welfare
-from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import (
+from job_buddy.boss.config import (
+    CHAT_HISTORY_URL,
+    CITY_CODES,
+    EDUCATION_CODES,
+    EXPERIENCE_CODES,
+    FRIEND_LIST_URL,
+    GREET_URL,
+    INDUSTRY_CODES,
+    JOB_TYPE_CODES,
+    SALARY_CODES,
+    SCALE_CODES,
+    SEARCH_URL,
+    STAGE_CODES,
+    WEB_GEEK_CHAT_URL,
+    WEB_GEEK_JOB_URL,
+    build_job_detail_url,
+    normalize_job,
+    normalize_job_detail,
+)
+from job_buddy.boss.exceptions import BossOperationError
+from job_buddy.boss.schemas import (
     ChatHistoryRequest,
     FriendListRequest,
     GreetJobRequest,
@@ -24,30 +43,94 @@ from job_buddy.core.engines.models import (
     SearchResult,
     SendMessageRequest,
 )
-from job_buddy.core.zhipin_api import (
-    CHAT_HISTORY_URL,
-    CITY_CODES,
-    EDUCATION_CODES,
-    EXPERIENCE_CODES,
-    FRIEND_LIST_URL,
-    GREET_URL,
-    INDUSTRY_CODES,
-    JOB_TYPE_CODES,
-    WEB_GEEK_CHAT_URL,
-    build_job_detail_url,
-    SALARY_CODES,
-    SCALE_CODES,
-    SEARCH_URL,
-    STAGE_CODES,
-    WEB_GEEK_JOB_URL,
-    normalize_job_detail,
-    normalize_job,
-)
+from job_buddy.config import Settings
 
 DEFAULT_CONNECTION_MODE = "launch"
 DEFAULT_PROFILE_DIR = "data/chrome_profile"
 LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
+
+
+def normalize_search_query(
+    query: dict[str, Any],
+    *,
+    city_codes: dict[str, str],
+    salary_codes: dict[str, str],
+    experience_codes: dict[str, str],
+    education_codes: dict[str, str],
+    industry_codes: dict[str, str],
+    scale_codes: dict[str, str],
+    stage_codes: dict[str, str],
+    job_type_codes: dict[str, str],
+) -> dict[str, Any]:
+    normalized = dict(query)
+    normalized["query"] = _normalize_query_text(query)
+    if not normalized["query"]:
+        raise ValueError("搜索关键词不能为空")
+
+    normalized["city"] = _validate_enum_param("city", query.get("city"), city_codes)
+    normalized["salary"] = _validate_enum_param("salary", query.get("salary"), salary_codes)
+    normalized["experience"] = _validate_enum_param("experience", query.get("experience"), experience_codes)
+    normalized["education"] = _validate_enum_param("education", query.get("education"), education_codes)
+    normalized["industry"] = _validate_enum_param("industry", query.get("industry"), industry_codes)
+    normalized["scale"] = _validate_enum_param("scale", query.get("scale"), scale_codes)
+    normalized["stage"] = _validate_enum_param("stage", query.get("stage"), stage_codes)
+    normalized["job_type"] = _validate_enum_param("job_type", query.get("job_type"), job_type_codes)
+    normalized["welfare"] = _normalize_optional_string(query.get("welfare"))
+    normalized["page"] = _normalize_page(query.get("page"))
+    return normalized
+
+
+def filter_jobs_by_welfare(items: list[dict[str, Any]], welfare: str) -> list[dict[str, Any]]:
+    labels = [item.strip() for item in welfare.split(",") if item.strip()]
+    if not labels:
+        return items
+
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        raw_payload = item.get("raw_payload", {})
+        welfare_list = raw_payload.get("welfareList", []) if isinstance(raw_payload, dict) else []
+        if all(label in welfare_list for label in labels):
+            filtered.append(item)
+    return filtered
+
+
+@dataclass
+class BossDoctorResult:
+    ok: bool
+    summary: str
+    data_dir: str | None
+    checks: list[dict]
+    next_actions: list[str]
+    stderr: str
+    exit_code: int
+    error: dict | None = None
+
+
+class BossDoctorRunner:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    async def run(self) -> BossDoctorResult:
+        data_dir = (self.settings.project_root / "data").resolve()
+        profile_dir = Path(self.settings.boss_profile_dir).expanduser()
+        if not profile_dir.is_absolute():
+            profile_dir = (self.settings.project_root / profile_dir).resolve()
+        checks = [
+            {"name": "patchright", "status": "ok", "detail": "使用 Patchright 驱动 BOSS 页面", "hint": None},
+            {"name": "data_dir", "status": "ok", "detail": str(data_dir), "hint": None},
+            {"name": "profile_dir", "status": "ok", "detail": str(profile_dir), "hint": "如需隔离浏览器环境可调整 JOB_BUDDY_PROFILE_DIR"},
+        ]
+        return BossDoctorResult(
+            ok=True,
+            summary="healthy",
+            data_dir=str(data_dir),
+            checks=checks,
+            next_actions=["确认已登录 BOSS 直聘后再执行搜索"],
+            stderr="",
+            exit_code=0,
+            error=None,
+        )
 
 
 def _find_text_in_body(body: dict) -> str:
@@ -946,7 +1029,7 @@ class PatchrightEngine:
                     message=f"未知城市: {city}",
                     recoverable=True,
                     status_code=400,
-            )
+                )
             params["city"] = code
         if salary := query.get("salary"):
             if code := SALARY_CODES.get(str(salary)):
@@ -1047,8 +1130,91 @@ class PatchrightEngine:
             pass
 
     def _resolve_profile_dir(self) -> Path:
-        raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get("profile_dir") or DEFAULT_PROFILE_DIR
+        raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get("profile_dir") or self.settings.boss_profile_dir or DEFAULT_PROFILE_DIR
         path = Path(str(raw)).expanduser()
         if not path.is_absolute():
             path = self.settings.project_root / path
         return path.resolve()
+
+
+class BossClient(PatchrightEngine):
+    async def search_jobs(self, query: dict[str, Any]) -> list[dict[str, Any]]:
+        result = await self.search(SearchRequest(query=query))
+        return [item.__dict__ for item in result.items]
+
+    async def get_job_detail(
+        self,
+        job_id: str,
+        security_id: str | None = None,
+        job_url: str | None = None,
+        title: str | None = None,
+        company: str | None = None,
+    ) -> dict[str, Any]:
+        return await self.detail(
+            JobDetailRequest(
+                job_id=job_id,
+                security_id=security_id,
+                job_url=job_url,
+                title=title,
+                company=company,
+            )
+        )
+
+    async def greet_job(self, job: dict[str, Any], message: str | None = None) -> dict[str, Any]:
+        security_id = str(job.get("security_id") or "")
+        job_id = str(job.get("source_job_id") or job.get("job_id") or "")
+        if not security_id or not job_id:
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message="打招呼缺少 security_id 或 job_id",
+                recoverable=False,
+                status_code=400,
+            )
+        return await self.greet(GreetJobRequest(job_id=job_id, security_id=security_id, message=message))
+
+    async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
+        return await self.friend_list(FriendListRequest(page=page))
+
+    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> dict[str, Any]:
+        return await self.chat_history(
+            ChatHistoryRequest(boss_id=boss_id, security_id=security_id, page=page, count=count)
+        )
+
+
+def _normalize_query_text(query: dict[str, Any]) -> str:
+    query_text = _normalize_optional_string(query.get("query"))
+    if query_text:
+        return query_text
+
+    keywords = query.get("keywords", [])
+    if isinstance(keywords, list):
+        return " ".join([str(item).strip() for item in keywords if str(item).strip()])
+    return _normalize_optional_string(keywords) or ""
+
+
+def _normalize_optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _validate_enum_param(name: str, value: Any, choices: dict[str, str]) -> str | None:
+    normalized = _normalize_optional_string(value)
+    if normalized is None:
+        return None
+    if normalized not in choices:
+        raise ValueError(f"非法参数 {name}: {normalized}，请使用系统提供的下拉选项")
+    return normalized
+
+
+def _normalize_page(value: Any) -> int:
+    if value in (None, ""):
+        return 1
+    try:
+        page = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"非法参数 page: {value}") from exc
+    if page < 1:
+        raise ValueError(f"非法参数 page: {value}")
+    return page

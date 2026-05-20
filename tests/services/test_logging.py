@@ -2,8 +2,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from job_buddy.core.config import Settings
-from job_buddy.core.logging import configure_logging
+from job_buddy.config import Settings, configure_logging
 
 
 def test_configure_logging_creates_stream_and_file_handlers(tmp_path: Path):

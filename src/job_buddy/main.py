@@ -5,11 +5,9 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from job_buddy.core.boss import BossOperationError
-from job_buddy.core.config import get_settings
-from job_buddy.core.database import MongoManager, database_lifespan
-from job_buddy.core.engines import build_engine_runtime
-from job_buddy.core.logging import configure_logging
+from job_buddy.boss import BossClient, BossOperationError
+from job_buddy.config import configure_logging, get_settings
+from job_buddy.db import MongoManager, database_lifespan
 from job_buddy.routers import build_api_router
 from job_buddy.web.app import register_web
 
@@ -61,15 +59,15 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with database_lifespan(mongo_manager) as database:
-            runtime = build_engine_runtime(settings)
+            boss_client = BossClient(settings)
             app.state.settings = settings
             app.state.db = database
-            app.state.runtime = runtime
+            app.state.boss_client = boss_client
 
             try:
                 yield
             finally:
-                await runtime.close()
+                await boss_client.close()
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     register_exception_handlers(app)

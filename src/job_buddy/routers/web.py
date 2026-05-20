@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from job_buddy.core.engines.runtime import EngineRuntimeManager
-from job_buddy.deps import get_dashboard_service, get_runtime, get_system_service, get_target_service
+from job_buddy.boss import BossClient
+from job_buddy.deps import get_boss_client, get_dashboard_service, get_system_service, get_target_service
 from job_buddy.schemas import (
     DataClearResponse,
     HealthResponse,
@@ -17,8 +17,8 @@ router = APIRouter(prefix="/web")
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"], operation_id="get_health")
-async def get_health(runtime: EngineRuntimeManager = Depends(get_runtime)) -> HealthResponse:
-    client_status = await runtime.healthcheck()
+async def get_health(boss_client: BossClient = Depends(get_boss_client)) -> HealthResponse:
+    client_status = await boss_client.healthcheck()
     return HealthResponse(
         status="ok",
         mongodb="connected",

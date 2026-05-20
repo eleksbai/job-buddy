@@ -14,7 +14,7 @@ class FakeRuntime:
 async def test_health_endpoint():
     app = FastAPI()
     app.include_router(build_api_router())
-    app.state.runtime = FakeRuntime()
+    app.state.boss_client = FakeRuntime()
     app.state.db = None
 
     async with api_client(app) as client:

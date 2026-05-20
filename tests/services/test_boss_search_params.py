@@ -1,6 +1,6 @@
 import pytest
 
-from job_buddy.core.boss import normalize_search_query
+from job_buddy.boss import normalize_search_query
 
 
 def test_normalize_search_query_accepts_valid_enums():

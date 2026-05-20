@@ -2,10 +2,10 @@ import asyncio
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from job_buddy.core.boss import BossOperationError
-from job_buddy.core.config import Settings
-from job_buddy.core.engines.models import GreetJobRequest, JobDetailRequest, LoginRequest, SearchRequest, SendMessageRequest
-from job_buddy.core.engines.patchright import PatchrightEngine
+from job_buddy.boss.boss import PatchrightEngine
+from job_buddy.boss.exceptions import BossOperationError
+from job_buddy.boss.schemas import GreetJobRequest, JobDetailRequest, LoginRequest, SearchRequest, SendMessageRequest
+from job_buddy.config import Settings
 
 
 class FakePage:
@@ -116,7 +116,7 @@ def test_patchright_check_page_health_initializes_once_and_reuses_browser(monkey
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
 
@@ -147,7 +147,7 @@ def test_patchright_check_page_health_restarts_when_page_is_closed(monkeypatch):
             playwrights.append(playwright)
             return playwright
 
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: SequenceStarter())
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: SequenceStarter())
 
     engine = PatchrightEngine(Settings())
 
@@ -166,7 +166,7 @@ def test_patchright_close_resets_handles_and_stops_playwright(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     asyncio.run(engine.check_page_health())
@@ -202,7 +202,7 @@ def test_patchright_init_error_includes_profile_path(monkeypatch, tmp_path):
         async def start(self) -> FailingPlaywright:
             return failing
 
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: Starter())
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: Starter())
 
     engine = PatchrightEngine(Settings())
 
@@ -223,7 +223,7 @@ def test_patchright_login_returns_logged_in_result(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -242,7 +242,7 @@ def test_patchright_healthcheck_reports_logged_in_state(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -278,7 +278,7 @@ def test_patchright_search_fetches_jobs_via_browser_context(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -317,7 +317,7 @@ def test_patchright_search_accepts_keywords_array(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -335,7 +335,7 @@ def test_patchright_search_requires_login(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(False)  # type: ignore[method-assign]
@@ -380,7 +380,7 @@ def test_patchright_search_filters_by_welfare(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -421,7 +421,7 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -453,7 +453,7 @@ def test_patchright_greet_posts_browser_request(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -472,7 +472,7 @@ def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.core.engines.patchright.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = PatchrightEngine(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]

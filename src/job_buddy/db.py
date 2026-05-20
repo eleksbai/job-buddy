@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
-from job_buddy.core.config import Settings
+from job_buddy.config import Settings
 
 
 class MongoManager:

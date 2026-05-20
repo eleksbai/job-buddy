@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query, status
 
-from job_buddy.core.boss import BossOperationError
+from job_buddy.boss import BossOperationError
 from job_buddy.deps import get_conversation_service, get_greeting_service, get_job_service, get_system_service, get_target_service
 from job_buddy.schemas import (
     AuthStatusResponse,

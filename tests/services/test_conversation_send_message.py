@@ -1,6 +1,6 @@
 import asyncio
 
-from job_buddy.core.boss import BossOperationError
+from job_buddy.boss import BossOperationError
 from job_buddy.services import ConversationService
 
 

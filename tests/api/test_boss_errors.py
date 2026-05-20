@@ -1,7 +1,7 @@
 import pytest
 from fastapi import FastAPI
 
-from job_buddy.core.boss import BossOperationError
+from job_buddy.boss import BossOperationError
 from job_buddy.deps import get_conversation_service, get_system_service
 from job_buddy.main import register_exception_handlers
 from job_buddy.routers import build_api_router
