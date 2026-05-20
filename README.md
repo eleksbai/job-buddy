@@ -30,10 +30,10 @@ uv venv --seed
 uv sync
 ```
 
-如需同时安装开发工具（包含 `pre-commit`），使用：
+如需安装开发工具、测试依赖和 `pre-commit`，使用：
 
 ```bash
-uv sync --extra dev
+uv sync --group dev
 ```
 
 3. 配置环境变量
@@ -102,17 +102,51 @@ uv run pre-commit run --all-files
 - 项目文档优先使用中文
 - Web 页面文案优先使用中文
 
+## Skill 使用
+
+仓库内提供一个可提交的 skill 模板目录：
+
+```text
+skills/job_buddy_agent_template/
+```
+
+真实的个人化 skill 会生成到仓库内但默认不提交的目录：
+
+```text
+skills-local/job_buddy_agent/
+```
+
+生成方式：
+
+```bash
+uv run python scripts/setup_skill.py
+```
+
+如果目标目录已存在，需要强制覆盖时使用：
+
+```bash
+uv run python scripts/setup_skill.py --force
+```
+
+生成后请至少补齐：
+
+- `references/my_resume.md`
+- `references/job_preferences.md`
+- `references/greeting_style.md`
+
 ## 目录
 
 ```text
+skills/           可提交的 skill 模板
+skills-local/     本地私有 skill（gitignore）
 src/job_buddy/
   main.py         FastAPI 应用入口
   core/           配置、日志、数据库生命周期、BOSS 基础能力
   deps.py         依赖注入
-  mcp_server.py   FastMCP 服务
-  modules/        按业务域组织的模型、查询和业务逻辑
-  routers/        REST API 路由
+  ...             FastAPI 应用代码
   web/            嵌入式静态前端
+src/job_buddy_mcp/
+  server.py       独立 MCP 服务
 tests/            基础测试
 web/src/          前端源码占位
 scripts/          本地脚本

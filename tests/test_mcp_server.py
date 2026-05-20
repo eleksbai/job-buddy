@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from job_buddy import mcp_server
+from job_buddy_mcp import server as mcp_server
 
 
 class FakeResponse:
