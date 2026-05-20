@@ -3,7 +3,7 @@
 本地部署的求职助手骨架项目，使用：
 
 - `FastAPI` 提供 Web 管理台和 REST API
-- `FastMCP` 提供只读 MCP 工具
+- `FastMCP` 提供面向 agent 的 MCP 工具层
 - `MongoDB` 存储目标岗位、职位线索、任务记录和会话摘要
 - BOSS 直聘网站操控能力当前基于 `Patchright` 实现，README 中声明参考了 [`boss-agent-cli`](https://github.com/can4hou6joeng4/boss-agent-cli) 项目
 
@@ -14,7 +14,7 @@
 - 手动触发打招呼任务
 - 职位池、任务记录、会话摘要查询
 - 本地静态 SPA 管理台
-- MCP 只读查询工具
+- MCP agent 工具层
 
 ## 快速开始
 
@@ -109,7 +109,7 @@ src/job_buddy/
   main.py         FastAPI 应用入口
   core/           配置、日志、数据库生命周期、BOSS 基础能力
   deps.py         依赖注入
-  mcp.py          FastMCP 服务
+  mcp_server.py   FastMCP 服务
   modules/        按业务域组织的模型、查询和业务逻辑
   routers/        REST API 路由
   web/            嵌入式静态前端
