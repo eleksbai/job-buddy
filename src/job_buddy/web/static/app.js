@@ -1149,7 +1149,7 @@ async function greetCurrentJobDetail() {
   }
 
   clearError();
-  setButtonBusy("jobDetailGreetButton", true, "发送中");
+  setButtonBusy("jobDetailGreetButton", true, "打招呼中");
   try {
     const result = await fetchJson("/boss/tasks/greet", {
       method: "POST",
