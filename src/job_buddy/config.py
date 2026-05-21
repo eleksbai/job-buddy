@@ -7,7 +7,6 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-BOSS_ERROR_RETRY_DELAY_SECONDS = 2 * 60 * 60
 
 
 class Settings(BaseSettings):

@@ -29,8 +29,9 @@ from job_buddy.boss.config import (
     SCALE_CODES,
     STAGE_CODES,
 )
-from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, SendMessageIn
-from job_buddy.config import BOSS_ERROR_RETRY_DELAY_SECONDS, Settings
+from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, \
+    SendMessageIn
+from job_buddy.config import Settings
 from job_buddy.models import (
     AuthState,
     DocumentModel,
@@ -71,12 +72,12 @@ ModelT = TypeVar("ModelT", bound=DocumentModel)
 
 
 async def _list_models(
-    collection: AsyncIOMotorCollection,
-    model_cls: type[ModelT],
-    *,
-    filters: dict[str, Any] | None = None,
-    limit: int = 0,
-    sort_by: str = "updated_at",
+        collection: AsyncIOMotorCollection,
+        model_cls: type[ModelT],
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 0,
+        sort_by: str = "updated_at",
 ) -> list[ModelT]:
     cursor = collection.find(filters or {}).sort(sort_by, -1)
     if limit > 0:
@@ -85,9 +86,9 @@ async def _list_models(
 
 
 async def _get_model(
-    collection: AsyncIOMotorCollection,
-    model_cls: type[ModelT],
-    entity_id: str,
+        collection: AsyncIOMotorCollection,
+        model_cls: type[ModelT],
+        entity_id: str,
 ) -> ModelT | None:
     payload = await collection.find_one({"_id": ObjectId(entity_id)})
     if not payload:
@@ -96,9 +97,9 @@ async def _get_model(
 
 
 async def _create_model(
-    collection: AsyncIOMotorCollection,
-    entity: ModelT,
-    model_cls: type[ModelT],
+        collection: AsyncIOMotorCollection,
+        entity: ModelT,
+        model_cls: type[ModelT],
 ) -> ModelT:
     payload = entity.to_mongo()
     payload.pop("_id", None)
@@ -108,10 +109,10 @@ async def _create_model(
 
 
 async def _update_model(
-    collection: AsyncIOMotorCollection,
-    model_cls: type[ModelT],
-    entity_id: str,
-    updates: dict[str, Any],
+        collection: AsyncIOMotorCollection,
+        model_cls: type[ModelT],
+        entity_id: str,
+        updates: dict[str, Any],
 ) -> ModelT | None:
     updates["updated_at"] = utc_now()
     await collection.update_one({"_id": ObjectId(entity_id)}, {"$set": updates})
@@ -191,9 +192,9 @@ def _normalize_friend_messages(messages: list[dict[str, Any]]) -> list[FriendMes
 
 
 def _merge_friend_messages(
-    existing: list[dict[str, Any]] | list[FriendMessage] | None,
-    incoming: list[dict[str, Any]],
-    limit: int = 100,
+        existing: list[dict[str, Any]] | list[FriendMessage] | None,
+        incoming: list[dict[str, Any]],
+        limit: int = 100,
 ) -> list[FriendMessage]:
     merged_inputs: list[dict[str, Any]] = []
     for message in existing or []:
@@ -266,9 +267,9 @@ class BossAuthService:
         return refreshed
 
     async def sync_auth_state(
-        self,
-        local: LoginOut,
-        stored: AuthState | None,
+            self,
+            local: LoginOut,
+            stored: AuthState | None,
     ) -> AuthState:
         current = stored or AuthState()
         payload = AuthState(
@@ -368,11 +369,11 @@ class JobCollectionService:
         return [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
     async def list_collection_records(
-        self,
-        task_id: str | None,
-        target_profile_id: str | None,
-        source_job_id: str | None,
-        limit: int,
+            self,
+            task_id: str | None,
+            target_profile_id: str | None,
+            source_job_id: str | None,
+            limit: int,
     ) -> list[JobCollectionRecord]:
         filters: dict[str, Any] = {}
         if task_id:
@@ -384,10 +385,10 @@ class JobCollectionService:
         return await _list_models(self.records, JobCollectionRecord, filters=filters, limit=limit)
 
     async def get_job_detail(
-        self,
-        source_job_id: str,
-        security_id: str | None = None,
-        force_refresh: bool = False,
+            self,
+            source_job_id: str,
+            security_id: str | None = None,
+            force_refresh: bool = False,
     ) -> tuple[JobLead, bool]:
         job = await self._get_job_by_source_job_id(source_job_id)
         if job is None:
@@ -661,7 +662,8 @@ class JobCollectionService:
                     request_url=search_result.trace.get("request_url"),
                     referer=search_result.trace.get("referer"),
                     requested_at=datetime.fromisoformat(requested_at) if isinstance(requested_at, str) else None,
-                    response_received_at=datetime.fromisoformat(response_received_at) if isinstance(response_received_at, str) else None,
+                    response_received_at=datetime.fromisoformat(response_received_at) if isinstance(
+                        response_received_at, str) else None,
                     request_payload=dict(search_result.trace.get("request_payload") or {}),
                     request_params=dict(search_result.trace.get("request_params") or {}),
                     response_payload=dict(search_result.trace.get("response_payload") or {}),
@@ -776,7 +778,8 @@ class JobCollectionService:
                 await self.get_job_detail(job.source_job_id, force_refresh=False)
                 succeeded += 1
             except Exception as exc:
-                logger.warning("detail sync failed: task_id=%s source_job_id=%s error=%s", task.id, job.source_job_id, exc)
+                logger.warning("detail sync failed: task_id=%s source_job_id=%s error=%s", task.id, job.source_job_id,
+                               exc)
                 failed += 1
 
         final_status = TaskStatus.SUCCEEDED
@@ -836,11 +839,11 @@ class GreetingService:
         return auth_service
 
     async def run_greetings(
-        self,
-        target: TargetProfile | None,
-        source_job_ids: list[str],
-        greeting_message: str | None,
-        limit: int,
+            self,
+            target: TargetProfile | None,
+            source_job_ids: list[str],
+            greeting_message: str | None,
+            limit: int,
     ) -> GreetingTask:
         task = await _create_model(
             self.tasks,
@@ -854,7 +857,8 @@ class GreetingService:
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_greet(task, target, source_job_ids, greeting_message, limit), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(self._do_greet(task, target, source_job_ids, greeting_message, limit),
+                                   timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -880,12 +884,12 @@ class GreetingService:
         return updated
 
     async def _do_greet(
-        self,
-        task: GreetingTask,
-        target: TargetProfile | None,
-        source_job_ids: list[str],
-        greeting_message: str | None,
-        limit: int,
+            self,
+            task: GreetingTask,
+            target: TargetProfile | None,
+            source_job_ids: list[str],
+            greeting_message: str | None,
+            limit: int,
     ) -> None:
         await self._update_step(task.id, "fetch_jobs")
         await self.auth_service.require_authenticated()
@@ -913,7 +917,8 @@ class GreetingService:
                         )
                     )
                 except Exception as exc:
-                    logger.warning("BOSS greet failed: task_id=%s source_job_id=%s error=%s", task.id, job.source_job_id, exc)
+                    logger.warning("BOSS greet failed: task_id=%s source_job_id=%s error=%s", task.id,
+                                   job.source_job_id, exc)
                     raise map_boss_operation_error(exc) from exc
                 await _create_model(
                     self.records,
@@ -1096,54 +1101,57 @@ class WorkerService:
                 query = dict(worker.query)
                 query["page"] = max(1, int(worker.page))
                 task = await job_service.search_jobs(query=query)
+
                 next_page = worker.page
+
                 if task.status != TaskStatus.FAILED:
                     next_page += 1
                     if next_page > max(1, worker.page_max):
                         next_page = 1
-                next_status = "error" if task.status == TaskStatus.FAILED else "idle"
+                next_status = "idle" if task.status == TaskStatus.SUCCEEDED else "error"
                 updates = {
                     "page": next_page,
                     "last_result_summary": dict(task.result_summary),
                     "status": next_status,
                     "last_finished_at": utc_now(),
-                    "next_run_at": self._next_run_at_for_task_status(task.status, worker.interval_seconds),
+                    "next_run_at": self._next_run_at_for_interval(worker.interval_seconds),
                     "last_error": task.error_message,
                 }
-                return await self._update_worker_model(worker_name, updates)
+                updated_worker = await self._update_worker_model(worker_name, updates)
+                if task.status != TaskStatus.SUCCEEDED:
+                    raise WorkerFailException()
+                return updated_worker
 
             task = await job_service.run_detail_sync(limit=max(1, worker.batch_size))
-            next_status = "error" if task.status == TaskStatus.FAILED else "idle"
+            next_status = "idle" if task.status == TaskStatus.SUCCEEDED else "error"
             updates = {
                 "last_result_summary": dict(task.result_summary),
                 "status": next_status,
                 "last_finished_at": utc_now(),
-                "next_run_at": self._next_run_at_for_task_status(task.status, worker.interval_seconds),
+                "next_run_at": self._next_run_at_for_interval(worker.interval_seconds),
                 "last_error": task.error_message,
             }
-            return await self._update_worker_model(worker_name, updates)
+            updated_worker = await self._update_worker_model(worker_name, updates)
+            if task.status != TaskStatus.SUCCEEDED:
+                raise WorkerFailException()
+            return updated_worker
+        except WorkerFailException:
+            raise
         except Exception as exc:
             logger.exception("worker execution failed: worker=%s", worker_name)
-            return await self._update_worker_model(
+            await self._update_worker_model(
                 worker_name,
                 {
                     "status": "error",
                     "last_finished_at": utc_now(),
-                    "next_run_at": self._next_run_at_for_boss_error(),
+                    "next_run_at": self._next_run_at_for_interval(worker.interval_seconds),
                     "last_error": str(exc),
                 },
             )
+            raise WorkerFailException()
 
     def _next_run_at_for_interval(self, interval_seconds: int) -> datetime:
         return utc_now() + timedelta(seconds=max(1, interval_seconds))
-
-    def _next_run_at_for_task_status(self, task_status: TaskStatus, interval_seconds: int) -> datetime:
-        if task_status != TaskStatus.SUCCEEDED:
-            return self._next_run_at_for_boss_error()
-        return self._next_run_at_for_interval(interval_seconds)
-
-    def _next_run_at_for_boss_error(self) -> datetime:
-        return utc_now() + timedelta(seconds=BOSS_ERROR_RETRY_DELAY_SECONDS)
 
     async def _update_worker_model(self, worker_name: str, updates: dict[str, Any]) -> WorkerConfig:
         current = await self.get_worker(worker_name)
@@ -1155,8 +1163,14 @@ class WorkerService:
         return WorkerConfig.from_mongo(refreshed)
 
 
+class WorkerFailException(Exception):
+    pass
+
+
 class WorkerScheduler:
-    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient, poll_interval_seconds: float = 2.0) -> None:
+
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient,
+                 poll_interval_seconds: float = 2.0) -> None:
         self.worker_service = WorkerService(database, boss_client)
         self.poll_interval_seconds = poll_interval_seconds
         self._run_lock = asyncio.Lock()
@@ -1175,10 +1189,16 @@ class WorkerScheduler:
             self._task = None
 
     async def _run(self) -> None:
+        fail_count = 0
         while not self._stopped.is_set():
-            await asyncio.sleep(random.random()*5+3)
+            await asyncio.sleep(random.random() * 5 + 3)
             try:
                 await self.run_once()
+                fail_count = 0
+            except WorkerFailException:
+                fail_count += 1
+                logger.warning("Worker failed, delay %sH", 2 ** fail_count)
+                await asyncio.sleep(2 ** fail_count * 60 * 60)
             except Exception:
                 logger.exception("worker scheduler loop failed")
             try:
@@ -1231,11 +1251,11 @@ class FriendService:
         return [FriendRecord.from_mongo(item) for item in await cursor.to_list(length=None)]
 
     async def get_friend_messages(
-        self,
-        source_friend_id: str,
-        page: int = 1,
-        count: int = 20,
-        cached_only: bool = False,
+            self,
+            source_friend_id: str,
+            page: int = 1,
+            count: int = 20,
+            cached_only: bool = False,
     ) -> FriendMessagesResponse:
         friend = await self._load_friend(source_friend_id, allow_sync=not cached_only)
         if not friend:
@@ -1382,7 +1402,8 @@ class FriendService:
             ],
         )
         try:
-            last_ts = float(outgoing_messages[-1].sent_at) if outgoing_messages and outgoing_messages[-1].sent_at is not None else None
+            last_ts = float(outgoing_messages[-1].sent_at) if outgoing_messages and outgoing_messages[
+                -1].sent_at is not None else None
         except (TypeError, ValueError):
             last_ts = None
         friend_updates: dict[str, Any] = {
@@ -1524,11 +1545,11 @@ class SystemService:
     )
 
     def __init__(
-        self,
-        doctor_runner: BossDoctorRunner,
-        settings: Settings,
-        boss_client: BossClient,
-        database: AsyncIOMotorDatabase,
+            self,
+            doctor_runner: BossDoctorRunner,
+            settings: Settings,
+            boss_client: BossClient,
+            database: AsyncIOMotorDatabase,
     ) -> None:
         self.doctor_runner = doctor_runner
         self.settings = settings
@@ -1621,9 +1642,9 @@ class SystemService:
         return await self._auth_service.upsert_auth_state(state)
 
     async def _sync_auth_state(
-        self,
-        local: LoginOut,
-        stored: AuthState | None,
+            self,
+            local: LoginOut,
+            stored: AuthState | None,
     ) -> AuthState:
         return await self._auth_service.sync_auth_state(
             local,

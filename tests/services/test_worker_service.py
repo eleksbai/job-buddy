@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from bson import ObjectId
+import pytest
 
-from job_buddy.config import BOSS_ERROR_RETRY_DELAY_SECONDS
 from job_buddy.models import GreetingTask, TaskStatus, WorkerConfig
 from job_buddy.schemas import WorkerConfigUpdate
-from job_buddy.services import WorkerService
+from job_buddy.services import WorkerFailException, WorkerScheduler, WorkerService
 
 
 class FakeInsertResult:
@@ -91,6 +91,10 @@ def build_service() -> tuple[WorkerService, FakeDatabase]:
     return service, database
 
 
+def build_scheduler() -> WorkerScheduler:
+    return WorkerScheduler(database=FakeDatabase(), boss_client=None)  # type: ignore[arg-type]
+
+
 def test_sync_defaults_on_startup_creates_disabled_workers():
     service, database = build_service()
 
@@ -145,16 +149,13 @@ def test_execute_search_worker_delays_two_hours_after_boss_error(monkeypatch):
 
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
-    before = datetime.now(tz=UTC)
-    worker = asyncio.run(service.execute_worker("search"))
-    after = datetime.now(tz=UTC)
+    with pytest.raises(WorkerFailException):
+        asyncio.run(service.execute_worker("search"))
 
+    worker = asyncio.run(service.get_worker("search"))
     assert worker.status == "error"
     assert worker.last_error == "need login"
     assert worker.next_run_at is not None
-    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
 
 
 def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
@@ -177,16 +178,13 @@ def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
 
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
-    before = datetime.now(tz=UTC)
-    worker = asyncio.run(service.execute_worker("detail"))
-    after = datetime.now(tz=UTC)
+    with pytest.raises(WorkerFailException):
+        asyncio.run(service.execute_worker("detail"))
 
+    worker = asyncio.run(service.get_worker("detail"))
     assert worker.status == "error"
     assert worker.last_error == "detail blocked"
     assert worker.next_run_at is not None
-    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
 
 
 def test_execute_worker_delays_two_hours_for_non_success_task(monkeypatch):
@@ -211,14 +209,16 @@ def test_execute_worker_delays_two_hours_for_non_success_task(monkeypatch):
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
     before = datetime.now(tz=UTC)
-    worker = asyncio.run(service.execute_worker("search"))
+    with pytest.raises(WorkerFailException):
+        asyncio.run(service.execute_worker("search"))
     after = datetime.now(tz=UTC)
 
+    worker = asyncio.run(service.get_worker("search"))
     assert worker.status == "error"
     assert worker.last_error == "boom"
     assert worker.next_run_at is not None
-    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
+    min_expected = before.timestamp() + 45
+    max_expected = after.timestamp() + 45
     assert min_expected <= worker.next_run_at.timestamp() <= max_expected
 
 
@@ -243,12 +243,109 @@ def test_execute_worker_delays_two_hours_for_partial_success(monkeypatch):
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
     before = datetime.now(tz=UTC)
-    worker = asyncio.run(service.execute_worker("detail"))
+    with pytest.raises(WorkerFailException):
+        asyncio.run(service.execute_worker("detail"))
     after = datetime.now(tz=UTC)
 
-    assert worker.status == "idle"
+    worker = asyncio.run(service.get_worker("detail"))
+    assert worker.status == "error"
     assert worker.last_error == "1 failed"
     assert worker.next_run_at is not None
-    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
-    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
+    min_expected = before.timestamp() + 30
+    max_expected = after.timestamp() + 30
     assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+
+
+def test_execute_worker_runtime_error_updates_worker_before_raising(monkeypatch):
+    service, _ = build_service()
+    asyncio.run(service.sync_defaults_on_startup())
+    asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"]}, interval_seconds=60)))
+    asyncio.run(service.start_worker("search"))
+
+    class FakeJobCollectionService:
+        def __init__(self, database, boss_client) -> None:
+            _ = database, boss_client
+
+        async def search_jobs(self, query):
+            _ = query
+            raise RuntimeError("network boom")
+
+    monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
+
+    before = datetime.now(tz=UTC)
+    with pytest.raises(WorkerFailException):
+        asyncio.run(service.execute_worker("search"))
+    after = datetime.now(tz=UTC)
+
+    worker = asyncio.run(service.get_worker("search"))
+    assert worker.status == "error"
+    assert worker.last_error == "network boom"
+    assert worker.next_run_at is not None
+    min_expected = before.timestamp() + 60
+    max_expected = after.timestamp() + 60
+    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+
+
+def test_scheduler_exponential_backoff_starts_from_two_hours(monkeypatch):
+    scheduler = build_scheduler()
+    sleep_calls: list[float] = []
+    run_once_calls = {"count": 0}
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        if len(sleep_calls) >= 2:
+            scheduler._stopped.set()
+
+    async def fake_run_once() -> None:
+        run_once_calls["count"] += 1
+        raise WorkerFailException()
+
+    monkeypatch.setattr("job_buddy.services.random.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.services.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(scheduler, "run_once", fake_run_once)
+
+    asyncio.run(scheduler._run())
+
+    assert run_once_calls["count"] == 1
+    assert sleep_calls == [3.0, 2 * 60 * 60]
+
+
+def test_scheduler_exponential_backoff_doubles_on_consecutive_failures_and_resets_after_success(monkeypatch):
+    scheduler = build_scheduler()
+    sleep_calls: list[float] = []
+    run_outcomes = iter(["fail", "fail", "success", "fail"])
+    run_once_calls = {"count": 0}
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    async def fake_run_once() -> None:
+        run_once_calls["count"] += 1
+        outcome = next(run_outcomes)
+        if run_once_calls["count"] == 4:
+            scheduler._stopped.set()
+        if outcome == "fail":
+            raise WorkerFailException()
+
+    async def fake_wait_for(awaitable, timeout):
+        _ = timeout
+        awaitable.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr("job_buddy.services.random.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.services.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("job_buddy.services.asyncio.wait_for", fake_wait_for)
+    monkeypatch.setattr(scheduler, "run_once", fake_run_once)
+
+    asyncio.run(scheduler._run())
+
+    assert run_once_calls["count"] == 4
+    assert sleep_calls == [
+        3.0,
+        2 * 60 * 60,
+        3.0,
+        4 * 60 * 60,
+        3.0,
+        3.0,
+        2 * 60 * 60,
+    ]
