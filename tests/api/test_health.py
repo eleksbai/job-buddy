@@ -1,13 +1,14 @@
 import pytest
 from fastapi import FastAPI
 
+from job_buddy.boss.schemas import HealthcheckOut
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
 
 
 class FakeRuntime:
-    async def healthcheck(self) -> dict:
-        return {"status": "ok"}
+    async def healthcheck(self) -> HealthcheckOut:
+        return HealthcheckOut(status="ok", provider="bossclient", logged_in=True, message="已登录", last_error="")
 
 
 @pytest.mark.asyncio

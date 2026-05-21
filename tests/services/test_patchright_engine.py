@@ -2,9 +2,11 @@ import asyncio
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from job_buddy.boss.boss import PatchrightEngine
+import pytest
+
+from job_buddy.boss.boss import BossClient, _normalize_job, _normalize_job_detail
 from job_buddy.boss.exceptions import BossOperationError
-from job_buddy.boss.schemas import GreetJobIn, JobDetailIn, LoginIn, SearchIn, SendMessageIn
+from job_buddy.boss.schemas import ChatHistoryIn, GreetJobIn, JobDetailIn, LoginIn, SearchIn, SendMessageIn
 from job_buddy.config import Settings
 
 
@@ -97,7 +99,7 @@ class FakeStarter:
 
 
 def test_patchright_uses_resolved_profile_dir_by_default():
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
 
     assert engine.profile_dir == (Settings().project_root / "data" / "chrome_profile").resolve()
 
@@ -105,7 +107,7 @@ def test_patchright_uses_resolved_profile_dir_by_default():
 def test_patchright_expands_env_profile_dir(monkeypatch):
     monkeypatch.setenv("JOB_BUDDY_PROFILE_DIR", "~/.job-buddy/chrome_profile")
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
 
     assert engine.profile_dir == (Path.home() / ".job-buddy" / "chrome_profile").resolve()
     assert "~" not in str(engine.profile_dir)
@@ -118,7 +120,7 @@ def test_patchright_check_page_health_initializes_once_and_reuses_browser(monkey
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
 
     asyncio.run(engine.check_page_health())
     asyncio.run(engine.check_page_health())
@@ -149,7 +151,7 @@ def test_patchright_check_page_health_restarts_when_page_is_closed(monkeypatch):
 
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: SequenceStarter())
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
 
     asyncio.run(engine.check_page_health())
     first_context = engine.context
@@ -168,7 +170,7 @@ def test_patchright_close_resets_handles_and_stops_playwright(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     asyncio.run(engine.check_page_health())
     asyncio.run(engine.close())
 
@@ -204,7 +206,7 @@ def test_patchright_init_error_includes_profile_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: Starter())
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
 
     try:
         asyncio.run(engine.check_page_health())
@@ -225,7 +227,7 @@ def test_patchright_login_returns_logged_in_result(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
     engine._page_cache = {"name": "Alice"}
 
@@ -244,15 +246,15 @@ def test_patchright_healthcheck_reports_logged_in_state(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
     engine._page_cache = {"name": "Alice"}
 
     result = asyncio.run(engine.healthcheck())
 
-    assert result["status"] == "ok"
-    assert result["logged_in"] is True
-    assert result["message"] == "已登录"
+    assert result.status == "ok"
+    assert result.logged_in is True
+    assert result.message == "已登录"
 
 
 def test_patchright_search_fetches_jobs_via_browser_context(monkeypatch):
@@ -280,7 +282,7 @@ def test_patchright_search_fetches_jobs_via_browser_context(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
     engine._page_cache = {"name": "Alice"}
 
@@ -319,7 +321,7 @@ def test_patchright_search_accepts_keywords_array(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
     asyncio.run(engine.search(SearchIn(query={"keywords": ["Python", "FastAPI"], "page": 1})))
@@ -337,7 +339,7 @@ def test_patchright_search_requires_login(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(False)  # type: ignore[method-assign]
 
     try:
@@ -346,6 +348,26 @@ def test_patchright_search_requires_login(monkeypatch):
         assert exc.code == "AUTH_REQUIRED"
     else:
         raise AssertionError("expected BossOperationError")
+
+
+def test_patchright_greet_warns_with_payload_on_business_error(monkeypatch, caplog):
+    page = FakePage()
+    page.fetch_payload = {"code": 1, "message": "打招呼失败", "zpData": {"securityId": "sec-1"}}
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(BossOperationError) as exc_info:
+            asyncio.run(engine.greet(GreetJobIn(job_id="job-1", security_id="sec-1")))
+
+    assert exc_info.value.message == "打招呼失败"
+    assert "BossClient greet failed" in caplog.text
+    assert "securityId" in caplog.text
 
 
 def test_patchright_search_filters_by_welfare(monkeypatch):
@@ -382,7 +404,7 @@ def test_patchright_search_filters_by_welfare(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
     result = asyncio.run(engine.search(SearchIn(query={"query": "python", "welfare": "双休,五险一金"})))
@@ -423,7 +445,7 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
     result = asyncio.run(
@@ -438,9 +460,9 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
         )
     )
 
-    assert result["job"]["title"] == "Python Backend Engineer"
-    assert result["job"]["skills"] == ["Python", "FastAPI"]
-    assert result["detail_text"].startswith("职位名称：Python Backend Engineer")
+    assert result.job.title == "Python Backend Engineer"
+    assert result.job.skills == ["Python", "FastAPI"]
+    assert result.detail_text.startswith("职位名称：Python Backend Engineer")
     assert page.last_fetch_url is not None
     parsed = urlparse(page.last_fetch_url)
     params = parse_qs(parsed.query)
@@ -449,22 +471,101 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
 
 def test_patchright_greet_posts_browser_request(monkeypatch):
     page = FakePage()
-    page.fetch_payload = {"code": 0, "zpData": {"ok": True}}
+    page.fetch_payload = {
+        "code": 0,
+        "zpData": {
+            "ok": True,
+            "securityId": "sec-1",
+            "encBossId": "boss-1",
+        },
+    }
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
-    result = asyncio.run(engine.greet(GreetJobIn(job_id="job-1", security_id="sec-1", message="你好")))
+    result = asyncio.run(engine.greet(GreetJobIn(job_id="job-1", security_id="sec-1")))
 
-    assert result["job_id"] == "job-1"
-    assert result["security_id"] == "sec-1"
+    assert result.job_id == "job-1"
+    assert result.security_id == "sec-1"
     assert page.last_fetch_url == "https://www.zhipin.com/wapi/zpgeek/friend/add.json"
     assert page.last_fetch_referer == "https://www.zhipin.com/web/geek/chat"
-    assert page.last_fetch_body == {"securityId": "sec-1", "jobId": "job-1", "greeting": "你好"}
+    assert page.last_fetch_body == {"securityId": "sec-1", "jobId": "job-1"}
+
+
+def test_normalize_job_logs_payload_when_encrypt_job_id_missing(caplog):
+    with caplog.at_level("ERROR"):
+        with pytest.raises(BossOperationError) as exc_info:
+            _normalize_job({"jobName": "Python Backend Engineer"})
+
+    assert exc_info.value.message == "BOSS 返回字段缺失: encryptJobId"
+    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert "scene=search" in caplog.text
+    assert "encryptJobId" in caplog.text
+    assert "Python Backend Engineer" in caplog.text
+    assert "KeyError: 'encryptJobId'" in caplog.text
+
+
+def test_normalize_job_detail_logs_payload_when_encrypt_id_missing(caplog):
+    payload = {"zpData": {"jobInfo": {"securityId": "sec-1"}}}
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(BossOperationError) as exc_info:
+            _normalize_job_detail(payload, {"job_id": "job-1", "security_id": "sec-1"})
+
+    assert exc_info.value.message == "BOSS 返回字段缺失: zpData.jobInfo.encryptId"
+    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert "scene=detail" in caplog.text
+    assert "zpData.jobInfo.encryptId" in caplog.text
+    assert "securityId" in caplog.text
+    assert "KeyError: 'encryptId'" in caplog.text
+
+
+def test_patchright_greet_logs_payload_when_security_id_missing(monkeypatch, caplog):
+    page = FakePage()
+    page.fetch_payload = {"code": 0, "zpData": {"encBossId": "boss-1"}}
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(BossOperationError) as exc_info:
+            asyncio.run(engine.greet(GreetJobIn(job_id="job-1", security_id="sec-1")))
+
+    assert exc_info.value.message == "BOSS 返回字段缺失: zpData.securityId"
+    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert "scene=greet" in caplog.text
+    assert "encBossId" in caplog.text
+    assert "KeyError: 'securityId'" in caplog.text
+
+
+def test_patchright_chat_history_logs_payload_when_messages_missing(monkeypatch, caplog):
+    page = FakePage()
+    page.fetch_payload = {"code": 0, "zpData": {"hasMore": False}}
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(BossOperationError) as exc_info:
+            asyncio.run(engine.chat_history(ChatHistoryIn(boss_id="boss-1", security_id="sec-1", page=1, count=20)))
+
+    assert exc_info.value.message == "BOSS 返回字段缺失: zpData.messages"
+    assert isinstance(exc_info.value.__cause__, KeyError)
+    assert "scene=chat_history" in caplog.text
+    assert "hasMore" in caplog.text
+    assert "KeyError: 'messages'" in caplog.text
 
 
 def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
@@ -474,7 +575,7 @@ def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
     starter = FakeStarter(playwright)
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
-    engine = PatchrightEngine(Settings())
+    engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
 
     result = asyncio.run(
@@ -496,8 +597,8 @@ def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
     assert page.goto_calls[-1][1] == "domcontentloaded"
     assert page.last_send_request["job_id"] == "encrypt-1"
     assert page.last_send_request["content"] == "你好"
-    assert result["status"] == "sent"
-    assert result["raw_payload"]["method"] == "dom.click.send"
+    assert result.status == "sent"
+    assert result.raw_payload["method"] == "dom.click.send"
 
 
 def _async_result(value):

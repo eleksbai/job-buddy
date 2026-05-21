@@ -22,7 +22,7 @@ async def get_health(boss_client: BossClient = Depends(get_boss_client)) -> Heal
     return HealthResponse(
         status="ok",
         mongodb="connected",
-        boss_client=client_status.get("status", "unknown"),
+        boss_client=client_status.status or "unknown",
     )
 
 

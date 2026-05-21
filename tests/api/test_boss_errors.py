@@ -86,7 +86,7 @@ async def test_boss_error_handler_logs_raw_message(caplog):
 
 
 @pytest.mark.asyncio
-async def test_boss_error_handler_logs_underlying_traceback(caplog):
+async def test_boss_error_handler_does_not_repeat_underlying_traceback(caplog):
     app = FastAPI()
     register_exception_handlers(app)
 
@@ -109,5 +109,5 @@ async def test_boss_error_handler_logs_underlying_traceback(caplog):
 
     assert response.status_code == 502
     assert "BOSS 请求失败: browser closed" in caplog.text
-    assert "Call log:" in caplog.text
-    assert "RuntimeError: browser closed" in caplog.text
+    assert "Boss operation failed on GET /boom" in caplog.text
+    assert "RuntimeError: browser closed" not in caplog.text

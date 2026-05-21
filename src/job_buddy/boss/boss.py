@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import logging
 import os
 from pathlib import Path
 import re
@@ -12,8 +13,10 @@ from typing import Any
 from patchright.async_api import async_playwright
 
 from job_buddy.boss.config import (
+    BASE_URL,
     CHAT_HISTORY_URL,
     CITY_CODES,
+    DETAIL_URL,
     EDUCATION_CODES,
     EXPERIENCE_CODES,
     FRIEND_LIST_URL,
@@ -26,9 +29,6 @@ from job_buddy.boss.config import (
     STAGE_CODES,
     WEB_GEEK_CHAT_URL,
     WEB_GEEK_JOB_URL,
-    build_job_detail_url,
-    normalize_job,
-    normalize_job_detail,
 )
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import (
@@ -36,21 +36,229 @@ from job_buddy.boss.schemas import (
     ChatHistoryMessageOut,
     ChatHistoryOut,
     FriendListIn,
+    FriendListItemOut,
     GreetJobIn,
+    GreetJobOut,
+    HealthcheckOut,
     JobDetailIn,
+    JobDetailBossOut,
+    JobDetailCompanyOut,
+    JobDetailJobOut,
+    JobDetailOut,
+    JobDetailPayloadOut,
     LoginIn,
     LoginOut,
     SearchIn,
     SearchJobItemOut,
     SearchOut,
     SendMessageIn,
+    SendMessageOut,
 )
 from job_buddy.config import Settings
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONNECTION_MODE = "launch"
 DEFAULT_PROFILE_DIR = "data/chrome_profile"
 LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
+
+
+def _build_job_url(job_id: str | None, security_id: str | None = None) -> str | None:
+    if not job_id:
+        return None
+    url = f"{BASE_URL}/job_detail/{job_id}.html"
+    if security_id:
+        return f"{url}?securityId={security_id}"
+    return url
+
+
+def _build_job_detail_url(security_id: str | None) -> str | None:
+    if not security_id:
+        return None
+    return f"{DETAIL_URL}?securityId={security_id}"
+
+
+def _normalize_job(raw: dict[str, Any]) -> dict[str, Any]:
+    try:
+        job_id = str(raw["encryptJobId"])
+    except KeyError as exc:
+        logger.error(
+            "BOSS payload field missing: scene=search field=encryptJobId payload=%s",
+            raw,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        raise BossOperationError(
+            code="REQUEST_FAILED",
+            message="BOSS 返回字段缺失: encryptJobId",
+            recoverable=True,
+            status_code=502,
+            boss_side=False,
+        ) from exc
+    security_id = str(raw.get("securityId") or "") or None
+    encrypt_boss_id = str(raw.get("encryptBossId") or "") or None
+    contact = raw.get("contact") if isinstance(raw.get("contact"), bool) else None
+    boss_online = raw.get("bossOnline") if isinstance(raw.get("bossOnline"), bool) else None
+    boss_active_text = str(raw.get("activeTimeDesc") or "") or None
+    job_active_time = raw.get("activeTime")
+    if job_active_time is not None:
+        try:
+            job_active_time = int(job_active_time)
+        except (TypeError, ValueError):
+            job_active_time = None
+    return {
+        "job_id": job_id,
+        "security_id": security_id,
+        "encrypt_boss_id": encrypt_boss_id,
+        "contact": contact,
+        "boss_online": boss_online,
+        "boss_active_text": boss_active_text,
+        "job_active_time": job_active_time,
+        "title": str(raw.get("jobName") or ""),
+        "company": str(raw.get("brandName") or ""),
+        "city": raw.get("cityName"),
+        "salary": raw.get("salaryDesc"),
+        "experience": raw.get("jobExperience"),
+        "job_url": raw.get("jobUrl") or _build_job_url(job_id, security_id),
+        "raw_payload": raw,
+    }
+
+
+def _normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = dict(raw)
+    try:
+        zp_data = payload["zpData"]
+        if not isinstance(zp_data, dict):
+            raise TypeError("zpData is not a dict")
+        job_info_raw = zp_data["jobInfo"]
+        if not isinstance(job_info_raw, dict):
+            raise TypeError("jobInfo is not a dict")
+        job_id = str(job_info_raw["encryptId"])
+    except (KeyError, TypeError) as exc:
+        field_path = "zpData.jobInfo.encryptId"
+        if isinstance(exc, KeyError):
+            missing_key = exc.args[0]
+            if missing_key == "zpData":
+                field_path = "zpData"
+            elif missing_key == "jobInfo":
+                field_path = "zpData.jobInfo"
+            elif missing_key == "encryptId":
+                field_path = "zpData.jobInfo.encryptId"
+        elif isinstance(exc, TypeError) and "zpData" in str(exc):
+            field_path = "zpData"
+        logger.error(
+            "BOSS payload field missing: scene=detail field=%s payload=%s",
+            field_path,
+            payload,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        raise BossOperationError(
+            code="REQUEST_FAILED",
+            message=f"BOSS 返回字段缺失: {field_path}",
+            recoverable=True,
+            status_code=502,
+            boss_side=False,
+        ) from exc
+    job_info = dict(job_info_raw)
+    brand_info = dict(zp_data.get("brandComInfo") or {})
+    boss_info = dict(zp_data.get("bossInfo") or {})
+    fallback = dict(fallback or {})
+    relation_info = dict(zp_data.get("relationInfo") or {})
+
+    security_id = str(job_info.get("securityId") or fallback.get("security_id") or "") or None
+    encrypt_boss_id = str(
+        boss_info.get("encryptBossId")
+        or payload.get("encryptBossId")
+        or fallback.get("encrypt_boss_id")
+        or ""
+    ) or None
+    contact = relation_info.get("beFriend")
+    if not isinstance(contact, bool):
+        contact = fallback.get("contact")
+    boss_online = boss_info.get("bossOnline")
+    if not isinstance(boss_online, bool):
+        boss_online = fallback.get("boss_online")
+    boss_active_text = str(boss_info.get("activeTimeDesc") or fallback.get("boss_active_text") or "") or None
+    job_active_time = brand_info.get("activeTime")
+    if job_active_time is None:
+        job_active_time = fallback.get("job_active_time")
+    if job_active_time is not None:
+        try:
+            job_active_time = int(job_active_time)
+        except (TypeError, ValueError):
+            job_active_time = None
+    job_url = _build_job_url(job_id, security_id) or fallback.get("job_url")
+
+    job = {
+        "job_id": job_id,
+        "security_id": security_id,
+        "title": str(job_info.get("jobName") or fallback.get("title") or ""),
+        "salary": str(job_info.get("salaryDesc") or fallback.get("salary") or "") or None,
+        "experience": str(job_info.get("experienceName") or job_info.get("jobExperience") or fallback.get("experience") or "") or None,
+        "degree": str(job_info.get("degreeName") or job_info.get("jobDegree") or "") or None,
+        "city": str(job_info.get("locationName") or fallback.get("city") or "") or None,
+        "address": str(job_info.get("address") or "") or None,
+        "skills": list(job_info.get("showSkills") or job_info.get("skills") or []),
+        "description": str(job_info.get("postDescription") or job_info.get("description") or "") or None,
+        "status": str(job_info.get("jobStatusDesc") or "") or None,
+        "job_url": job_url,
+    }
+    company = {
+        "name": str(brand_info.get("brandName") or fallback.get("company") or ""),
+        "stage": str(brand_info.get("stageName") or brand_info.get("brandStageName") or "") or None,
+        "scale": str(brand_info.get("scaleName") or brand_info.get("brandScaleName") or "") or None,
+        "industry": str(brand_info.get("industryName") or brand_info.get("brandIndustry") or "") or None,
+        "intro": str(brand_info.get("introduce") or brand_info.get("companyDesc") or "") or None,
+    }
+    boss = {
+        "name": str(boss_info.get("name") or boss_info.get("bossName") or "") or None,
+        "title": str(boss_info.get("title") or boss_info.get("bossTitle") or "") or None,
+        "online": boss_online,
+        "active_text": boss_active_text,
+    }
+    job["active_time"] = job_active_time
+
+    detail_text_parts = []
+    for label, value in [
+        ("职位名称", job.get("title")),
+        ("薪资", job.get("salary")),
+        ("经验", job.get("experience")),
+        ("学历", job.get("degree")),
+        ("城市", job.get("city")),
+        ("地址", job.get("address")),
+        ("职位状态", job.get("status")),
+        ("技能", "、".join(job["skills"]) if job["skills"] else None),
+        ("公司", company.get("name")),
+        ("公司阶段", company.get("stage")),
+        ("公司规模", company.get("scale")),
+        ("行业", company.get("industry")),
+        ("BOSS", boss.get("name")),
+        ("BOSS 职位", boss.get("title")),
+        ("BOSS 活跃", boss.get("active_text")),
+        ("职位描述", job.get("description")),
+        ("公司介绍", company.get("intro")),
+    ]:
+        if value:
+            detail_text_parts.append(f"{label}：{value}")
+
+    return {
+        "job_id": job_id,
+        "security_id": security_id,
+        "encrypt_boss_id": encrypt_boss_id,
+        "contact": contact,
+        "boss_online": boss_online,
+        "boss_active_text": boss_active_text,
+        "job_active_time": job_active_time,
+        "job_url": job_url,
+        "detail_payload": {
+            "job": job,
+            "company": company,
+            "boss": boss,
+            "raw_payload": payload,
+        },
+        "detail_text": "\n".join(detail_text_parts),
+        "detail_raw_payload": payload,
+    }
 
 
 def normalize_search_query(
@@ -167,8 +375,8 @@ def _extract_message_content(m: dict) -> str:
     return ""
 
 
-class PatchrightEngine:
-    name = "patchright"
+class BossClient:
+    name = "bossclient"
 
     def __init__(self, settings: Settings, params: dict[str, Any] | None = None) -> None:
         self.settings = settings
@@ -204,9 +412,14 @@ class PatchrightEngine:
             )
         except Exception as exc:
             await self._safe_stop_playwright(playwright)
-            profile_hint = f"PatchrightEngine 启动浏览器失败（profile={self._profile_dir}）"
+            profile_hint = f"BossClient 启动浏览器失败（profile={self._profile_dir}）"
             if "Target page, context or browser has been closed" in str(exc):
                 profile_hint += "，可能是同一 profile 已有 Chrome 实例占用"
+            logger.error(
+                "BossClient init failed: profile=%s",
+                self._profile_dir,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=f"{profile_hint}: {exc}",
@@ -288,9 +501,13 @@ class PatchrightEngine:
         except BossOperationError:
             raise
         except Exception as exc:
+            logger.error(
+                "BossClient login failed while opening login page",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             raise BossOperationError(
                 code="REQUEST_FAILED",
-                message=f"PatchrightEngine 打开登录页失败: {exc}",
+                message=f"BossClient 打开登录页失败: {exc}",
                 recoverable=True,
                 status_code=502,
             ) from exc
@@ -310,9 +527,10 @@ class PatchrightEngine:
         return await self._build_login_result()
 
     async def logout(self) -> LoginOut:
+        logger.warning("BossClient logout is unavailable")
         raise BossOperationError(
             code="ENGINE_UNAVAILABLE",
-            message="PatchrightEngine 尚未接管退出登录",
+            message="BossClient 尚未接管退出登录",
             recoverable=False,
             status_code=501,
         )
@@ -321,6 +539,7 @@ class PatchrightEngine:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient search requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -336,6 +555,7 @@ class PatchrightEngine:
         trace["response_payload"] = payload
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "职位搜索失败")
+            logger.warning("BossClient search failed: payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -346,6 +566,7 @@ class PatchrightEngine:
 
         raw_items = payload.get("zpData", {}).get("jobList", [])
         if not isinstance(raw_items, list):
+            logger.warning("BossClient search returned invalid job list payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message="职位搜索结果格式错误",
@@ -366,10 +587,11 @@ class PatchrightEngine:
         trace["result_count"] = len(items)
         return SearchOut(items=items, trace=trace)
 
-    async def detail(self, request: JobDetailIn) -> dict[str, Any]:
+    async def detail(self, request: JobDetailIn) -> JobDetailOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient detail requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -381,6 +603,7 @@ class PatchrightEngine:
 
         resolved_security_id = request.security_id or self._extract_security_id(request.job_url)
         if not resolved_security_id:
+            logger.warning("BossClient detail missing securityId request=%s", request.model_dump())
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message="职位详情缺少 securityId",
@@ -388,8 +611,9 @@ class PatchrightEngine:
                 status_code=400,
             )
 
-        request_url = build_job_detail_url(resolved_security_id)
+        request_url = _build_job_detail_url(resolved_security_id)
         if not request_url:
+            logger.warning("BossClient detail failed to build request url security_id=%s", resolved_security_id)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message="职位详情链接生成失败",
@@ -402,6 +626,7 @@ class PatchrightEngine:
         response_received_at = datetime.now(tz=UTC).isoformat()
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "职位详情采集失败")
+            logger.warning("BossClient detail failed: payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -410,7 +635,7 @@ class PatchrightEngine:
                 boss_side=True,
             )
 
-        normalized = normalize_job_detail(
+        normalized = _normalize_job_detail(
             payload,
             {
                 "job_id": request.job_id,
@@ -421,38 +646,77 @@ class PatchrightEngine:
             },
         )
         detail_payload = dict(normalized["detail_payload"])
-        return {
-            "engine": self.name,
-            "browser": "Patchright Chromium",
-            "request_url": request_url,
-            "requested_at": requested_at,
-            "response_received_at": response_received_at,
-            "request_payload": {
+        job_payload = detail_payload.get("job") if isinstance(detail_payload.get("job"), dict) else {}
+        company_payload = detail_payload.get("company") if isinstance(detail_payload.get("company"), dict) else {}
+        boss_payload = detail_payload.get("boss") if isinstance(detail_payload.get("boss"), dict) else {}
+        job_out = JobDetailJobOut(
+            job_id=str(job_payload.get("job_id") or normalized.get("job_id") or request.job_id),
+            security_id=str(job_payload.get("security_id") or normalized.get("security_id") or resolved_security_id),
+            job_url=str(job_payload.get("job_url") or normalized.get("job_url") or request.job_url or ""),
+            title=str(job_payload.get("title") or request.title or ""),
+            salary=str(job_payload.get("salary") or ""),
+            experience=str(job_payload.get("experience") or ""),
+            degree=str(job_payload.get("degree") or ""),
+            city=str(job_payload.get("city") or ""),
+            address=str(job_payload.get("address") or ""),
+            skills=[str(item) for item in job_payload.get("skills") or []],
+            description=str(job_payload.get("description") or ""),
+            status=str(job_payload.get("status") or ""),
+            active_time=int(job_payload.get("active_time") or 0),
+        )
+        company_out = JobDetailCompanyOut(
+            name=str(company_payload.get("name") or request.company or ""),
+            stage=str(company_payload.get("stage") or ""),
+            scale=str(company_payload.get("scale") or ""),
+            industry=str(company_payload.get("industry") or ""),
+            intro=str(company_payload.get("intro") or ""),
+        )
+        boss_out = JobDetailBossOut(
+            name=str(boss_payload.get("name") or ""),
+            title=str(boss_payload.get("title") or ""),
+            active_text=str(boss_payload.get("active_text") or ""),
+            online=bool(boss_payload.get("online") or False),
+        )
+        return JobDetailOut(
+            engine=self.name,
+            browser="Patchright Chromium",
+            request_url=request_url,
+            requested_at=requested_at,
+            response_received_at=response_received_at,
+            request_payload={
                 "job_id": request.job_id,
                 "security_id": resolved_security_id,
-                "job_url": request.job_url,
-                "title": request.title,
-                "company": request.company,
+                "job_url": request.job_url or "",
+                "title": request.title or "",
+                "company": request.company or "",
             },
-            "response_payload": payload,
-            "job": detail_payload.get("job", {}),
-            "company": detail_payload.get("company", {}),
-            "boss": detail_payload.get("boss", {}),
-            "detail_payload": detail_payload,
-            "detail_text": normalized.get("detail_text"),
-            "job_id": normalized.get("job_id"),
-            "security_id": normalized.get("security_id"),
-            "boss_online": normalized.get("boss_online"),
-            "boss_active_text": normalized.get("boss_active_text"),
-            "job_active_time": normalized.get("job_active_time"),
-            "job_url": normalized.get("job_url"),
-            "detail_raw_payload": normalized.get("detail_raw_payload"),
-        }
+            response_payload=payload,
+            job=job_out,
+            company=company_out,
+            boss=boss_out,
+            detail_payload=JobDetailPayloadOut(
+                job=job_out,
+                company=company_out,
+                boss=boss_out,
+                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"), dict) else {},
+            ),
+            detail_text=str(normalized.get("detail_text") or ""),
+            job_id=str(normalized.get("job_id") or request.job_id),
+            security_id=str(normalized.get("security_id") or resolved_security_id),
+            encrypt_boss_id=str(normalized.get("encrypt_boss_id") or ""),
+            contact=bool(normalized.get("contact") or False),
+            boss_online=bool(normalized.get("boss_online") or False),
+            boss_active_text=str(normalized.get("boss_active_text") or ""),
+            job_active_time=int(normalized.get("job_active_time") or 0),
+            job_url=str(normalized.get("job_url") or request.job_url or ""),
+            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"), dict) else {},
+        )
 
-    async def friend_list(self, request: FriendListIn) -> list[dict[str, Any]]:
+    async def friend_list(self, request: FriendListIn) -> list[FriendListItemOut]:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient friend list requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -466,6 +730,7 @@ class PatchrightEngine:
         payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "好友列表获取失败")
+            logger.warning("BossClient friend list failed: payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -474,43 +739,69 @@ class PatchrightEngine:
                 boss_side=True,
             )
 
-        zp_data = payload.get("zpData") or {}
-        friends = zp_data.get("result") or zp_data.get("friendList") or []
-        if not isinstance(friends, list):
-            return []
+        try:
+            zp_data = payload["zpData"]
+            if not isinstance(zp_data, dict):
+                raise TypeError("zpData is not a dict")
+            if "result" in zp_data:
+                friends = zp_data["result"]
+            elif "friendList" in zp_data:
+                friends = zp_data["friendList"]
+            else:
+                raise KeyError("result")
+            if not isinstance(friends, list):
+                raise TypeError("result is not a list")
+        except (KeyError, TypeError) as exc:
+            field_path = "zpData.result"
+            if isinstance(exc, KeyError) and exc.args[0] == "zpData":
+                field_path = "zpData"
+            logger.error(
+                "BOSS payload field missing: scene=friend_list field=%s payload=%s",
+                field_path,
+                payload,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=f"BOSS 返回字段缺失: {field_path}",
+                recoverable=True,
+                status_code=502,
+                boss_side=False,
+            ) from exc
         lmi = lambda f: f.get("lastMessageInfo") or {}
 
         return sorted(
             [
-                {
-                    "gid": str(f.get("uid") or ""),
-                    "job_id": f.get("jobId"),
-                    "encrypt_job_id": str(f.get("encryptJobId") or "") or None,
-                    "encrypt_boss_id": f.get("encryptBossId"),
-                    "friend_source": f.get("friendSource"),
-                    "relation_type": f.get("relationType"),
-                    "read_status": lmi(f).get("status"),
-                    "name": str(f.get("name") or ""),
-                    "title": str(f.get("title") or ""),
-                    "company": str(f.get("brandName") or f.get("company") or ""),
-                    "avatar": f.get("avatar"),
-                    "last_message": f.get("lastMsg") or lmi(f).get("showText"),
-                    "last_message_at": f.get("lastTime") or lmi(f).get("createTime"),
-                    "last_message_ts": f.get("lastTS") or lmi(f).get("msgTime"),
-                    "unread_count": f.get("unreadMsgCount", 0),
-                    "security_id": str(f.get("securityId") or "") or None,
-                    "raw_payload": f,
-                }
+                FriendListItemOut(
+                    gid=str(f.get("uid") or ""),
+                    job_id=str(f.get("jobId") or ""),
+                    encrypt_job_id=str(f.get("encryptJobId") or ""),
+                    encrypt_boss_id=str(f.get("encryptBossId") or ""),
+                    friend_source=int(f.get("friendSource") or 0),
+                    relation_type=int(f.get("relationType") or 0),
+                    read_status=int(lmi(f).get("status") or 0),
+                    name=str(f.get("name") or ""),
+                    title=str(f.get("title") or ""),
+                    company=str(f.get("brandName") or f.get("company") or ""),
+                    avatar=str(f.get("avatar") or ""),
+                    last_message=str(f.get("lastMsg") or lmi(f).get("showText") or ""),
+                    last_message_at=str(f.get("lastTime") or lmi(f).get("createTime") or ""),
+                    last_message_ts=int(f.get("lastTS") or lmi(f).get("msgTime") or 0),
+                    unread_count=int(f.get("unreadMsgCount") or 0),
+                    security_id=str(f.get("securityId") or ""),
+                    raw_payload=f,
+                )
                 for f in friends
             ],
-            key=lambda x: x["last_message_ts"] or "",
+            key=lambda x: x.last_message_ts,
             reverse=True,
         )
 
-    async def greet(self, request: GreetJobIn) -> dict[str, Any]:
+    async def greet(self, request: GreetJobIn) -> GreetJobOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient greet requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -522,12 +813,12 @@ class PatchrightEngine:
 
         body = {
             "securityId": request.security_id,
-            "jobId": request.job_id,
-            "greeting": request.message or "您好，我对该岗位很感兴趣，希望能和您聊一聊。",
+            "jobId": request.job_id
         }
         payload = await self._post_json(GREET_URL, WEB_GEEK_CHAT_URL, body)
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "打招呼失败")
+            logger.warning("BossClient greet failed: payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -535,18 +826,47 @@ class PatchrightEngine:
                 status_code=400,
                 boss_side=True,
             )
-
-        return {
-            "job_id": request.job_id,
-            "security_id": request.security_id,
-            "message": body["greeting"],
-            "raw_payload": payload,
-        }
+        try:
+            zp_data = payload["zpData"]
+            if not isinstance(zp_data, dict):
+                raise TypeError("zpData is not a dict")
+            security_id = zp_data["securityId"]
+            encrypt_boss_id = zp_data["encBossId"]
+        except (KeyError, TypeError) as exc:
+            field_path = "zpData.securityId"
+            if isinstance(exc, KeyError):
+                missing_key = exc.args[0]
+                if missing_key == "zpData":
+                    field_path = "zpData"
+                elif missing_key == "encBossId":
+                    field_path = "zpData.encBossId"
+            elif "zpData" in str(exc):
+                field_path = "zpData"
+            logger.error(
+                "BOSS payload field missing: scene=greet field=%s payload=%s",
+                field_path,
+                payload,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=f"BOSS 返回字段缺失: {field_path}",
+                recoverable=True,
+                status_code=502,
+                boss_side=False,
+            ) from exc
+        return GreetJobOut(
+            job_id=request.job_id,
+            security_id=str(security_id),
+            encrypt_boss_id=str(encrypt_boss_id),
+            raw_payload=payload,
+        )
 
     async def chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient chat history requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -560,6 +880,7 @@ class PatchrightEngine:
         payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
         if payload.get("code") not in (None, 0):
             message = str(payload.get("message") or "聊天历史获取失败")
+            logger.warning("BossClient chat history failed: payload=%s", payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -567,11 +888,30 @@ class PatchrightEngine:
                 status_code=400,
                 boss_side=True,
             )
-
-        zp_data = payload.get("zpData") or {}
-        messages = zp_data.get("messages") or []
-        if not isinstance(messages, list):
-            messages = []
+        try:
+            zp_data = payload["zpData"]
+            if not isinstance(zp_data, dict):
+                raise TypeError("zpData is not a dict")
+            messages = zp_data["messages"]
+            if not isinstance(messages, list):
+                raise TypeError("messages is not a list")
+        except (KeyError, TypeError) as exc:
+            field_path = "zpData.messages"
+            if isinstance(exc, KeyError) and exc.args[0] == "zpData":
+                field_path = "zpData"
+            logger.error(
+                "BOSS payload field missing: scene=chat_history field=%s payload=%s",
+                field_path,
+                payload,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise BossOperationError(
+                code="REQUEST_FAILED",
+                message=f"BOSS 返回字段缺失: {field_path}",
+                recoverable=True,
+                status_code=502,
+                boss_side=False,
+            ) from exc
         messages = [m for m in messages if m.get("uncount") == 0]
         return ChatHistoryOut(
             boss_id=request.boss_id,
@@ -599,10 +939,11 @@ class PatchrightEngine:
             raw_payload=payload,
         )
 
-    async def send_message(self, request: SendMessageIn) -> dict[str, Any]:
+    async def send_message(self, request: SendMessageIn) -> SendMessageOut:
         await self.check_page_health()
         login_status = await self.get_auth_status()
         if not login_status.logged_in:
+            logger.warning("BossClient send message requires login")
             raise BossOperationError(
                 code="AUTH_REQUIRED",
                 message="未登录，请先点击页面右上角登录",
@@ -614,6 +955,7 @@ class PatchrightEngine:
 
         content = request.content.strip()
         if not content:
+            logger.warning("BossClient send message rejected empty content request=%s", request.model_dump())
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message="消息内容不能为空",
@@ -844,6 +1186,7 @@ class PatchrightEngine:
                     f"{message}（chatItems={item_count}, inputs={input_count}, "
                     f"page={diagnostics.get('href')}, text={chat_text[:80]}）"
                 )
+            logger.warning("BossClient send message failed: payload=%s", result_payload)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message=message,
@@ -853,17 +1196,17 @@ class PatchrightEngine:
                 boss_side=True,
             )
 
-        return {
-            "status": "sent",
-            "job_id": request.job_id,
-            "gid": request.gid,
-            "self_id": result.get("selfId") or request.self_id,
-            "boss_uid": request.boss_uid,
-            "boss_id": request.boss_id,
-            "security_id": request.security_id,
-            "content": content,
-            "raw_payload": result,
-        }
+        return SendMessageOut(
+            status="sent",
+            job_id=request.job_id,
+            gid=request.gid,
+            self_id=str(result.get("selfId") or request.self_id),
+            boss_uid=request.boss_uid,
+            boss_id=request.boss_id,
+            security_id=str(request.security_id or ""),
+            content=content,
+            raw_payload=result,
+        )
 
     async def _fetch_json(self, url: str, referer: str) -> dict[str, Any]:
         return await self.page.evaluate(
@@ -907,26 +1250,26 @@ class PatchrightEngine:
             {"url": url, "referer": referer, "body": body},
         )
 
-    async def healthcheck(self) -> dict[str, Any]:
+    async def healthcheck(self) -> HealthcheckOut:
         try:
             await self.check_page_health()
         except BossOperationError as exc:
-            return {
-                "status": "unavailable",
-                "provider": self.name,
-                "logged_in": False,
-                "message": exc.message,
-                "last_error": exc.message,
-            }
+            return HealthcheckOut(
+                status="unavailable",
+                provider=self.name,
+                logged_in=False,
+                message=exc.message,
+                last_error=exc.message,
+            )
 
         auth = await self.get_auth_status()
-        return {
-            "status": "ok" if auth.logged_in else "auth_required",
-            "provider": self.name,
-            "logged_in": auth.logged_in,
-            "message": auth.message,
-            "last_error": auth.last_error,
-        }
+        return HealthcheckOut(
+            status="ok" if auth.logged_in else "auth_required",
+            provider=self.name,
+            logged_in=auth.logged_in,
+            message=auth.message,
+            last_error=auth.last_error,
+        )
 
     async def close(self) -> None:
         context = self.context
@@ -954,9 +1297,13 @@ class PatchrightEngine:
                 await bring_to_front()
             await page.goto(LOGIN_PAGE_URL, wait_until="domcontentloaded")
         except Exception as exc:
+            logger.error(
+                "BossClient open login page failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
             raise BossOperationError(
                 code="REQUEST_FAILED",
-                message=f"PatchrightEngine 页面跳转失败: {exc}",
+                message=f"BossClient 页面跳转失败: {exc}",
                 recoverable=True,
                 status_code=502,
             ) from exc
@@ -1022,6 +1369,7 @@ class PatchrightEngine:
     def _build_search_params(self, query: dict[str, Any]) -> dict[str, Any]:
         query_text = self._normalize_query_text(query)
         if not query_text:
+            logger.warning("BossClient search missing query query=%s", query)
             raise BossOperationError(
                 code="REQUEST_FAILED",
                 message="搜索关键词不能为空",
@@ -1033,6 +1381,7 @@ class PatchrightEngine:
         if city := query.get("city"):
             code = CITY_CODES.get(str(city))
             if code is None:
+                logger.warning("BossClient search has unknown city query=%s", query)
                 raise BossOperationError(
                     code="REQUEST_FAILED",
                     message=f"未知城市: {city}",
@@ -1076,7 +1425,7 @@ class PatchrightEngine:
         return str(keywords).strip()
 
     def _normalize_raw_job(self, raw: dict[str, Any]) -> dict[str, Any]:
-        return normalize_job(raw)
+        return _normalize_job(raw)
 
     def _extract_security_id(self, job_url: str | None) -> str | None:
         if not job_url:
@@ -1091,33 +1440,39 @@ class PatchrightEngine:
     def _search_item_from_payload(self, payload: dict[str, Any]) -> SearchJobItemOut:
         return SearchJobItemOut(
             job_id=str(payload["job_id"]),
-            security_id=payload.get("security_id"),
-            encrypt_boss_id=payload.get("encrypt_boss_id"),
-            contact=payload.get("contact"),
+            security_id=str(payload.get("security_id") or ""),
+            encrypt_boss_id=str(payload.get("encrypt_boss_id") or ""),
+            contact=bool(payload.get("contact") or False),
+            boss_online=bool(payload.get("boss_online") or False),
+            boss_active_text=str(payload.get("boss_active_text") or ""),
+            job_active_time=int(payload.get("job_active_time") or 0),
             title=str(payload["title"]),
             company=str(payload["company"]),
-            city=payload.get("city"),
-            salary=payload.get("salary"),
-            experience=payload.get("experience"),
-            job_url=payload.get("job_url"),
+            city=str(payload.get("city") or ""),
+            salary=str(payload.get("salary") or ""),
+            experience=str(payload.get("experience") or ""),
+            job_url=str(payload.get("job_url") or ""),
             raw_payload=dict(payload.get("raw_payload") or payload),
         )
 
     async def _build_login_result(self) -> LoginOut:
         return LoginOut(
             logged_in=False,
+            user_name="",
             login_method="patchright",
             message="已通过 Patchright 启动浏览器并打开 BOSS 登录页，请在当前页面完成扫码登录",
             browser="Patchright Chromium",
+            last_error="",
         )
 
     def _build_logged_in_result(self) -> LoginOut:
         return LoginOut(
             logged_in=True,
-            user_name=self._page_cache.get("name"),
+            user_name=str(self._page_cache.get("name") or ""),
             login_method="patchright",
             message="已登录",
             browser="Patchright Chromium",
+            last_error="",
         )
 
     async def _is_browser_healthy(self) -> bool:
@@ -1147,49 +1502,21 @@ class PatchrightEngine:
             path = self.settings.project_root / path
         return path.resolve()
 
+    async def search_jobs(self, request: SearchIn) -> list[SearchJobItemOut]:
+        result = await self.search(request)
+        return result.items
 
-class BossClient(PatchrightEngine):
-    async def search_jobs(self, query: dict[str, Any]) -> list[dict[str, Any]]:
-        result = await self.search(SearchIn(query=query))
-        return [item.model_dump() for item in result.items]
+    async def get_job_detail(self, request: JobDetailIn) -> JobDetailOut:
+        return await self.detail(request)
 
-    async def get_job_detail(
-        self,
-        job_id: str,
-        security_id: str | None = None,
-        job_url: str | None = None,
-        title: str | None = None,
-        company: str | None = None,
-    ) -> dict[str, Any]:
-        return await self.detail(
-            JobDetailIn(
-                job_id=job_id,
-                security_id=security_id,
-                job_url=job_url,
-                title=title,
-                company=company,
-            )
-        )
+    async def greet_job(self, request: GreetJobIn) -> GreetJobOut:
+        return await self.greet(request)
 
-    async def greet_job(self, job: dict[str, Any], message: str | None = None) -> dict[str, Any]:
-        security_id = str(job.get("security_id") or "")
-        job_id = str(job.get("source_job_id") or job.get("job_id") or "")
-        if not security_id or not job_id:
-            raise BossOperationError(
-                code="REQUEST_FAILED",
-                message="打招呼缺少 security_id 或 job_id",
-                recoverable=False,
-                status_code=400,
-            )
-        return await self.greet(GreetJobIn(job_id=job_id, security_id=security_id, message=message))
+    async def list_friends(self, request: FriendListIn) -> list[FriendListItemOut]:
+        return await self.friend_list(request)
 
-    async def list_friends(self, page: int = 1) -> list[dict[str, Any]]:
-        return await self.friend_list(FriendListIn(page=page))
-
-    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> ChatHistoryOut:
-        return await self.chat_history(
-            ChatHistoryIn(boss_id=boss_id, security_id=security_id, page=page, count=count)
-        )
+    async def get_chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
+        return await self.chat_history(request)
 
 
 def _normalize_query_text(query: dict[str, Any]) -> str:

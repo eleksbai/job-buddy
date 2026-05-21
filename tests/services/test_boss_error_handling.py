@@ -3,6 +3,7 @@ import asyncio
 from bson import ObjectId
 
 from job_buddy.boss import BossOperationError
+from job_buddy.boss.schemas import FriendListIn, FriendListItemOut, GreetJobIn, GreetJobOut
 from job_buddy.models import GreetingRecord
 from job_buddy.services import FriendService, GreetingService
 
@@ -12,8 +13,8 @@ class AuthRequired(Exception):
 
 
 class ExplodingFriendClient:
-    async def list_friends(self, page: int = 1) -> list[dict]:
-        _ = page
+    async def list_friends(self, request: FriendListIn) -> list[FriendListItemOut]:
+        _ = request
         raise AuthRequired()
 
 
@@ -28,15 +29,14 @@ class FakeFriendCollection:
 
 
 class ExplodingGreetingClient:
-    async def greet_job(self, job: dict, message: str | None = None) -> dict:
-        _ = job, message
+    async def greet_job(self, request: GreetJobIn) -> GreetJobOut:
+        _ = request
         raise AuthRequired()
 
 
 class SuccessfulGreetingClient:
-    async def greet_job(self, job: dict, message: str | None = None) -> dict:
-        _ = message
-        return {"job_id": job["source_job_id"], "status": "ok"}
+    async def greet_job(self, request: GreetJobIn) -> GreetJobOut:
+        return GreetJobOut(job_id=request.job_id, security_id=request.security_id, encrypt_boss_id="boss-1", raw_payload={})
 
 
 class FakeTaskCollection:
@@ -163,7 +163,7 @@ def test_run_greetings_records_mapped_auth_errors():
     assert service.jobs.updated == []
 
 
-def test_run_greetings_marks_job_as_contacted_after_success():
+def test_run_greetings_marks_job_as_greeted_and_keeps_match_status_after_success():
     service = GreetingService.__new__(GreetingService)
     service.boss_client = SuccessfulGreetingClient()
     service.tasks = FakeTaskCollection()
@@ -174,8 +174,9 @@ def test_run_greetings_marks_job_as_contacted_after_success():
 
     assert task.status.value == "succeeded"
     assert service.jobs.updated[-1][1]["greeted"] is True
-    assert service.jobs.updated[-1][1]["match_status"] == "contacted"
     assert service.jobs.updated[-1][1]["contact"] is True
+    assert service.jobs.updated[-1][1]["source_friend_id"] == "boss-1"
+    assert "match_status" not in service.jobs.updated[-1][1]
 
 
 def test_run_greetings_accepts_source_job_id_list():

@@ -34,18 +34,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                 exc.code,
             )
         else:
-            cause = exc.__cause__
-            exc_info = None
-            if cause is not None:
-                exc_info = (type(cause), cause, cause.__traceback__)
-            else:
-                exc_info = (type(exc), exc, exc.__traceback__)
             logger.error(
-                "Boss operation failed on %s %s\n%s",
+                "Boss operation failed on %s %s: %s (code=%s)",
                 request.method,
                 request.url.path,
                 exc.message,
-                exc_info=exc_info,
+                exc.code,
             )
 
         return JSONResponse(status_code=exc.status_code, content=payload)

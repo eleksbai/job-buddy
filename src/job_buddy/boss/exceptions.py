@@ -70,11 +70,17 @@ def map_boss_operation_error(exc: Exception) -> BossOperationError:
     )
 
 
-def raise_for_boss_healthcheck(health: dict[str, Any]) -> None:
-    status_value = str(health.get("status") or "")
-    logged_in = health.get("logged_in")
-    message = str(health.get("message") or "未登录，请先点击页面右上角登录")
-    last_error = health.get("last_error")
+def raise_for_boss_healthcheck(health: Any) -> None:
+    if isinstance(health, dict):
+        status_value = str(health.get("status") or "")
+        logged_in = health.get("logged_in")
+        message = str(health.get("message") or "未登录，请先点击页面右上角登录")
+        last_error = health.get("last_error")
+    else:
+        status_value = str(getattr(health, "status", "") or "")
+        logged_in = getattr(health, "logged_in", None)
+        message = str(getattr(health, "message", "") or "未登录，请先点击页面右上角登录")
+        last_error = getattr(health, "last_error", None)
 
     if status_value == "auth_required" or logged_in is False:
         code = "TOKEN_INVALID" if last_error or "无效" in message else "AUTH_REQUIRED"

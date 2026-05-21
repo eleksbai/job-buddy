@@ -1,7 +1,7 @@
 import asyncio
 
 from job_buddy.boss import BossOperationError
-from job_buddy.boss.schemas import ChatHistoryMessageOut, ChatHistoryOut, SendMessageIn
+from job_buddy.boss.schemas import ChatHistoryIn, ChatHistoryMessageOut, ChatHistoryOut, FriendListIn, FriendListItemOut, SendMessageIn, SendMessageOut
 from job_buddy.services import FriendService
 
 
@@ -31,18 +31,28 @@ class FakeFriendRepository:
 class FakeMessageClient:
     def __init__(self) -> None:
         self.calls: list[SendMessageIn] = []
-        self.friends_payload: list[dict] = []
+        self.friends_payload: list[FriendListItemOut] = []
 
-    async def send_message(self, request: SendMessageIn) -> dict:
+    async def send_message(self, request: SendMessageIn) -> SendMessageOut:
         self.calls.append(request)
-        return {"status": "sent", "provider": "patchright"}
+        return SendMessageOut(
+            status="sent",
+            job_id=request.job_id,
+            gid=request.gid,
+            self_id=request.self_id,
+            boss_uid=request.boss_uid,
+            boss_id=request.boss_id,
+            security_id=request.security_id or "",
+            content=request.content,
+            raw_payload={"provider": "patchright"},
+        )
 
-    async def list_friends(self, page: int = 1) -> list[dict]:
-        _ = page
+    async def list_friends(self, request: FriendListIn) -> list[FriendListItemOut]:
+        _ = request
         return list(self.friends_payload)
 
-    async def get_chat_history(self, boss_id: str, security_id: str, page: int = 1, count: int = 20) -> ChatHistoryOut:
-        _ = boss_id, security_id, page, count
+    async def get_chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
+        _ = request
         return ChatHistoryOut(
             boss_id="boss-1",
             security_id="sec-1",
@@ -146,22 +156,22 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
     service.friends = FakeFriendRepository(None)
     service.boss_client = FakeMessageClient()
     service.boss_client.friends_payload = [
-        {
-            "gid": "gid-1",
-            "friend_source": 0,
-            "relation_type": 2,
-            "read_status": 1,
-            "encrypt_job_id": "encrypt-1",
-            "encrypt_boss_id": "boss-1",
-            "security_id": "sec-1",
-            "name": "Alice",
-            "title": "HR",
-            "company": "Demo Tech",
-            "avatar": None,
-            "last_message": None,
-            "unread_count": 0,
-            "raw_payload": {"uid": "uid-1"},
-        }
+        FriendListItemOut(
+            gid="gid-1",
+            friend_source=0,
+            relation_type=2,
+            read_status=1,
+            encrypt_job_id="encrypt-1",
+            encrypt_boss_id="boss-1",
+            security_id="sec-1",
+            name="Alice",
+            title="HR",
+            company="Demo Tech",
+            avatar="",
+            last_message="",
+            unread_count=0,
+            raw_payload={"uid": "uid-1"},
+        )
     ]
 
     async def update_one(filters: dict, updates: dict, upsert: bool = False):

@@ -29,7 +29,7 @@ from job_buddy.boss.config import (
     SCALE_CODES,
     STAGE_CODES,
 )
-from job_buddy.boss.schemas import LoginIn, LoginOut, SearchIn, SendMessageIn
+from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, SendMessageIn
 from job_buddy.config import Settings
 from job_buddy.models import (
     AuthState,
@@ -311,11 +311,13 @@ class JobCollectionService:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
             try:
                 detail_result = await self.boss_client.get_job_detail(
-                    job_id=source_job_id,
-                    security_id=security_id,
-                    job_url=None,
-                    title=source_job_id,
-                    company="",
+                    JobDetailIn(
+                        job_id=source_job_id,
+                        security_id=security_id,
+                        job_url=None,
+                        title=source_job_id,
+                        company="",
+                    )
                 )
             except Exception as exc:
                 logger.warning(
@@ -328,20 +330,20 @@ class JobCollectionService:
                 JobLead(
                     source_job_id=source_job_id,
                     security_id=security_id,
-                    source_friend_id=detail_result.get("encrypt_boss_id"),
-                    contact=detail_result.get("contact"),
-                    boss_online=detail_result.get("boss_online"),
-                    boss_active_text=detail_result.get("boss_active_text"),
-                    job_active_time=detail_result.get("job_active_time"),
-                    title=str(detail_result.get("job", {}).get("title") or source_job_id),
-                    company=str(detail_result.get("company", {}).get("name") or ""),
-                    city=detail_result.get("job", {}).get("city"),
-                    salary=detail_result.get("job", {}).get("salary"),
-                    experience=detail_result.get("job", {}).get("experience"),
-                    job_url=detail_result.get("job_url"),
-                    detail_payload=dict(detail_result),
-                    detail_text=str(detail_result.get("detail_text") or ""),
-                    detail_source_url=detail_result.get("request_url"),
+                    source_friend_id=detail_result.encrypt_boss_id or None,
+                    contact=detail_result.contact,
+                    boss_online=detail_result.boss_online,
+                    boss_active_text=detail_result.boss_active_text or None,
+                    job_active_time=detail_result.job_active_time or None,
+                    title=detail_result.job.title or source_job_id,
+                    company=detail_result.company.name or "",
+                    city=detail_result.job.city or None,
+                    salary=detail_result.job.salary or None,
+                    experience=detail_result.job.experience or None,
+                    job_url=detail_result.job_url or None,
+                    detail_payload=detail_result.model_dump(),
+                    detail_text=detail_result.detail_text,
+                    detail_source_url=detail_result.request_url,
                     detail_fetched_at=utc_now(),
                 ),
                 JobLead,
@@ -354,11 +356,13 @@ class JobCollectionService:
 
         try:
             detail_result = await self.boss_client.get_job_detail(
-                job_id=job.source_job_id,
-                security_id=job.security_id,
-                job_url=job.job_url,
-                title=job.title,
-                company=job.company,
+                JobDetailIn(
+                    job_id=job.source_job_id,
+                    security_id=job.security_id,
+                    job_url=job.job_url,
+                    title=job.title,
+                    company=job.company,
+                )
             )
         except Exception as exc:
             logger.warning(
@@ -372,20 +376,20 @@ class JobCollectionService:
             JobLead,
             job.id,
             {
-                "title": str(detail_result.get("job", {}).get("title") or job.title),
-                "company": str(detail_result.get("company", {}).get("name") or job.company),
-                "city": detail_result.get("job", {}).get("city") or job.city,
-                "salary": detail_result.get("job", {}).get("salary") or job.salary,
-                "experience": detail_result.get("job", {}).get("experience") or job.experience,
-                "source_friend_id": detail_result.get("encrypt_boss_id") or job.source_friend_id,
-                "contact": detail_result.get("contact") if detail_result.get("contact") is not None else job.contact,
-                "boss_online": detail_result.get("boss_online") if detail_result.get("boss_online") is not None else job.boss_online,
-                "boss_active_text": detail_result.get("boss_active_text") or job.boss_active_text,
-                "job_active_time": detail_result.get("job_active_time") if detail_result.get("job_active_time") is not None else job.job_active_time,
-                "job_url": detail_result.get("job_url") or job.job_url,
-                "detail_payload": dict(detail_result),
-                "detail_text": str(detail_result.get("detail_text") or ""),
-                "detail_source_url": detail_result.get("request_url") or detail_result.get("job_url") or job.job_url,
+                "title": detail_result.job.title or job.title,
+                "company": detail_result.company.name or job.company,
+                "city": detail_result.job.city or job.city,
+                "salary": detail_result.job.salary or job.salary,
+                "experience": detail_result.job.experience or job.experience,
+                "source_friend_id": detail_result.encrypt_boss_id or job.source_friend_id,
+                "contact": detail_result.contact,
+                "boss_online": detail_result.boss_online,
+                "boss_active_text": detail_result.boss_active_text or job.boss_active_text,
+                "job_active_time": detail_result.job_active_time or job.job_active_time,
+                "job_url": detail_result.job_url or job.job_url,
+                "detail_payload": detail_result.model_dump(),
+                "detail_text": detail_result.detail_text,
+                "detail_source_url": detail_result.request_url or detail_result.job_url or job.job_url,
                 "detail_fetched_at": utc_now(),
             },
         )
@@ -725,13 +729,10 @@ class GreetingService:
             try:
                 try:
                     response = await self.boss_client.greet_job(
-                        {
-                            "source_job_id": job.source_job_id,
-                            "security_id": job.security_id,
-                            "title": job.title,
-                            "company": job.company,
-                        },
-                        message=default_message,
+                        GreetJobIn(
+                            job_id=job.source_job_id,
+                            security_id=str(job.security_id or ""),
+                        )
                     )
                 except Exception as exc:
                     logger.warning("BOSS greet failed: task_id=%s source_job_id=%s error=%s", task.id, job.source_job_id, exc)
@@ -744,7 +745,7 @@ class GreetingService:
                         source_job_id=job.source_job_id,
                         status="succeeded",
                         message=default_message,
-                        response_payload=response,
+                        response_payload=response.model_dump(),
                     ),
                     GreetingRecord,
                 )
@@ -752,7 +753,11 @@ class GreetingService:
                     self.jobs,
                     JobLead,
                     job.id,
-                    {"greeted": True, "match_status": "contacted", "contact": True},
+                    {
+                        "greeted": True,
+                        "contact": True,
+                        "source_friend_id": response.encrypt_boss_id or job.source_friend_id,
+                    },
                 )
                 success_count += 1
             except Exception as exc:
@@ -867,10 +872,12 @@ class FriendService:
 
         try:
             result = await self.boss_client.get_chat_history(
-                boss_id=source_friend_id,
-                security_id=security_id,
-                page=page,
-                count=count,
+                ChatHistoryIn(
+                    boss_id=source_friend_id,
+                    security_id=security_id,
+                    page=page,
+                    count=count,
+                )
             )
         except Exception as exc:
             logger.warning(
@@ -959,13 +966,13 @@ class FriendService:
             friend.get("messages"),
             [
                 {
-                    "message_id": str(result.get("message_id") or result.get("mid") or f"local-{utc_now().timestamp()}"),
-                    "from_id": str(result.get("self_id") or friend.get("self_id") or ""),
-                    "from_name": result.get("from_name"),
+                    "message_id": f"local-{utc_now().timestamp()}",
+                    "from_id": result.self_id or str(friend.get("self_id") or ""),
+                    "from_name": "",
                     "content": content,
-                    "type": result.get("type", 1),
-                    "created_at": result.get("sent_at") or result.get("timestamp") or int(utc_now().timestamp() * 1000),
-                    "raw_payload": result,
+                    "type": 1,
+                    "created_at": int(utc_now().timestamp() * 1000),
+                    "raw_payload": result.model_dump(),
                 }
             ],
         )
@@ -986,8 +993,8 @@ class FriendService:
             gid=str(friend.get("gid") or ""),
             source_friend_id=source_friend_id,
             content=content,
-            status=str(result.get("status") or "sent"),
-            raw_payload=result,
+            status=result.status or "sent",
+            raw_payload=result.model_dump(),
         )
 
     async def _ensure_send_identity(self, friend: dict[str, Any], source_friend_id: str) -> dict[str, Any]:
@@ -1000,10 +1007,12 @@ class FriendService:
             return friend
         try:
             result = await self.boss_client.get_chat_history(
-                boss_id=boss_id_for_history,
-                security_id=security_id,
-                page=1,
-                count=20,
+                ChatHistoryIn(
+                    boss_id=boss_id_for_history,
+                    security_id=security_id,
+                    page=1,
+                    count=20,
+                )
             )
         except Exception as exc:
             logger.warning("BOSS send identity backfill failed: source_friend_id=%s error=%s", source_friend_id, exc)
@@ -1026,50 +1035,50 @@ class FriendService:
 
     async def sync_friends(self) -> int:
         try:
-            friends = await self.boss_client.list_friends(page=1)
+            friends = await self.boss_client.list_friends(FriendListIn(page=1))
         except Exception as exc:
             logger.warning("BOSS friend sync failed: error=%s", exc)
             raise map_boss_operation_error(exc) from exc
 
         synced = 0
         for item in friends:
-            source_friend_id = item.get("encrypt_boss_id")
+            source_friend_id = item.encrypt_boss_id
             if not source_friend_id:
                 continue
 
             last_message_ts = None
-            if item.get("last_message_ts"):
+            if item.last_message_ts:
                 try:
-                    last_message_ts = float(item["last_message_ts"])
+                    last_message_ts = float(item.last_message_ts)
                 except (ValueError, TypeError):
                     pass
 
             last_message_at = _format_last_time(last_message_ts) if last_message_ts else None
-            self_id = _extract_self_id(item)
+            self_id = _extract_self_id(item.model_dump())
             existing = await self.friends.find_one({"source_friend_id": source_friend_id})
             messages = existing.get("messages", []) if existing else []
             await self.friends.update_one(
                 {"source_friend_id": source_friend_id},
                 {
                     "$set": {
-                        "gid": item.get("gid", ""),
-                        "boss_uid": item.get("gid", ""),
-                        "friend_source": item.get("friend_source"),
-                        "relation_type": item.get("relation_type"),
-                        "read_status": item.get("read_status"),
+                        "gid": item.gid,
+                        "boss_uid": item.gid,
+                        "friend_source": item.friend_source,
+                        "relation_type": item.relation_type,
+                        "read_status": item.read_status,
                         "self_id": self_id,
-                        "source_job_id": item.get("encrypt_job_id"),
+                        "source_job_id": item.encrypt_job_id or None,
                         "source_friend_id": source_friend_id,
-                        "security_id": item.get("security_id"),
-                        "name": item.get("name", ""),
-                        "title": item.get("title", ""),
-                        "company": item.get("company"),
-                        "avatar": item.get("avatar"),
-                        "last_message": item.get("last_message"),
-                        "unread_count": item.get("unread_count", 0),
+                        "security_id": item.security_id or None,
+                        "name": item.name,
+                        "title": item.title,
+                        "company": item.company or None,
+                        "avatar": item.avatar or None,
+                        "last_message": item.last_message or None,
+                        "unread_count": item.unread_count,
                         "last_message_at": last_message_at,
                         "last_message_ts": last_message_ts,
-                        "raw_payload": item.get("raw_payload", item),
+                        "raw_payload": item.raw_payload,
                         "messages": messages,
                         "updated_at": utc_now(),
                     }
