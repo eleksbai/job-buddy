@@ -1,4 +1,4 @@
-from job_buddy.boss.boss import BossClient, BossDoctorRunner, filter_jobs_by_welfare, normalize_search_query
+from job_buddy.boss.client import BossClient, BossDoctorRunner, filter_jobs_by_welfare, normalize_search_query
 from job_buddy.boss.exceptions import (
     BossOperationError,
     map_boss_operation_error,

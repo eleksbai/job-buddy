@@ -3,7 +3,7 @@ from pathlib import Path
 
 from bson import ObjectId
 
-from job_buddy.boss.boss import BossDoctorResult
+from job_buddy.boss.client import BossDoctorResult
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import LoginOut
 from job_buddy.config import Settings

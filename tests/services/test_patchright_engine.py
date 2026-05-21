@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from job_buddy.boss.boss import BossClient, _normalize_job, _normalize_job_detail
+from job_buddy.boss.client import BossClient, _normalize_job, _normalize_job_detail
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import ChatHistoryIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, SendMessageIn
 from job_buddy.config import Settings
@@ -118,7 +118,7 @@ def test_patchright_check_page_health_initializes_once_and_reuses_browser(monkey
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
 
@@ -149,7 +149,7 @@ def test_patchright_check_page_health_restarts_when_page_is_closed(monkeypatch):
             playwrights.append(playwright)
             return playwright
 
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: SequenceStarter())
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: SequenceStarter())
 
     engine = BossClient(Settings())
 
@@ -168,7 +168,7 @@ def test_patchright_close_resets_handles_and_stops_playwright(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     asyncio.run(engine.check_page_health())
@@ -204,7 +204,7 @@ def test_patchright_init_error_includes_profile_path(monkeypatch, tmp_path):
         async def start(self) -> FailingPlaywright:
             return failing
 
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: Starter())
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: Starter())
 
     engine = BossClient(Settings())
 
@@ -225,7 +225,7 @@ def test_patchright_login_returns_logged_in_result(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.extract_page = _async_result(LoginOut(logged_in=True, user_name="Alice", message="已登录"))  # type: ignore[method-assign]
@@ -248,7 +248,7 @@ def test_patchright_healthcheck_reports_logged_in_state(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.extract_page = _async_result(LoginOut(logged_in=True, user_name="Alice", message="已登录"))  # type: ignore[method-assign]
@@ -283,7 +283,7 @@ def test_patchright_search_fetches_jobs_via_browser_context(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -322,7 +322,7 @@ def test_patchright_search_accepts_keywords_array(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -341,7 +341,7 @@ def test_patchright_search_does_not_require_login_inside_client(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(False)  # type: ignore[method-assign]
@@ -358,7 +358,7 @@ def test_patchright_greet_warns_with_payload_on_business_error(monkeypatch, capl
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -404,7 +404,7 @@ def test_patchright_search_filters_by_welfare(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -445,7 +445,7 @@ def test_patchright_detail_fetches_job_detail(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -484,7 +484,7 @@ def test_patchright_greet_posts_browser_request(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -532,7 +532,7 @@ def test_patchright_greet_logs_payload_when_security_id_missing(monkeypatch, cap
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -554,7 +554,7 @@ def test_patchright_chat_history_logs_payload_when_messages_missing(monkeypatch,
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]
@@ -575,7 +575,7 @@ def test_patchright_send_message_uses_geek_chat_page(monkeypatch):
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
-    monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
     engine.is_login = _async_result(True)  # type: ignore[method-assign]

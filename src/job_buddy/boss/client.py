@@ -482,8 +482,10 @@ class BossClient:
             logger.error("未提取到登录信息")
             raise BossOperationError(code="500", message="未提取到登录信息")
         page_payload = await self.js2dict(matches[0])
+        # 从消息列表看isLogin是false， 基于用户名和id来一起判断
+        is_login = bool(page_payload.get("name") and page_payload.get("uid"))
         return LoginOut(
-            logged_in=bool(page_payload.get("isLogin")),
+            logged_in=is_login,
             user_name=str(page_payload.get("name") or ""),
             city=str(page_payload.get("citySiteName") or ""),
             uid=str(page_payload.get("uid") or ""),
@@ -562,6 +564,7 @@ class BossClient:
         trace["response_received_at"] = datetime.now(tz=UTC).isoformat()
         trace["response_payload"] = payload
         if payload.get("code") not in (None, 0):
+            # 最多只能连续看5页，然后就会跳异常了。
             message = str(payload.get("message") or "职位搜索失败")
             logger.warning("BossClient search failed: payload=%s", payload)
             raise BossOperationError(
