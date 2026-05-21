@@ -10,6 +10,7 @@ from job_buddy.services import (
     JobCollectionService,
     SystemService,
     TargetProfileService,
+    WorkerService,
 )
 
 
@@ -60,3 +61,10 @@ async def get_system_service(
     boss_client: BossClient = Depends(get_boss_client),
 ) -> SystemService:
     return SystemService(BossDoctorRunner(settings), settings, boss_client, db)
+
+
+async def get_worker_service(
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    boss_client: BossClient = Depends(get_boss_client),
+) -> WorkerService:
+    return WorkerService(db, boss_client)

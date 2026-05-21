@@ -314,6 +314,7 @@ def test_search_jobs_fails_fast_when_login_state_is_invalid():
 
     assert task.status.value == "failed"
     assert task.error_message == "登录态无效，请重新登录"
+    assert task.exception == "BossOperationError"
     assert len(records.items) == 0
     assert len(traces.items) == 0
     assert len(jobs.items) == 0
@@ -327,6 +328,7 @@ def test_search_jobs_maps_auth_errors_from_runtime():
 
     assert task.status.value == "failed"
     assert task.error_message == "未登录，请先点击页面右上角登录"
+    assert task.exception == "BossOperationError"
     assert len(records.items) == 0
     assert len(traces.items) == 0
     assert len(jobs.items) == 0

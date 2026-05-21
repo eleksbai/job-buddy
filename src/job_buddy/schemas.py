@@ -143,6 +143,7 @@ class GreetingTaskRead(TimestampedSchema):
     input_payload: dict[str, Any]
     result_summary: dict[str, Any]
     error_message: str | None = None
+    exception: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
@@ -159,6 +160,31 @@ class GreetingRecordRead(TimestampedSchema):
 class TaskDetailResponse(BaseModel):
     task: GreetingTaskRead
     records: list[GreetingRecordRead]
+
+
+class WorkerConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    interval_seconds: int | None = None
+    query: dict[str, Any] | None = None
+    page: int | None = None
+    page_max: int | None = None
+    batch_size: int | None = None
+
+
+class WorkerConfigRead(TimestampedSchema):
+    worker_name: str
+    enabled: bool
+    interval_seconds: int
+    next_run_at: datetime | None = None
+    status: str
+    last_error: str | None = None
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_result_summary: dict[str, Any] = Field(default_factory=dict)
+    query: dict[str, Any] = Field(default_factory=dict)
+    page: int
+    page_max: int
+    batch_size: int
 
 
 class FriendMessageRead(BaseModel):

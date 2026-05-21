@@ -29,7 +29,7 @@ from job_buddy.boss.config import (
     STAGE_CODES,
 )
 from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, SendMessageIn
-from job_buddy.config import Settings
+from job_buddy.config import BOSS_ERROR_RETRY_DELAY_SECONDS, Settings
 from job_buddy.models import (
     AuthState,
     DocumentModel,
@@ -43,6 +43,7 @@ from job_buddy.models import (
     TASK_TIMEOUT,
     TargetProfile,
     TaskStatus,
+    WorkerConfig,
     utc_now,
 )
 from job_buddy.schemas import (
@@ -59,6 +60,7 @@ from job_buddy.schemas import (
     LogsResponse,
     SearchOptionsResponse,
     SendMessageResponse,
+    WorkerConfigUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -539,6 +541,7 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "exception": "TimeoutError",
                     "finished_at": utc_now(),
                 },
             )
@@ -559,6 +562,61 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": str(exc),
+                    "exception": exc.__class__.__name__,
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise
+            return failed
+
+        updated = await _get_model(self.tasks, GreetingTask, task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def run_detail_sync(self, limit: int = 1) -> GreetingTask:
+        task = await _create_model(
+            self.tasks,
+            GreetingTask(
+                task_type="detail_sync",
+                status=TaskStatus.RUNNING,
+                input_payload={"limit": limit},
+                started_at=utc_now(),
+            ),
+            GreetingTask,
+        )
+        try:
+            await asyncio.wait_for(self._do_detail_sync(task, limit), timeout=TASK_TIMEOUT)
+        except asyncio.TimeoutError:
+            current = await _get_model(self.tasks, GreetingTask, task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "exception": "TimeoutError",
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return failed
+        except Exception as exc:
+            logger.exception("detail sync task failed: task_id=%s limit=%s", task.id, limit)
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": str(exc),
+                    "exception": exc.__class__.__name__,
                     "finished_at": utc_now(),
                 },
             )
@@ -704,6 +762,39 @@ class JobCollectionService:
                     "dedup_created": dedup_created,
                     "dedup_updated": dedup_updated,
                 },
+                "finished_at": utc_now(),
+            },
+        )
+
+    async def _do_detail_sync(self, task: GreetingTask, limit: int) -> None:
+        await self._update_task_step(task.id, "fetch_jobs")
+        cursor = self.jobs.find({"detail_fetched_at": None}).sort([("last_searched_at", -1), ("_id", -1)]).limit(limit)
+        jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
+
+        succeeded = 0
+        failed = 0
+        for idx, job in enumerate(jobs):
+            await self._update_task_step(task.id, f"detail_job_{idx + 1}_of_{len(jobs)}")
+            try:
+                await self.get_job_detail(job.source_job_id, force_refresh=False)
+                succeeded += 1
+            except Exception as exc:
+                logger.warning("detail sync failed: task_id=%s source_job_id=%s error=%s", task.id, job.source_job_id, exc)
+                failed += 1
+
+        final_status = TaskStatus.SUCCEEDED
+        if failed and succeeded:
+            final_status = TaskStatus.PARTIAL_SUCCESS
+        elif failed and not succeeded:
+            final_status = TaskStatus.FAILED
+
+        await _update_model(
+            self.tasks,
+            GreetingTask,
+            task.id,
+            {
+                "status": final_status,
+                "result_summary": {"total": len(jobs), "succeeded": succeeded, "failed": failed},
                 "finished_at": utc_now(),
             },
         )
@@ -894,6 +985,231 @@ class GreetingService:
 
     async def list_tasks(self, limit: int) -> list[GreetingTask]:
         return await _list_models(self.tasks, GreetingTask, limit=limit)
+
+
+class WorkerService:
+    WORKER_NAMES = ("search", "detail")
+
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
+        self.worker_configs = database["worker_configs"]
+        self.tasks = database["greeting_tasks"]
+        self.database = database
+        self.boss_client = boss_client
+
+    def _default_worker_config(self, worker_name: str) -> WorkerConfig:
+        if worker_name not in self.WORKER_NAMES:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found.")
+        if worker_name == "search":
+            return WorkerConfig(worker_name="search", interval_seconds=60, page=1, page_max=5, batch_size=1)
+        return WorkerConfig(worker_name="detail", interval_seconds=30, page=1, page_max=5, batch_size=1)
+
+    async def ensure_defaults(self) -> list[WorkerConfig]:
+        configs: list[WorkerConfig] = []
+        for worker_name in self.WORKER_NAMES:
+            payload = await self.worker_configs.find_one({"worker_name": worker_name})
+            if payload is None:
+                config = await _create_model(
+                    self.worker_configs,
+                    self._default_worker_config(worker_name),
+                    WorkerConfig,
+                )
+            else:
+                config = WorkerConfig.from_mongo(payload)
+            configs.append(config)
+        return configs
+
+    async def sync_defaults_on_startup(self) -> list[WorkerConfig]:
+        configs = await self.ensure_defaults()
+        updated: list[WorkerConfig] = []
+        for config in configs:
+            worker = await self._update_worker_model(
+                config.worker_name,
+                {"enabled": False, "status": "idle", "next_run_at": None, "last_error": None},
+            )
+            updated.append(worker)
+        return updated
+
+    async def list_workers(self) -> list[WorkerConfig]:
+        await self.ensure_defaults()
+        return await _list_models(self.worker_configs, WorkerConfig, limit=10, sort_by="worker_name")
+
+    async def get_worker(self, worker_name: str) -> WorkerConfig:
+        await self.ensure_defaults()
+        payload = await self.worker_configs.find_one({"worker_name": worker_name})
+        if payload is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found.")
+        return WorkerConfig.from_mongo(payload)
+
+    async def update_worker(self, worker_name: str, payload: WorkerConfigUpdate) -> WorkerConfig:
+        current = await self.get_worker(worker_name)
+        updates = payload.model_dump(exclude_none=True)
+        if "interval_seconds" in updates and int(updates["interval_seconds"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="interval_seconds 必须大于等于 1")
+        if "page" in updates and int(updates["page"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page 必须大于等于 1")
+        if "page_max" in updates and int(updates["page_max"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page_max 必须大于等于 1")
+        if "batch_size" in updates and int(updates["batch_size"]) < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="batch_size 必须大于等于 1")
+        if worker_name == "search":
+            next_query = updates.get("query", current.query)
+            if "enabled" in updates and updates["enabled"] and not next_query.get("keywords"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="启动搜索 worker 前请先配置关键词")
+        return await self._update_worker_model(worker_name, updates)
+
+    async def start_worker(self, worker_name: str) -> WorkerConfig:
+        current = await self.get_worker(worker_name)
+        if worker_name == "search" and not current.query.get("keywords"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="启动搜索 worker 前请先配置关键词")
+        return await self._update_worker_model(
+            worker_name,
+            {"enabled": True, "status": "idle", "next_run_at": utc_now(), "last_error": None},
+        )
+
+    async def stop_worker(self, worker_name: str) -> WorkerConfig:
+        return await self._update_worker_model(
+            worker_name,
+            {"enabled": False, "status": "idle", "next_run_at": None, "last_error": None},
+        )
+
+    async def has_running_task(self) -> bool:
+        return await self.tasks.count_documents({"status": TaskStatus.RUNNING}) > 0
+
+    async def list_due_workers(self) -> list[WorkerConfig]:
+        now = utc_now()
+        workers = await self.list_workers()
+        due = [
+            item for item in workers
+            if item.enabled and item.next_run_at is not None and item.next_run_at <= now
+        ]
+        return sorted(due, key=lambda item: (item.next_run_at or now, item.worker_name))
+
+    async def execute_worker(self, worker_name: str) -> WorkerConfig:
+        worker = await self.get_worker(worker_name)
+        if not worker.enabled:
+            return worker
+
+        await self._update_worker_model(
+            worker_name,
+            {"status": "running", "last_started_at": utc_now(), "last_error": None},
+        )
+        job_service = JobCollectionService(self.database, self.boss_client)
+        try:
+            if worker_name == "search":
+                query = dict(worker.query)
+                query["page"] = max(1, int(worker.page))
+                task = await job_service.search_jobs(query=query)
+                next_page = worker.page
+                if task.status != TaskStatus.FAILED:
+                    next_page += 1
+                    if next_page > max(1, worker.page_max):
+                        next_page = 1
+                next_status = "error" if task.status == TaskStatus.FAILED else "idle"
+                updates = {
+                    "page": next_page,
+                    "last_result_summary": dict(task.result_summary),
+                    "status": next_status,
+                    "last_finished_at": utc_now(),
+                    "next_run_at": self._next_run_at_for_task(worker.interval_seconds, task),
+                    "last_error": task.error_message,
+                }
+                return await self._update_worker_model(worker_name, updates)
+
+            task = await job_service.run_detail_sync(limit=max(1, worker.batch_size))
+            next_status = "error" if task.status == TaskStatus.FAILED else "idle"
+            updates = {
+                "last_result_summary": dict(task.result_summary),
+                "status": next_status,
+                "last_finished_at": utc_now(),
+                "next_run_at": self._next_run_at_for_task(worker.interval_seconds, task),
+                "last_error": task.error_message,
+            }
+            return await self._update_worker_model(worker_name, updates)
+        except BossOperationError as exc:
+            logger.exception("worker execution failed with boss error: worker=%s code=%s", worker_name, exc.code)
+            return await self._update_worker_model(
+                worker_name,
+                {
+                    "status": "error",
+                    "last_finished_at": utc_now(),
+                    "next_run_at": self._next_run_at_for_boss_error(),
+                    "last_error": str(exc),
+                },
+            )
+        except Exception as exc:
+            logger.exception("worker execution failed: worker=%s", worker_name)
+            return await self._update_worker_model(
+                worker_name,
+                {
+                    "status": "error",
+                    "last_finished_at": utc_now(),
+                    "next_run_at": self._next_run_at_for_interval(worker.interval_seconds),
+                    "last_error": str(exc),
+                },
+            )
+
+    def _next_run_at_for_interval(self, interval_seconds: int) -> datetime:
+        return utc_now() + timedelta(seconds=max(1, interval_seconds))
+
+    def _next_run_at_for_task(self, interval_seconds: int, task: GreetingTask) -> datetime:
+        if task.exception == "BossOperationError":
+            return self._next_run_at_for_boss_error()
+        return self._next_run_at_for_interval(interval_seconds)
+
+    def _next_run_at_for_boss_error(self) -> datetime:
+        return utc_now() + timedelta(seconds=BOSS_ERROR_RETRY_DELAY_SECONDS)
+
+    async def _update_worker_model(self, worker_name: str, updates: dict[str, Any]) -> WorkerConfig:
+        current = await self.get_worker(worker_name)
+        updates["updated_at"] = utc_now()
+        await self.worker_configs.update_one({"_id": ObjectId(current.id)}, {"$set": updates})
+        refreshed = await self.worker_configs.find_one({"_id": ObjectId(current.id)})
+        if refreshed is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Worker update failed.")
+        return WorkerConfig.from_mongo(refreshed)
+
+
+class WorkerScheduler:
+    def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient, poll_interval_seconds: float = 2.0) -> None:
+        self.worker_service = WorkerService(database, boss_client)
+        self.poll_interval_seconds = poll_interval_seconds
+        self._run_lock = asyncio.Lock()
+        self._task: asyncio.Task[None] | None = None
+        self._stopped = asyncio.Event()
+
+    async def start(self) -> None:
+        await self.worker_service.sync_defaults_on_startup()
+        self._stopped.clear()
+        self._task = asyncio.create_task(self._run(), name="job-buddy-worker-scheduler")
+
+    async def stop(self) -> None:
+        self._stopped.set()
+        if self._task is not None:
+            await self._task
+            self._task = None
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await self.run_once()
+            except Exception:
+                logger.exception("worker scheduler loop failed")
+            try:
+                await asyncio.wait_for(self._stopped.wait(), timeout=self.poll_interval_seconds)
+            except asyncio.TimeoutError:
+                continue
+
+    async def run_once(self) -> None:
+        due_workers = await self.worker_service.list_due_workers()
+        if not due_workers or await self.worker_service.has_running_task():
+            return
+        async with self._run_lock:
+            if await self.worker_service.has_running_task():
+                return
+            due_workers = await self.worker_service.list_due_workers()
+            if not due_workers:
+                return
+            await self.worker_service.execute_worker(due_workers[0].worker_name)
 
 
 class FriendService:

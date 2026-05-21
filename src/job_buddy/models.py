@@ -128,6 +128,7 @@ class GreetingTask(DocumentModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     result_summary: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
+    exception: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
@@ -139,6 +140,22 @@ class GreetingRecord(DocumentModel):
     status: str
     message: str | None = None
     response_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkerConfig(DocumentModel):
+    worker_name: str
+    enabled: bool = False
+    interval_seconds: int = 60
+    next_run_at: datetime | None = None
+    status: str = "idle"
+    last_error: str | None = None
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    last_result_summary: dict[str, Any] = Field(default_factory=dict)
+    query: dict[str, Any] = Field(default_factory=dict)
+    page: int = 1
+    page_max: int = 5
+    batch_size: int = 1
 
 
 class FriendMessage(BaseModel):

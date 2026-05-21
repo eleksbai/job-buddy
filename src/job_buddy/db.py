@@ -22,7 +22,7 @@ class MongoManager:
         return self.client[self._settings.mongodb_db]
 
     async def connect(self) -> AsyncIOMotorDatabase:
-        self._client = AsyncIOMotorClient(self._settings.mongodb_uri)
+        self._client = AsyncIOMotorClient(self._settings.mongodb_uri, tz_aware=True)
         return self.database
 
     async def disconnect(self) -> None:

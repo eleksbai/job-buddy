@@ -1,7 +1,14 @@
 from fastapi import APIRouter, Depends, Query, status
 
 from job_buddy.boss import BossOperationError
-from job_buddy.deps import get_friend_service, get_greeting_service, get_job_service, get_system_service, get_target_service
+from job_buddy.deps import (
+    get_friend_service,
+    get_greeting_service,
+    get_job_service,
+    get_system_service,
+    get_target_service,
+    get_worker_service,
+)
 from job_buddy.schemas import (
     AuthStatusResponse,
     DoctorResponse,
@@ -22,8 +29,10 @@ from job_buddy.schemas import (
     SendMessageResponse,
     TaskTriggerResponse,
     TaskDetailResponse,
+    WorkerConfigRead,
+    WorkerConfigUpdate,
 )
-from job_buddy.services import FriendService, GreetingService, JobCollectionService, SystemService, TargetProfileService
+from job_buddy.services import FriendService, GreetingService, JobCollectionService, SystemService, TargetProfileService, WorkerService
 
 router = APIRouter(prefix="/boss")
 
@@ -141,6 +150,40 @@ async def get_task(task_id: str, greeting_service: GreetingService = Depends(get
         task=GreetingTaskRead(**task.model_dump()),
         records=[GreetingRecordRead(**record.model_dump()) for record in records],
     )
+
+
+@router.get("/workers", response_model=list[WorkerConfigRead], tags=["workers"], operation_id="list_workers")
+async def list_workers(worker_service: WorkerService = Depends(get_worker_service)) -> list[WorkerConfigRead]:
+    items = await worker_service.list_workers()
+    return [WorkerConfigRead(**item.model_dump()) for item in items]
+
+
+@router.get("/workers/{worker_name}", response_model=WorkerConfigRead, tags=["workers"], operation_id="get_worker")
+async def get_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
+    item = await worker_service.get_worker(worker_name)
+    return WorkerConfigRead(**item.model_dump())
+
+
+@router.put("/workers/{worker_name}", response_model=WorkerConfigRead, tags=["workers"], operation_id="update_worker")
+async def update_worker(
+    worker_name: str,
+    payload: WorkerConfigUpdate,
+    worker_service: WorkerService = Depends(get_worker_service),
+) -> WorkerConfigRead:
+    item = await worker_service.update_worker(worker_name, payload)
+    return WorkerConfigRead(**item.model_dump())
+
+
+@router.post("/workers/{worker_name}/start", response_model=WorkerConfigRead, tags=["workers"], operation_id="start_worker")
+async def start_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
+    item = await worker_service.start_worker(worker_name)
+    return WorkerConfigRead(**item.model_dump())
+
+
+@router.post("/workers/{worker_name}/stop", response_model=WorkerConfigRead, tags=["workers"], operation_id="stop_worker")
+async def stop_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
+    item = await worker_service.stop_worker(worker_name)
+    return WorkerConfigRead(**item.model_dump())
 
 
 @router.get("/friends", response_model=list[FriendRecordRead], tags=["friends"], operation_id="list_friends")
