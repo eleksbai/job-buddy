@@ -16,13 +16,12 @@ class LoginIn(BossSchema):
 
 class LoginOut(BossSchema):
     logged_in: bool
+    city: str=""
+    ip: str=""
+    uid: str =""
     user_name: str = ""
-    login_method: str = ""
     message: str = ""
-    last_error: str = ""
-    browser: str = ""
-    last_login_at: datetime | None = None
-    last_logout_at: datetime | None = None
+
 
 
 class HealthcheckOut(BossSchema):

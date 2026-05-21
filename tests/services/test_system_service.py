@@ -47,9 +47,10 @@ class FakeRuntime:
         self.local_status = LoginOut(
             logged_in=True,
             user_name="Alice",
-            login_method="patchright",
+            city="上海",
+            ip="127.0.0.1",
+            uid="uid-1",
             message="登录成功（扫码登录）",
-            browser="Patchright Chromium",
         )
         return self.local_status
 
@@ -135,9 +136,11 @@ def test_login_persists_auth_state():
     assert runtime.login_called is True
     assert result.logged_in is True
     assert result.user_name == "Alice"
-    assert result.browser == "Patchright Chromium"
+    assert result.city == "上海"
+    assert result.ip == "127.0.0.1"
+    assert result.uid == "uid-1"
     assert database.auth_states.state is not None
-    assert database.auth_states.state.login_method == "patchright"
+    assert database.auth_states.state.uid == "uid-1"
 
 
 def test_logout_clears_auth_state():
@@ -146,8 +149,9 @@ def test_logout_clears_auth_state():
     database.auth_states.payload = AuthState(
         logged_in=True,
         user_name="Alice",
-        login_method="patchright",
-        browser="Patchright Chromium",
+        city="上海",
+        ip="127.0.0.1",
+        uid="uid-1",
     ).to_mongo() | {"_id": ObjectId()}
     service = SystemService(FakeDoctorRunner(), Settings(), runtime, database)
 
@@ -165,8 +169,9 @@ def test_get_auth_status_hides_historical_identity_when_logged_out():
     database.auth_states.payload = AuthState(
         logged_in=True,
         user_name="Alice",
-        login_method="patchright",
-        browser="Patchright Chromium",
+        city="上海",
+        ip="127.0.0.1",
+        uid="uid-1",
     ).to_mongo() | {"_id": ObjectId()}
     service = SystemService(FakeDoctorRunner(), Settings(), runtime, database)
 
@@ -174,7 +179,7 @@ def test_get_auth_status_hides_historical_identity_when_logged_out():
 
     assert result.logged_in is False
     assert result.user_name is None
-    assert result.login_method is None
+    assert result.uid == "uid-1"
 
 
 def test_login_maps_auth_errors():

@@ -5,8 +5,9 @@ from typing import Any
 
 from bson import ObjectId
 
-from job_buddy.boss.schemas import HealthcheckOut, JobDetailBossOut, JobDetailCompanyOut, JobDetailIn, JobDetailJobOut, JobDetailOut, JobDetailPayloadOut, SearchJobItemOut, SearchOut
+from job_buddy.boss.schemas import HealthcheckOut, JobDetailBossOut, JobDetailCompanyOut, JobDetailIn, JobDetailJobOut, JobDetailOut, JobDetailPayloadOut, LoginOut, SearchJobItemOut, SearchOut
 from job_buddy.models import (
+    AuthState,
     GreetingTask,
     JobCollectionRecord,
     JobCollectionTrace,
@@ -126,6 +127,37 @@ class FakeBossClient:
             return HealthcheckOut(status="ok", provider="patchright", logged_in=True, message=self.health_message, last_error=self.health_last_error or "")
         return HealthcheckOut(status="auth_required", provider="patchright", logged_in=False, message=self.health_message, last_error=self.health_last_error or "")
 
+    async def get_auth_status(self) -> LoginOut:
+        return LoginOut(
+            logged_in=self.logged_in,
+            user_name="Alice" if self.logged_in else "",
+            city="上海" if self.logged_in else "",
+            ip="127.0.0.1" if self.logged_in else "",
+            uid="uid-1" if self.logged_in else "",
+            message=self.health_message,
+        )
+
+
+class FakeAuthStateCollection:
+    def __init__(self) -> None:
+        self.payload: dict[str, Any] | None = None
+
+    async def find_one(self, filters: dict) -> dict | None:
+        _ = filters
+        return self.payload
+
+    async def insert_one(self, payload: dict):
+        stored = dict(payload)
+        stored["_id"] = ObjectId()
+        self.payload = stored
+        return FakeInsertResult(stored["_id"])
+
+    async def update_one(self, filters: dict, updates: dict):
+        _ = filters
+        if self.payload is not None:
+            self.payload.update(updates["$set"])
+        return None
+
 
 class FakeInsertResult:
     def __init__(self, inserted_id: ObjectId) -> None:
@@ -242,6 +274,7 @@ def build_service() -> tuple[
     service.jobs = FakeJobLeadCollection()
     service.records = FakeJobCollectionRecordCollection()
     service.traces = FakeJobCollectionTraceCollection()
+    service.auth_states = FakeAuthStateCollection()
     return service, service.jobs, service.records, service.traces
 
 

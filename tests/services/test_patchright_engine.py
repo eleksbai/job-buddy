@@ -6,7 +6,7 @@ import pytest
 
 from job_buddy.boss.boss import BossClient, _normalize_job, _normalize_job_detail
 from job_buddy.boss.exceptions import BossOperationError
-from job_buddy.boss.schemas import ChatHistoryIn, GreetJobIn, JobDetailIn, LoginIn, SearchIn, SendMessageIn
+from job_buddy.boss.schemas import ChatHistoryIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, SendMessageIn
 from job_buddy.config import Settings
 
 
@@ -228,15 +228,19 @@ def test_patchright_login_returns_logged_in_result(monkeypatch):
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
-    engine.is_login = _async_result(True)  # type: ignore[method-assign]
-    engine._page_cache = {"name": "Alice"}
+    engine.extract_page = _async_result(LoginOut(logged_in=True, user_name="Alice", message="已登录"))  # type: ignore[method-assign]
 
     result = asyncio.run(engine.login(LoginIn()))
 
     assert result.logged_in is True
     assert result.user_name == "Alice"
-    assert result.login_method == "patchright"
-    assert page.goto_calls == [("https://www.zhipin.com/", "domcontentloaded")]
+    assert result.city == ""
+    assert result.ip == ""
+    assert result.uid == ""
+    assert page.goto_calls == [
+        ("https://www.zhipin.com/", "domcontentloaded"),
+        ("https://www.zhipin.com/", "domcontentloaded"),
+    ]
 
 
 def test_patchright_healthcheck_reports_logged_in_state(monkeypatch):
@@ -247,8 +251,7 @@ def test_patchright_healthcheck_reports_logged_in_state(monkeypatch):
     monkeypatch.setattr("job_buddy.boss.boss.async_playwright", lambda: starter)
 
     engine = BossClient(Settings())
-    engine.is_login = _async_result(True)  # type: ignore[method-assign]
-    engine._page_cache = {"name": "Alice"}
+    engine.extract_page = _async_result(LoginOut(logged_in=True, user_name="Alice", message="已登录"))  # type: ignore[method-assign]
 
     result = asyncio.run(engine.healthcheck())
 
@@ -332,8 +335,9 @@ def test_patchright_search_accepts_keywords_array(monkeypatch):
     assert params["query"] == ["Python FastAPI"]
 
 
-def test_patchright_search_requires_login(monkeypatch):
+def test_patchright_search_does_not_require_login_inside_client(monkeypatch):
     page = FakePage()
+    page.fetch_payload = {"code": 0, "zpData": {"jobList": []}}
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
     starter = FakeStarter(playwright)
@@ -342,12 +346,10 @@ def test_patchright_search_requires_login(monkeypatch):
     engine = BossClient(Settings())
     engine.is_login = _async_result(False)  # type: ignore[method-assign]
 
-    try:
-        asyncio.run(engine.search(SearchIn(query={"query": "python"})))
-    except BossOperationError as exc:
-        assert exc.code == "AUTH_REQUIRED"
-    else:
-        raise AssertionError("expected BossOperationError")
+    result = asyncio.run(engine.search(SearchIn(query={"query": "python"})))
+
+    assert result.items == []
+    assert page.last_fetch_url is not None
 
 
 def test_patchright_greet_warns_with_payload_on_business_error(monkeypatch, caplog):

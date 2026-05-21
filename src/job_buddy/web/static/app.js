@@ -398,10 +398,11 @@ async function loadSearchOptions() {
 }
 
 function renderAuthStrip(status) {
+  const summaryText = [status.city, status.ip].filter(Boolean).join(" / ") || status.message || "-";
   document.getElementById("authStripSummary").innerHTML = [
     status.logged_in ? renderStatusBadge("ok") : renderStatusBadge("warn"),
     `<strong>${escapeHtml(status.logged_in ? status.user_name || "已登录" : "未登录")}</strong>`,
-    `<span>${escapeHtml(status.browser || status.message || "-")}</span>`,
+    `<span>${escapeHtml(summaryText)}</span>`,
   ].join("");
 
   const button = document.getElementById("authActionButton");
@@ -413,19 +414,19 @@ function renderAuthDetail(status) {
   const html = [
     `<div><strong>状态：</strong>${status.logged_in ? renderStatusBadge("ok") : renderStatusBadge("warn")}</div>`,
     `<div><strong>用户名：</strong>${escapeHtml(status.user_name || "-")}</div>`,
-    `<div><strong>登录方式：</strong>${escapeHtml(status.login_method || "-")}</div>`,
-    `<div><strong>浏览器：</strong>${escapeHtml(status.browser || "-")}</div>`,
-    `<div><strong>最近登录：</strong>${escapeHtml(formatDate(status.last_login_at))}</div>`,
-    `<div><strong>最近退出：</strong>${escapeHtml(formatDate(status.last_logout_at))}</div>`,
+    `<div><strong>城市：</strong>${escapeHtml(status.city || "-")}</div>`,
+    `<div><strong>IP：</strong>${escapeHtml(status.ip || "-")}</div>`,
+    `<div><strong>UID：</strong>${escapeHtml(status.uid || "-")}</div>`,
     `<div><strong>提示：</strong>${escapeHtml(status.message || "-")}</div>`,
-    `<div><strong>错误：</strong>${escapeHtml(status.last_error || "-")}</div>`,
   ].join("");
 
   document.getElementById("authSummary").innerHTML = html;
   document.getElementById("dashboardAuthSummary").innerHTML = [
     `<div><strong>当前状态：</strong>${status.logged_in ? "已登录" : "未登录"}</div>`,
     `<div><strong>账号：</strong>${escapeHtml(status.user_name || "-")}</div>`,
-    `<div><strong>环境：</strong>${escapeHtml(status.browser || "-")}</div>`,
+    `<div><strong>UID：</strong>${escapeHtml(status.uid || "-")}</div>`,
+    `<div><strong>城市：</strong>${escapeHtml(status.city || "-")}</div>`,
+    `<div><strong>IP：</strong>${escapeHtml(status.ip || "-")}</div>`,
   ].join("");
 }
 

@@ -17,7 +17,6 @@ from job_buddy.boss import (
     BossOperationError,
     map_boss_operation_error,
     normalize_search_query,
-    raise_for_boss_healthcheck,
 )
 from job_buddy.boss.config import (
     CITY_CODES,
@@ -237,6 +236,78 @@ def _detect_log_level(line: str) -> str:
     return "info"
 
 
+class BossAuthService:
+    def __init__(self, boss_client: BossClient, auth_states: AsyncIOMotorCollection) -> None:
+        self.boss_client = boss_client
+        self.auth_states = auth_states
+
+    async def get_current_auth_state(self, provider: str = "zhipin") -> AuthState | None:
+        payload = await self.auth_states.find_one({"provider": provider})
+        if not payload:
+            return None
+        return AuthState.from_mongo(payload)
+
+    async def upsert_auth_state(self, state: AuthState) -> AuthState:
+        existing = await self.get_current_auth_state(provider=state.provider)
+        payload = state.to_mongo()
+        payload.pop("_id", None)
+        payload["updated_at"] = utc_now()
+        if existing is None:
+            result = await self.auth_states.insert_one(payload)
+            stored = await self.auth_states.find_one({"_id": result.inserted_id})
+            return AuthState.from_mongo(stored)
+        await self.auth_states.update_one({"_id": ObjectId(existing.id)}, {"$set": payload})
+        refreshed = await _get_model(self.auth_states, AuthState, existing.id)
+        if refreshed is None:
+            raise RuntimeError("failed to refresh auth state")
+        return refreshed
+
+    async def sync_auth_state(
+        self,
+        local: LoginOut,
+        stored: AuthState | None,
+    ) -> AuthState:
+        current = stored or AuthState()
+        payload = AuthState(
+            id=current.id,
+            provider=current.provider,
+            logged_in=local.logged_in,
+            user_name=local.user_name,
+            city=local.city or None,
+            ip=local.ip or None,
+            uid=local.uid or None,
+            last_error=current.last_error,
+            created_at=current.created_at,
+        )
+        if local.logged_in:
+            payload.last_error = None
+        return await self.upsert_auth_state(payload)
+
+    async def refresh_auth_state(self) -> tuple[LoginOut, AuthState]:
+        try:
+            local = await self.boss_client.get_auth_status()
+        except Exception as exc:
+            raise map_boss_operation_error(exc) from exc
+        stored = await self.get_current_auth_state()
+        state = await self.sync_auth_state(local, stored)
+        return local, state
+
+    async def require_authenticated(self) -> LoginOut:
+        local, _ = await self.refresh_auth_state()
+        if local.logged_in:
+            return local
+        message = local.message or "未登录，请先点击页面右上角登录"
+        code = "TOKEN_INVALID" if "无效" in message else "AUTH_REQUIRED"
+        raise BossOperationError(
+            code=code,
+            message=message,
+            recoverable=True,
+            recovery_action="login",
+            status_code=401,
+            boss_side=True,
+        )
+
+
 class TargetProfileService:
     def __init__(self, database: AsyncIOMotorDatabase) -> None:
         self.targets = database["target_profiles"]
@@ -272,7 +343,17 @@ class JobCollectionService:
         self.traces = database["job_collection_traces"]
         self.tasks = database["greeting_tasks"]
         self.friends = database["friend_records"]
+        self.auth_states = database["boss_auth_state"]
         self.boss_client = boss_client
+        self._auth_service: BossAuthService | None = None
+
+    @property
+    def auth_service(self) -> BossAuthService:
+        auth_service = getattr(self, "_auth_service", None)
+        if auth_service is None:
+            auth_service = BossAuthService(self.boss_client, self.auth_states)
+            self._auth_service = auth_service
+        return auth_service
 
     async def list_jobs(self, match_status: str | None, greeted: bool | None, limit: int) -> list[JobLead]:
         filters: dict[str, Any] = {}
@@ -309,6 +390,7 @@ class JobCollectionService:
         if job is None:
             if not security_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+            await self.auth_service.require_authenticated()
             try:
                 detail_result = await self.boss_client.get_job_detail(
                     JobDetailIn(
@@ -354,6 +436,7 @@ class JobCollectionService:
         if not force_refresh and job.detail_payload and job.detail_text:
             return job, True
 
+        await self.auth_service.require_authenticated()
         try:
             detail_result = await self.boss_client.get_job_detail(
                 JobDetailIn(
@@ -399,10 +482,8 @@ class JobCollectionService:
         return updated, False
 
     async def search_jobs_readonly(self, query: dict[str, Any]) -> list[dict[str, Any]]:
-        health = None
         try:
-            health = await self.boss_client.healthcheck()
-            raise_for_boss_healthcheck(health)
+            await self.auth_service.require_authenticated()
             normalized_query = normalize_search_query(
                 query,
                 city_codes=CITY_CODES,
@@ -416,7 +497,7 @@ class JobCollectionService:
             )
             search_result = await self.boss_client.search(SearchIn(query=normalized_query))
         except Exception as exc:
-            logger.warning("BOSS search (readonly) failed: query=%s health=%s error=%s", query, health, exc)
+            logger.warning("BOSS search (readonly) failed: query=%s error=%s", query, exc)
             raise map_boss_operation_error(exc) from exc
         return [
             {
@@ -492,10 +573,8 @@ class JobCollectionService:
 
     async def _do_search(self, task: GreetingTask, query: dict[str, Any], target: TargetProfile | None) -> None:
         await self._update_task_step(task.id, "healthcheck")
-        health = None
         try:
-            health = await self.boss_client.healthcheck()
-            raise_for_boss_healthcheck(health)
+            await self.auth_service.require_authenticated()
             normalized_query = normalize_search_query(
                 query,
                 city_codes=CITY_CODES,
@@ -509,7 +588,7 @@ class JobCollectionService:
             )
             search_result = await self.boss_client.search(SearchIn(query=normalized_query))
         except Exception as exc:
-            logger.warning("BOSS search failed: task_id=%s query=%s health=%s error=%s", task.id, query, health, exc)
+            logger.warning("BOSS search failed: task_id=%s query=%s error=%s", task.id, query, exc)
             raise map_boss_operation_error(exc) from exc
 
         await self._update_task_step(task.id, "persist_results")
@@ -656,7 +735,17 @@ class GreetingService:
         self.tasks = database["greeting_tasks"]
         self.records = database["greeting_records"]
         self.jobs = database["job_leads"]
+        self.auth_states = database["boss_auth_state"]
         self.boss_client = boss_client
+        self._auth_service: BossAuthService | None = None
+
+    @property
+    def auth_service(self) -> BossAuthService:
+        auth_service = getattr(self, "_auth_service", None)
+        if auth_service is None:
+            auth_service = BossAuthService(self.boss_client, self.auth_states)
+            self._auth_service = auth_service
+        return auth_service
 
     async def run_greetings(
         self,
@@ -711,6 +800,7 @@ class GreetingService:
         limit: int,
     ) -> None:
         await self._update_step(task.id, "fetch_jobs")
+        await self.auth_service.require_authenticated()
         if source_job_ids:
             jobs = []
             for source_job_id in source_job_ids:
@@ -809,7 +899,17 @@ class GreetingService:
 class FriendService:
     def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
         self.friends = database["friend_records"]
+        self.auth_states = database["boss_auth_state"]
         self.boss_client = boss_client
+        self._auth_service: BossAuthService | None = None
+
+    @property
+    def auth_service(self) -> BossAuthService:
+        auth_service = getattr(self, "_auth_service", None)
+        if auth_service is None:
+            auth_service = BossAuthService(self.boss_client, self.auth_states)
+            self._auth_service = auth_service
+        return auth_service
 
     async def _load_friend(self, source_friend_id: str, *, allow_sync: bool) -> dict[str, Any] | None:
         friend = await self.friends.find_one({"source_friend_id": source_friend_id})
@@ -870,6 +970,7 @@ class FriendService:
                 messages=messages,
             )
 
+        await self.auth_service.require_authenticated()
         try:
             result = await self.boss_client.get_chat_history(
                 ChatHistoryIn(
@@ -942,6 +1043,7 @@ class FriendService:
                 recoverable=False,
                 status_code=404,
             )
+        await self.auth_service.require_authenticated()
         friend = await self._ensure_send_identity(friend, source_friend_id)
         try:
             raw_payload = friend.get("raw_payload") or {}
@@ -1005,6 +1107,7 @@ class FriendService:
         security_id = friend.get("security_id")
         if not boss_id_for_history or not security_id:
             return friend
+        await self.auth_service.require_authenticated()
         try:
             result = await self.boss_client.get_chat_history(
                 ChatHistoryIn(
@@ -1034,6 +1137,7 @@ class FriendService:
         return friend
 
     async def sync_friends(self) -> int:
+        await self.auth_service.require_authenticated()
         try:
             friends = await self.boss_client.list_friends(FriendListIn(page=1))
         except Exception as exc:
@@ -1128,6 +1232,7 @@ class SystemService:
         self.boss_client = boss_client
         self.auth_states = database["boss_auth_state"]
         self.database = database
+        self._auth_service = BossAuthService(boss_client, self.auth_states)
 
     async def run_doctor(self) -> DoctorResponse:
         result = await self.doctor_runner.run()
@@ -1143,12 +1248,7 @@ class SystemService:
         )
 
     async def get_auth_status(self) -> AuthStatusResponse:
-        try:
-            local = await self.boss_client.get_auth_status()
-        except Exception as exc:
-            raise map_boss_operation_error(exc) from exc
-        stored = await self._get_current_auth_state()
-        state = await self._sync_auth_state(local, stored)
+        local, state = await self._auth_service.refresh_auth_state()
         return self._build_auth_response(local, state)
 
     async def login(self, timeout: int = 120) -> AuthStatusResponse:
@@ -1158,8 +1258,8 @@ class SystemService:
             mapped = map_boss_operation_error(exc)
             await self._persist_login_error(mapped.message)
             raise mapped from exc
-        stored = await self._get_current_auth_state()
-        state = await self._sync_auth_state(local, stored, mark_login=local.logged_in)
+        stored = await self._auth_service.get_current_auth_state()
+        state = await self._auth_service.sync_auth_state(local, stored)
         return self._build_auth_response(local, state)
 
     async def logout(self) -> AuthStatusResponse:
@@ -1167,8 +1267,8 @@ class SystemService:
             local = await self.boss_client.logout()
         except Exception as exc:
             raise map_boss_operation_error(exc) from exc
-        stored = await self._get_current_auth_state()
-        state = await self._sync_auth_state(local, stored, mark_logout=True)
+        stored = await self._auth_service.get_current_auth_state()
+        state = await self._auth_service.sync_auth_state(local, stored)
         return self._build_auth_response(local, state)
 
     async def get_search_options(self) -> SearchOptionsResponse:
@@ -1212,77 +1312,35 @@ class SystemService:
         )
 
     async def _get_current_auth_state(self, provider: str = "zhipin") -> AuthState | None:
-        payload = await self.auth_states.find_one({"provider": provider})
-        if not payload:
-            return None
-        return AuthState.from_mongo(payload)
+        return await self._auth_service.get_current_auth_state(provider)
 
     async def _upsert_auth_state(self, state: AuthState) -> AuthState:
-        existing = await self._get_current_auth_state(provider=state.provider)
-        payload = state.to_mongo()
-        payload.pop("_id", None)
-        payload["updated_at"] = utc_now()
-        if existing is None:
-            result = await self.auth_states.insert_one(payload)
-            stored = await self.auth_states.find_one({"_id": result.inserted_id})
-            return AuthState.from_mongo(stored)
-        await self.auth_states.update_one({"_id": ObjectId(existing.id)}, {"$set": payload})
-        refreshed = await _get_model(self.auth_states, AuthState, existing.id)
-        if refreshed is None:
-            raise RuntimeError("failed to refresh auth state")
-        return refreshed
+        return await self._auth_service.upsert_auth_state(state)
 
     async def _sync_auth_state(
         self,
         local: LoginOut,
         stored: AuthState | None,
-        *,
-        mark_login: bool = False,
-        mark_logout: bool = False,
     ) -> AuthState:
-        current = stored or AuthState()
-        now = utc_now()
-        payload = AuthState(
-            id=current.id,
-            provider=current.provider,
-            logged_in=local.logged_in,
-            user_name=local.user_name,
-            login_method=local.login_method if local.logged_in else None,
-            browser=local.browser,
-            last_login_at=local.last_login_at or current.last_login_at,
-            last_logout_at=local.last_logout_at or current.last_logout_at,
-            last_error=local.last_error if local.last_error is not None else current.last_error,
-            created_at=current.created_at,
-            updated_at=now,
+        return await self._auth_service.sync_auth_state(
+            local,
+            stored,
         )
-        if mark_login:
-            payload.last_login_at = now
-            payload.last_logout_at = current.last_logout_at
-            payload.last_error = None
-        elif mark_logout:
-            payload.last_logout_at = now
-            payload.last_error = None
-        elif not local.logged_in:
-            payload.login_method = None
-        return await self._upsert_auth_state(payload)
 
     async def _persist_login_error(self, message: str) -> None:
-        stored = await self._get_current_auth_state()
+        stored = await self._auth_service.get_current_auth_state()
         current = stored or AuthState()
         current.last_error = message
         current.updated_at = utc_now()
-        await self._upsert_auth_state(current)
+        await self._auth_service.upsert_auth_state(current)
 
     def _build_auth_response(self, local: LoginOut, state: AuthState) -> AuthStatusResponse:
         user_name = local.user_name if local.logged_in else None
-        login_method = local.login_method if local.logged_in else None
         return AuthStatusResponse(
             logged_in=local.logged_in,
             user_name=user_name,
-            login_method=login_method,
-            browser=local.browser or state.browser,
-            last_login_at=local.last_login_at or state.last_login_at,
-            last_logout_at=local.last_logout_at or state.last_logout_at,
+            city=local.city or state.city,
+            ip=local.ip or state.ip,
+            uid=local.uid or state.uid,
             message=local.message,
-            last_error=local.last_error or state.last_error,
         )

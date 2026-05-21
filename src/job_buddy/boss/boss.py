@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
@@ -8,7 +9,7 @@ import os
 from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlencode, urlparse
-from typing import Any
+from typing import Any, Dict
 
 from patchright.async_api import async_playwright
 
@@ -194,7 +195,8 @@ def _normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None =
         "security_id": security_id,
         "title": str(job_info.get("jobName") or fallback.get("title") or ""),
         "salary": str(job_info.get("salaryDesc") or fallback.get("salary") or "") or None,
-        "experience": str(job_info.get("experienceName") or job_info.get("jobExperience") or fallback.get("experience") or "") or None,
+        "experience": str(job_info.get("experienceName") or job_info.get("jobExperience") or fallback.get(
+            "experience") or "") or None,
         "degree": str(job_info.get("degreeName") or job_info.get("jobDegree") or "") or None,
         "city": str(job_info.get("locationName") or fallback.get("city") or "") or None,
         "address": str(job_info.get("address") or "") or None,
@@ -262,16 +264,16 @@ def _normalize_job_detail(raw: dict[str, Any], fallback: dict[str, Any] | None =
 
 
 def normalize_search_query(
-    query: dict[str, Any],
-    *,
-    city_codes: dict[str, str],
-    salary_codes: dict[str, str],
-    experience_codes: dict[str, str],
-    education_codes: dict[str, str],
-    industry_codes: dict[str, str],
-    scale_codes: dict[str, str],
-    stage_codes: dict[str, str],
-    job_type_codes: dict[str, str],
+        query: dict[str, Any],
+        *,
+        city_codes: dict[str, str],
+        salary_codes: dict[str, str],
+        experience_codes: dict[str, str],
+        education_codes: dict[str, str],
+        industry_codes: dict[str, str],
+        scale_codes: dict[str, str],
+        stage_codes: dict[str, str],
+        job_type_codes: dict[str, str],
 ) -> dict[str, Any]:
     normalized = dict(query)
     normalized["query"] = _normalize_query_text(query)
@@ -329,7 +331,8 @@ class BossDoctorRunner:
         checks = [
             {"name": "patchright", "status": "ok", "detail": "使用 Patchright 驱动 BOSS 页面", "hint": None},
             {"name": "data_dir", "status": "ok", "detail": str(data_dir), "hint": None},
-            {"name": "profile_dir", "status": "ok", "detail": str(profile_dir), "hint": "如需隔离浏览器环境可调整 JOB_BUDDY_PROFILE_DIR"},
+            {"name": "profile_dir", "status": "ok", "detail": str(profile_dir),
+             "hint": "如需隔离浏览器环境可调整 JOB_BUDDY_PROFILE_DIR"},
         ]
         return BossDoctorResult(
             ok=True,
@@ -389,7 +392,6 @@ class BossClient:
         self._profile_dir = self._resolve_profile_dir()
         self._init_lock = asyncio.Lock()
         self.running = False
-        self._page_cache: dict[str, Any] = {}
 
     @property
     def profile_dir(self) -> Path:
@@ -428,11 +430,14 @@ class BossClient:
             ) from exc
 
         page = context.pages[0] if getattr(context, "pages", None) else await context.new_page()
+
         self.playwright = playwright
         self.context = context
         self.browser = getattr(context, "browser", None)
         self.page = page
         self.running = True
+
+        await self.page.goto(HOME_URL, wait_until="domcontentloaded")
 
     async def check_page_health(self) -> None:
         if await self._is_browser_healthy():
@@ -460,11 +465,6 @@ class BossClient:
             text,
         )
 
-    async def is_login(self) -> bool:
-        await self.page.wait_for_load_state("domcontentloaded")
-        page = await self.extract_page()
-        return bool(page.get("isLogin"))
-
     async def _extract_inline_scripts(self) -> list[str]:
         return await self.page.evaluate(
             """
@@ -474,30 +474,42 @@ class BossClient:
                 """
         )
 
-    async def extract_page(self) -> dict[str, Any]:
+    async def extract_page(self) -> LoginOut:
         inline_scripts = await self._extract_inline_scripts()
         all_text = "###".join(inline_scripts)
         matches = re.findall(r"_PAGE\s*=\s*({.*?})\s*###", all_text, re.S)
         if not matches:
-            self._page_cache = {}
-            return {}
+            logger.error("未提取到登录信息")
+            raise BossOperationError(code="500", message="未提取到登录信息")
         page_payload = await self.js2dict(matches[0])
-        self._page_cache = page_payload if isinstance(page_payload, dict) else {}
-        return self._page_cache
+        return LoginOut(
+            logged_in=bool(page_payload.get("isLogin")),
+            user_name=str(page_payload.get("name") or ""),
+            city=str(page_payload.get("citySiteName") or ""),
+            uid=str(page_payload.get("uid") or ""),
+            ip=str(page_payload.get("clientIP") or ""),
+        )
 
     async def login(self, request: LoginIn) -> LoginOut:
-        _ = request
+        timeout = max(1, int(request.timeout))
         await self.check_page_health()
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
-        if await self.is_login():
-            return self._build_logged_in_result()
+        await self.page.wait_for_load_state("domcontentloaded")
+        login_out = await self.extract_page()
+        if login_out.logged_in:
+            login_out.message = '已登录'
+            return login_out
 
         try:
             await self._open_login_page(self.page)
-            for _ in range(180):
-                await asyncio.sleep(10)
-                if await self.is_login():
-                    return self._build_logged_in_result()
+            for _ in range(timeout):
+                await asyncio.sleep(1)
+                await self.page.wait_for_load_state("domcontentloaded")
+                login_out = await self.extract_page()
+                if login_out.logged_in:
+                    login_out.message = '已登录'
+                    return login_out
+
         except BossOperationError:
             raise
         except Exception as exc:
@@ -511,22 +523,29 @@ class BossClient:
                 recoverable=True,
                 status_code=502,
             ) from exc
-
-        return await self._build_login_result()
+        login_out.message = '请在当前页面完成扫码登录'
+        return login_out
 
     async def get_auth_status(self) -> LoginOut:
         try:
             await self.check_page_health()
-            await self.page.goto(HOME_URL, wait_until="domcontentloaded")
-            if await self.is_login():
-                return self._build_logged_in_result()
+            await self.page.wait_for_load_state("domcontentloaded")
+            login_out = await self.extract_page()
+            if login_out.logged_in:
+                login_out.message = '已登录'
+                return login_out
+            login_out.message = '未登录，请先点击页面右上角登录'
+            return login_out
+
         except BossOperationError:
             raise
         except Exception:
-            return await self._build_login_result()
-        return await self._build_login_result()
+            logger.error("获取登录状态失败")
+            logger.error(traceback.format_exc())
+            return LoginOut(logged_in=False, message="获取登录状态失败")
 
     async def logout(self) -> LoginOut:
+
         logger.warning("BossClient logout is unavailable")
         raise BossOperationError(
             code="ENGINE_UNAVAILABLE",
@@ -537,17 +556,6 @@ class BossClient:
 
     async def search(self, request: SearchIn) -> SearchOut:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient search requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         trace = self._build_search_trace(request.query)
         payload = await self._search_jobs_payload(trace["request_url"])
@@ -589,17 +597,6 @@ class BossClient:
 
     async def detail(self, request: JobDetailIn) -> JobDetailOut:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient detail requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         resolved_security_id = request.security_id or self._extract_security_id(request.job_url)
         if not resolved_security_id:
@@ -698,7 +695,8 @@ class BossClient:
                 job=job_out,
                 company=company_out,
                 boss=boss_out,
-                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"), dict) else {},
+                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"),
+                                                                            dict) else {},
             ),
             detail_text=str(normalized.get("detail_text") or ""),
             job_id=str(normalized.get("job_id") or request.job_id),
@@ -709,22 +707,12 @@ class BossClient:
             boss_active_text=str(normalized.get("boss_active_text") or ""),
             job_active_time=int(normalized.get("job_active_time") or 0),
             job_url=str(normalized.get("job_url") or request.job_url or ""),
-            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"), dict) else {},
+            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"),
+                                                                                  dict) else {},
         )
 
     async def friend_list(self, request: FriendListIn) -> list[FriendListItemOut]:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient friend list requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         url = f"{FRIEND_LIST_URL}?page={request.page}"
         payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
@@ -799,17 +787,6 @@ class BossClient:
 
     async def greet(self, request: GreetJobIn) -> GreetJobOut:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient greet requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         body = {
             "securityId": request.security_id,
@@ -864,17 +841,6 @@ class BossClient:
 
     async def chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient chat history requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         url = f"{CHAT_HISTORY_URL}?bossId={request.boss_id}&maxMsgId=0&c={request.count}&page={request.page}&src=0&securityId={request.security_id}"
         payload = await self._fetch_json(url, WEB_GEEK_CHAT_URL)
@@ -941,17 +907,6 @@ class BossClient:
 
     async def send_message(self, request: SendMessageIn) -> SendMessageOut:
         await self.check_page_health()
-        login_status = await self.get_auth_status()
-        if not login_status.logged_in:
-            logger.warning("BossClient send message requires login")
-            raise BossOperationError(
-                code="AUTH_REQUIRED",
-                message="未登录，请先点击页面右上角登录",
-                recoverable=True,
-                recovery_action="login",
-                status_code=401,
-                boss_side=True,
-            )
 
         content = request.content.strip()
         if not content:
@@ -1268,7 +1223,7 @@ class BossClient:
             provider=self.name,
             logged_in=auth.logged_in,
             message=auth.message,
-            last_error=auth.last_error,
+            last_error="",
         )
 
     async def close(self) -> None:
@@ -1455,26 +1410,6 @@ class BossClient:
             raw_payload=dict(payload.get("raw_payload") or payload),
         )
 
-    async def _build_login_result(self) -> LoginOut:
-        return LoginOut(
-            logged_in=False,
-            user_name="",
-            login_method="patchright",
-            message="已通过 Patchright 启动浏览器并打开 BOSS 登录页，请在当前页面完成扫码登录",
-            browser="Patchright Chromium",
-            last_error="",
-        )
-
-    def _build_logged_in_result(self) -> LoginOut:
-        return LoginOut(
-            logged_in=True,
-            user_name=str(self._page_cache.get("name") or ""),
-            login_method="patchright",
-            message="已登录",
-            browser="Patchright Chromium",
-            last_error="",
-        )
-
     async def _is_browser_healthy(self) -> bool:
         if not self.running or self.page is None or self.context is None or self.playwright is None:
             return False
@@ -1496,7 +1431,8 @@ class BossClient:
             pass
 
     def _resolve_profile_dir(self) -> Path:
-        raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get("profile_dir") or self.settings.boss_profile_dir or DEFAULT_PROFILE_DIR
+        raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get(
+            "profile_dir") or self.settings.boss_profile_dir or DEFAULT_PROFILE_DIR
         path = Path(str(raw)).expanduser()
         if not path.is_absolute():
             path = self.settings.project_root / path

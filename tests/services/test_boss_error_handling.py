@@ -3,7 +3,8 @@ import asyncio
 from bson import ObjectId
 
 from job_buddy.boss import BossOperationError
-from job_buddy.boss.schemas import FriendListIn, FriendListItemOut, GreetJobIn, GreetJobOut
+from job_buddy.boss.schemas import FriendListIn, FriendListItemOut, GreetJobIn, GreetJobOut, LoginOut
+from job_buddy.models import AuthState
 from job_buddy.models import GreetingRecord
 from job_buddy.services import FriendService, GreetingService
 
@@ -13,6 +14,9 @@ class AuthRequired(Exception):
 
 
 class ExplodingFriendClient:
+    async def get_auth_status(self) -> LoginOut:
+        return LoginOut(logged_in=True, user_name="Alice", city="上海", ip="127.0.0.1", uid="uid-1", message="已登录")
+
     async def list_friends(self, request: FriendListIn) -> list[FriendListItemOut]:
         _ = request
         raise AuthRequired()
@@ -29,14 +33,41 @@ class FakeFriendCollection:
 
 
 class ExplodingGreetingClient:
+    async def get_auth_status(self) -> LoginOut:
+        return LoginOut(logged_in=True, user_name="Alice", city="上海", ip="127.0.0.1", uid="uid-1", message="已登录")
+
     async def greet_job(self, request: GreetJobIn) -> GreetJobOut:
         _ = request
         raise AuthRequired()
 
 
 class SuccessfulGreetingClient:
+    async def get_auth_status(self) -> LoginOut:
+        return LoginOut(logged_in=True, user_name="Alice", city="上海", ip="127.0.0.1", uid="uid-1", message="已登录")
+
     async def greet_job(self, request: GreetJobIn) -> GreetJobOut:
         return GreetJobOut(job_id=request.job_id, security_id=request.security_id, encrypt_boss_id="boss-1", raw_payload={})
+
+
+class FakeAuthStateCollection:
+    def __init__(self) -> None:
+        self.payload: dict | None = None
+
+    async def find_one(self, filters: dict):
+        _ = filters
+        return self.payload
+
+    async def insert_one(self, payload: dict):
+        payload = dict(payload)
+        payload["_id"] = ObjectId()
+        self.payload = payload
+        return type("InsertResult", (), {"inserted_id": payload["_id"]})()
+
+    async def update_one(self, filters: dict, updates: dict):
+        _ = filters
+        if self.payload is not None:
+            self.payload.update(updates["$set"])
+        return None
 
 
 class FakeTaskCollection:
@@ -138,6 +169,7 @@ def test_sync_friends_maps_auth_errors():
     service = FriendService.__new__(FriendService)
     service.boss_client = ExplodingFriendClient()
     service.friends = FakeFriendCollection()
+    service.auth_states = FakeAuthStateCollection()
 
     try:
         asyncio.run(service.sync_friends())
@@ -154,6 +186,7 @@ def test_run_greetings_records_mapped_auth_errors():
     service.tasks = FakeTaskCollection()
     service.records = FakeGreetingRecordCollection()
     service.jobs = FakeJobCollection()
+    service.auth_states = FakeAuthStateCollection()
 
     task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
 
@@ -169,6 +202,7 @@ def test_run_greetings_marks_job_as_greeted_and_keeps_match_status_after_success
     service.tasks = FakeTaskCollection()
     service.records = FakeGreetingRecordCollection()
     service.jobs = FakeJobCollection()
+    service.auth_states = FakeAuthStateCollection()
 
     task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
 
@@ -185,6 +219,7 @@ def test_run_greetings_accepts_source_job_id_list():
     service.tasks = FakeTaskCollection()
     service.records = FakeGreetingRecordCollection()
     service.jobs = FakeJobCollection()
+    service.auth_states = FakeAuthStateCollection()
 
     task = asyncio.run(
         service.run_greetings(

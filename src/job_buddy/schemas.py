@@ -255,12 +255,10 @@ class HealthResponse(BaseModel):
 class AuthStatusResponse(BaseModel):
     logged_in: bool
     user_name: str | None = None
-    login_method: str | None = None
-    browser: str | None = None
-    last_login_at: datetime | None = None
-    last_logout_at: datetime | None = None
+    city: str | None = None
+    ip: str | None = None
+    uid: str | None = None
     message: str
-    last_error: str | None = None
 
 
 class SearchOptionsResponse(BaseModel):

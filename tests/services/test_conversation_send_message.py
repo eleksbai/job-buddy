@@ -1,7 +1,9 @@
 import asyncio
 
+from bson import ObjectId
+
 from job_buddy.boss import BossOperationError
-from job_buddy.boss.schemas import ChatHistoryIn, ChatHistoryMessageOut, ChatHistoryOut, FriendListIn, FriendListItemOut, SendMessageIn, SendMessageOut
+from job_buddy.boss.schemas import ChatHistoryIn, ChatHistoryMessageOut, ChatHistoryOut, FriendListIn, FriendListItemOut, LoginOut, SendMessageIn, SendMessageOut
 from job_buddy.services import FriendService
 
 
@@ -32,6 +34,16 @@ class FakeMessageClient:
     def __init__(self) -> None:
         self.calls: list[SendMessageIn] = []
         self.friends_payload: list[FriendListItemOut] = []
+
+    async def get_auth_status(self) -> LoginOut:
+        return LoginOut(
+            logged_in=True,
+            user_name="Alice",
+            city="上海",
+            ip="127.0.0.1",
+            uid="uid-1",
+            message="已登录",
+        )
 
     async def send_message(self, request: SendMessageIn) -> SendMessageOut:
         self.calls.append(request)
@@ -92,6 +104,27 @@ class FakeMessageClient:
         )
 
 
+class FakeAuthStateCollection:
+    def __init__(self) -> None:
+        self.payload: dict | None = None
+
+    async def find_one(self, filters: dict):
+        _ = filters
+        return self.payload
+
+    async def insert_one(self, payload: dict):
+        payload = dict(payload)
+        payload["_id"] = ObjectId()
+        self.payload = payload
+        return type("InsertResult", (), {"inserted_id": payload["_id"]})()
+
+    async def update_one(self, filters: dict, updates: dict):
+        _ = filters
+        if self.payload is not None:
+            self.payload.update(updates["$set"])
+        return None
+
+
 def test_send_friend_message_uses_source_friend_id():
     record = {
         "_id": "friend-1",
@@ -106,6 +139,7 @@ def test_send_friend_message_uses_source_friend_id():
     service = FriendService.__new__(FriendService)
     service.friends = FakeFriendRepository(record)
     service.boss_client = FakeMessageClient()
+    service.auth_states = FakeAuthStateCollection()
 
     result = asyncio.run(service.send_friend_message("boss-1", "  你好  "))
 
@@ -131,6 +165,7 @@ def test_send_friend_message_missing_friend_returns_404_error():
     service = FriendService.__new__(FriendService)
     service.friends = FakeFriendRepository(None)
     service.boss_client = FakeMessageClient()
+    service.auth_states = FakeAuthStateCollection()
 
     try:
         asyncio.run(service.send_friend_message("boss-1", "你好"))
@@ -155,6 +190,7 @@ def test_send_friend_message_syncs_friends_before_failing_missing_friend():
     service = FriendService.__new__(FriendService)
     service.friends = FakeFriendRepository(None)
     service.boss_client = FakeMessageClient()
+    service.auth_states = FakeAuthStateCollection()
     service.boss_client.friends_payload = [
         FriendListItemOut(
             gid="gid-1",
@@ -210,6 +246,7 @@ def test_get_friend_messages_replaces_cached_messages_on_sync():
     service = FriendService.__new__(FriendService)
     service.friends = FakeFriendRepository(record)
     service.boss_client = FakeMessageClient()
+    service.auth_states = FakeAuthStateCollection()
 
     result = asyncio.run(service.get_friend_messages("boss-1", page=1, count=100))
 
