@@ -140,7 +140,6 @@ def test_execute_search_worker_delays_two_hours_after_boss_error(monkeypatch):
                 task_type="search",
                 status=TaskStatus.FAILED,
                 error_message="need login",
-                exception="BossOperationError",
                 result_summary={},
             )
 
@@ -173,7 +172,6 @@ def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
                 task_type="detail_sync",
                 status=TaskStatus.FAILED,
                 error_message="detail blocked",
-                exception="BossOperationError",
                 result_summary={},
             )
 
@@ -191,7 +189,7 @@ def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
     assert min_expected <= worker.next_run_at.timestamp() <= max_expected
 
 
-def test_execute_worker_keeps_interval_for_non_boss_error(monkeypatch):
+def test_execute_worker_delays_two_hours_for_non_success_task(monkeypatch):
     service, _ = build_service()
     asyncio.run(service.sync_defaults_on_startup())
     asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"], "page": 1}, interval_seconds=45)))
@@ -207,7 +205,6 @@ def test_execute_worker_keeps_interval_for_non_boss_error(monkeypatch):
                 task_type="search",
                 status=TaskStatus.FAILED,
                 error_message="boom",
-                exception="RuntimeError",
                 result_summary={},
             )
 
@@ -220,6 +217,38 @@ def test_execute_worker_keeps_interval_for_non_boss_error(monkeypatch):
     assert worker.status == "error"
     assert worker.last_error == "boom"
     assert worker.next_run_at is not None
-    min_expected = before.timestamp() + 45
-    max_expected = after.timestamp() + 45
+    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
+    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
+    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+
+
+def test_execute_worker_delays_two_hours_for_partial_success(monkeypatch):
+    service, _ = build_service()
+    asyncio.run(service.sync_defaults_on_startup())
+    asyncio.run(service.start_worker("detail"))
+
+    class FakeJobCollectionService:
+        def __init__(self, database, boss_client) -> None:
+            _ = database, boss_client
+
+        async def run_detail_sync(self, limit):
+            _ = limit
+            return GreetingTask(
+                task_type="detail_sync",
+                status=TaskStatus.PARTIAL_SUCCESS,
+                error_message="1 failed",
+                result_summary={"total": 2, "succeeded": 1, "failed": 1},
+            )
+
+    monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
+
+    before = datetime.now(tz=UTC)
+    worker = asyncio.run(service.execute_worker("detail"))
+    after = datetime.now(tz=UTC)
+
+    assert worker.status == "idle"
+    assert worker.last_error == "1 failed"
+    assert worker.next_run_at is not None
+    min_expected = before.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
+    max_expected = after.timestamp() + BOSS_ERROR_RETRY_DELAY_SECONDS
     assert min_expected <= worker.next_run_at.timestamp() <= max_expected

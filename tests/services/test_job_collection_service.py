@@ -201,6 +201,28 @@ class FakeJobLeadCollection:
         self.payloads[stored["source_job_id"]] = stored
         return FakeInsertResult(inserted_id)
 
+    def find(self, filters: dict):
+        _ = filters
+        items = list(self.payloads.values())
+
+        class Cursor:
+            def __init__(self, rows: list[dict[str, Any]]) -> None:
+                self.rows = rows
+
+            def sort(self, *args, **kwargs):
+                _ = args, kwargs
+                return self
+
+            def limit(self, count: int):
+                self.rows = self.rows[:count]
+                return self
+
+            async def to_list(self, length=None):
+                _ = length
+                return list(self.rows)
+
+        return Cursor(items)
+
     async def find_one(self, filters: dict) -> dict | None:
         if "_id" in filters:
             for payload in self.payloads.values():
@@ -314,7 +336,6 @@ def test_search_jobs_fails_fast_when_login_state_is_invalid():
 
     assert task.status.value == "failed"
     assert task.error_message == "登录态无效，请重新登录"
-    assert task.exception == "BossOperationError"
     assert len(records.items) == 0
     assert len(traces.items) == 0
     assert len(jobs.items) == 0
@@ -328,10 +349,21 @@ def test_search_jobs_maps_auth_errors_from_runtime():
 
     assert task.status.value == "failed"
     assert task.error_message == "未登录，请先点击页面右上角登录"
-    assert task.exception == "BossOperationError"
     assert len(records.items) == 0
     assert len(traces.items) == 0
     assert len(jobs.items) == 0
+
+
+def test_run_detail_sync_returns_failed_summary_on_failed_detail_fetch():
+    service, jobs, records, traces = build_service()
+    _ = jobs, records, traces
+    asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
+    service.boss_client.detail_error = AuthRequired()
+
+    task = asyncio.run(service.run_detail_sync(limit=1))
+
+    assert task.status.value == "failed"
+    assert task.result_summary == {"total": 1, "succeeded": 0, "failed": 1}
 
 
 def test_get_job_detail_returns_cached_detail_without_refetching():

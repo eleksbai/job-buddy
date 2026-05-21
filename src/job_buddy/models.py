@@ -128,7 +128,6 @@ class GreetingTask(DocumentModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     result_summary: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
-    exception: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

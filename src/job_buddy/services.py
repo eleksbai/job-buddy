@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -541,7 +542,6 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
-                    "exception": "TimeoutError",
                     "finished_at": utc_now(),
                 },
             )
@@ -562,7 +562,6 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": str(exc),
-                    "exception": exc.__class__.__name__,
                     "finished_at": utc_now(),
                 },
             )
@@ -600,7 +599,6 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
-                    "exception": "TimeoutError",
                     "finished_at": utc_now(),
                 },
             )
@@ -616,7 +614,6 @@ class JobCollectionService:
                 {
                     "status": TaskStatus.FAILED,
                     "error_message": str(exc),
-                    "exception": exc.__class__.__name__,
                     "finished_at": utc_now(),
                 },
             )
@@ -1110,7 +1107,7 @@ class WorkerService:
                     "last_result_summary": dict(task.result_summary),
                     "status": next_status,
                     "last_finished_at": utc_now(),
-                    "next_run_at": self._next_run_at_for_task(worker.interval_seconds, task),
+                    "next_run_at": self._next_run_at_for_task_status(task.status, worker.interval_seconds),
                     "last_error": task.error_message,
                 }
                 return await self._update_worker_model(worker_name, updates)
@@ -1121,12 +1118,12 @@ class WorkerService:
                 "last_result_summary": dict(task.result_summary),
                 "status": next_status,
                 "last_finished_at": utc_now(),
-                "next_run_at": self._next_run_at_for_task(worker.interval_seconds, task),
+                "next_run_at": self._next_run_at_for_task_status(task.status, worker.interval_seconds),
                 "last_error": task.error_message,
             }
             return await self._update_worker_model(worker_name, updates)
-        except BossOperationError as exc:
-            logger.exception("worker execution failed with boss error: worker=%s code=%s", worker_name, exc.code)
+        except Exception as exc:
+            logger.exception("worker execution failed: worker=%s", worker_name)
             return await self._update_worker_model(
                 worker_name,
                 {
@@ -1136,23 +1133,12 @@ class WorkerService:
                     "last_error": str(exc),
                 },
             )
-        except Exception as exc:
-            logger.exception("worker execution failed: worker=%s", worker_name)
-            return await self._update_worker_model(
-                worker_name,
-                {
-                    "status": "error",
-                    "last_finished_at": utc_now(),
-                    "next_run_at": self._next_run_at_for_interval(worker.interval_seconds),
-                    "last_error": str(exc),
-                },
-            )
 
     def _next_run_at_for_interval(self, interval_seconds: int) -> datetime:
         return utc_now() + timedelta(seconds=max(1, interval_seconds))
 
-    def _next_run_at_for_task(self, interval_seconds: int, task: GreetingTask) -> datetime:
-        if task.exception == "BossOperationError":
+    def _next_run_at_for_task_status(self, task_status: TaskStatus, interval_seconds: int) -> datetime:
+        if task_status != TaskStatus.SUCCEEDED:
             return self._next_run_at_for_boss_error()
         return self._next_run_at_for_interval(interval_seconds)
 
@@ -1190,6 +1176,7 @@ class WorkerScheduler:
 
     async def _run(self) -> None:
         while not self._stopped.is_set():
+            await asyncio.sleep(random.random()*5+3)
             try:
                 await self.run_once()
             except Exception:

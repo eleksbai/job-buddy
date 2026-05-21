@@ -143,7 +143,6 @@ class GreetingTaskRead(TimestampedSchema):
     input_payload: dict[str, Any]
     result_summary: dict[str, Any]
     error_message: str | None = None
-    exception: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
