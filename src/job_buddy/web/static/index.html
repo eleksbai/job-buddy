@@ -150,6 +150,58 @@
             </div>
           </div>
 
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>后台工作者</h3>
+              <span class="hint-text">默认关闭，需手动启动。后台任务只会在当前没有运行中任务时尝试执行。</span>
+            </div>
+            <div class="dashboard-grid">
+              <article class="panel-card">
+                <div class="panel-card-header">
+                  <h3>搜索 Worker</h3>
+                  <div class="panel-actions">
+                    <button id="saveSearchWorkerButton" class="button-secondary">保存配置</button>
+                    <button id="startSearchWorkerButton">启动</button>
+                    <button id="stopSearchWorkerButton" class="button-secondary">停止</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    间隔秒数
+                    <input id="searchWorkerIntervalInput" type="number" min="1" value="60" />
+                  </label>
+                  <label>
+                    最大页数
+                    <input id="searchWorkerPageMaxInput" type="number" min="1" value="5" />
+                  </label>
+                </div>
+                <div id="searchWorkerMeta" class="stack-list" style="margin-top: 1rem"></div>
+              </article>
+
+              <article class="panel-card">
+                <div class="panel-card-header">
+                  <h3>详情 Worker</h3>
+                  <div class="panel-actions">
+                    <button id="saveDetailWorkerButton" class="button-secondary">保存配置</button>
+                    <button id="startDetailWorkerButton">启动</button>
+                    <button id="stopDetailWorkerButton" class="button-secondary">停止</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    间隔秒数
+                    <input id="detailWorkerIntervalInput" type="number" min="1" value="30" />
+                  </label>
+                  <label>
+                    每轮条数
+                    <input id="detailWorkerBatchSizeInput" type="number" min="1" value="1" />
+                  </label>
+                </div>
+                <div id="detailWorkerMeta" class="stack-list" style="margin-top: 1rem"></div>
+              </article>
+            </div>
+          </div>
+
           <div id="searchUpdateNotice" class="search-update-banner" hidden></div>
 
           <div class="panel-card">
@@ -236,7 +288,7 @@
           <div class="panel-card">
             <div class="panel-card-header">
               <h3>任务记录</h3>
-              <span class="hint-text">当前仅持久化搜索与打招呼任务</span>
+              <span class="hint-text">展示搜索、详情采集与打招呼任务</span>
             </div>
             <div id="tasksTable"></div>
           </div>

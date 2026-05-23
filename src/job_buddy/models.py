@@ -130,6 +130,7 @@ class GreetingTask(DocumentModel):
     error_message: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    info: dict[str, Any] = Field(default_factory=dict)
 
 
 class GreetingRecord(DocumentModel):

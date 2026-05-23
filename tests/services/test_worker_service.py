@@ -5,9 +5,9 @@ from typing import Any
 from bson import ObjectId
 import pytest
 
-from job_buddy.models import GreetingTask, TaskStatus, WorkerConfig
+from job_buddy.models import GreetingTask, TaskStatus
 from job_buddy.schemas import WorkerConfigUpdate
-from job_buddy.services import WorkerFailException, WorkerScheduler, WorkerService
+from job_buddy.services import DetailWorker, SearchWorker, WorkerFailException
 
 
 class FakeInsertResult:
@@ -41,29 +41,6 @@ class FakeWorkerConfigCollection:
             payload.update(updates["$set"])
         return None
 
-    def find(self, filters: dict):
-        _ = filters
-        items = list(self.payloads.values())
-
-        class Cursor:
-            def __init__(self, rows):
-                self.rows = rows
-
-            def sort(self, field, direction):
-                reverse = direction < 0
-                self.rows = sorted(self.rows, key=lambda item: item.get(field) or "", reverse=reverse)
-                return self
-
-            def limit(self, count):
-                self.rows = self.rows[:count]
-                return self
-
-            async def to_list(self, length=None):
-                _ = length
-                return list(self.rows)
-
-        return Cursor(items)
-
 
 class FakeTaskCollection:
     def __init__(self) -> None:
@@ -85,54 +62,75 @@ class FakeDatabase:
         return self.collections[name]
 
 
-def build_service() -> tuple[WorkerService, FakeDatabase]:
+class FakeBossClient:
+    def __init__(self) -> None:
+        self.goto_job_calls = 0
+
+    async def goto_job(self) -> None:
+        self.goto_job_calls += 1
+
+
+def build_search_worker() -> tuple[SearchWorker, FakeDatabase]:
     database = FakeDatabase()
-    service = WorkerService(database, boss_client=None)  # type: ignore[arg-type]
-    return service, database
+    worker = SearchWorker(database, boss_client=FakeBossClient())  # type: ignore[arg-type]
+    return worker, database
 
 
-def build_scheduler() -> WorkerScheduler:
-    return WorkerScheduler(database=FakeDatabase(), boss_client=None)  # type: ignore[arg-type]
+def build_detail_worker() -> tuple[DetailWorker, FakeDatabase]:
+    database = FakeDatabase()
+    worker = DetailWorker(database, boss_client=FakeBossClient())  # type: ignore[arg-type]
+    return worker, database
 
 
-def test_sync_defaults_on_startup_creates_disabled_workers():
-    service, database = build_service()
+def test_sync_default_on_startup_creates_disabled_search_worker():
+    worker, database = build_search_worker()
 
-    items = asyncio.run(service.sync_defaults_on_startup())
+    item = asyncio.run(worker.sync_default_on_startup())
 
-    assert {item.worker_name for item in items} == {"search", "detail"}
-    assert all(item.enabled is False for item in items)
-    assert all(item.next_run_at is None for item in items)
+    assert item.worker_name == "search"
+    assert item.enabled is False
+    assert item.next_run_at is None
     assert database["worker_configs"].payloads["search"]["enabled"] is False
 
 
+def test_sync_default_on_startup_creates_disabled_detail_worker():
+    worker, database = build_detail_worker()
+
+    item = asyncio.run(worker.sync_default_on_startup())
+
+    assert item.worker_name == "detail"
+    assert item.enabled is False
+    assert item.next_run_at is None
+    assert database["worker_configs"].payloads["detail"]["enabled"] is False
+
+
 def test_has_running_task_checks_running_status():
-    service, database = build_service()
+    worker, database = build_search_worker()
     database["greeting_tasks"].payloads.append(
         GreetingTask(task_type="search", status=TaskStatus.RUNNING).model_dump()
     )
 
-    result = asyncio.run(service.has_running_task())
+    result = asyncio.run(worker.has_running_task())
 
     assert result is True
 
 
 def test_start_worker_sets_enabled_and_next_run():
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"]})))
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.update_worker(WorkerConfigUpdate(query={"keywords": ["Python"]})))
 
-    worker = asyncio.run(service.start_worker("search"))
+    item = asyncio.run(worker.start_worker())
 
-    assert worker.enabled is True
-    assert worker.next_run_at is not None
+    assert item.enabled is True
+    assert item.next_run_at is not None
 
 
-def test_execute_search_worker_delays_two_hours_after_boss_error(monkeypatch):
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"]})))
-    asyncio.run(service.start_worker("search"))
+def test_execute_search_worker_delays_after_failed_task(monkeypatch):
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.update_worker(WorkerConfigUpdate(query={"keywords": ["Python"]})))
+    asyncio.run(worker.start_worker())
 
     class FakeJobCollectionService:
         def __init__(self, database, boss_client) -> None:
@@ -150,18 +148,18 @@ def test_execute_search_worker_delays_two_hours_after_boss_error(monkeypatch):
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
     with pytest.raises(WorkerFailException):
-        asyncio.run(service.execute_worker("search"))
+        asyncio.run(worker.execute())
 
-    worker = asyncio.run(service.get_worker("search"))
-    assert worker.status == "error"
-    assert worker.last_error == "need login"
-    assert worker.next_run_at is not None
+    updated = asyncio.run(worker.get_worker())
+    assert updated.status == "error"
+    assert updated.last_error == "need login"
+    assert updated.next_run_at is not None
 
 
-def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.start_worker("detail"))
+def test_execute_detail_worker_delays_after_failed_task(monkeypatch):
+    worker, _ = build_detail_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.start_worker())
 
     class FakeJobCollectionService:
         def __init__(self, database, boss_client) -> None:
@@ -179,19 +177,19 @@ def test_execute_detail_worker_delays_two_hours_after_boss_error(monkeypatch):
     monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
 
     with pytest.raises(WorkerFailException):
-        asyncio.run(service.execute_worker("detail"))
+        asyncio.run(worker.execute())
 
-    worker = asyncio.run(service.get_worker("detail"))
-    assert worker.status == "error"
-    assert worker.last_error == "detail blocked"
-    assert worker.next_run_at is not None
+    updated = asyncio.run(worker.get_worker())
+    assert updated.status == "error"
+    assert updated.last_error == "detail blocked"
+    assert updated.next_run_at is not None
 
 
-def test_execute_worker_delays_two_hours_for_non_success_task(monkeypatch):
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"], "page": 1}, interval_seconds=45)))
-    asyncio.run(service.start_worker("search"))
+def test_execute_search_worker_uses_interval_for_next_run(monkeypatch):
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.update_worker(WorkerConfigUpdate(query={"keywords": ["Python"]}, interval_seconds=45)))
+    asyncio.run(worker.start_worker())
 
     class FakeJobCollectionService:
         def __init__(self, database, boss_client) -> None:
@@ -210,22 +208,22 @@ def test_execute_worker_delays_two_hours_for_non_success_task(monkeypatch):
 
     before = datetime.now(tz=UTC)
     with pytest.raises(WorkerFailException):
-        asyncio.run(service.execute_worker("search"))
+        asyncio.run(worker.execute())
     after = datetime.now(tz=UTC)
 
-    worker = asyncio.run(service.get_worker("search"))
-    assert worker.status == "error"
-    assert worker.last_error == "boom"
-    assert worker.next_run_at is not None
+    updated = asyncio.run(worker.get_worker())
+    assert updated.status == "error"
+    assert updated.last_error == "boom"
+    assert updated.next_run_at is not None
     min_expected = before.timestamp() + 45
     max_expected = after.timestamp() + 45
-    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+    assert min_expected <= updated.next_run_at.timestamp() <= max_expected
 
 
-def test_execute_worker_delays_two_hours_for_partial_success(monkeypatch):
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.start_worker("detail"))
+def test_execute_detail_worker_marks_partial_success_as_error(monkeypatch):
+    worker, _ = build_detail_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.start_worker())
 
     class FakeJobCollectionService:
         def __init__(self, database, boss_client) -> None:
@@ -244,23 +242,23 @@ def test_execute_worker_delays_two_hours_for_partial_success(monkeypatch):
 
     before = datetime.now(tz=UTC)
     with pytest.raises(WorkerFailException):
-        asyncio.run(service.execute_worker("detail"))
+        asyncio.run(worker.execute())
     after = datetime.now(tz=UTC)
 
-    worker = asyncio.run(service.get_worker("detail"))
-    assert worker.status == "error"
-    assert worker.last_error == "1 failed"
-    assert worker.next_run_at is not None
+    updated = asyncio.run(worker.get_worker())
+    assert updated.status == "error"
+    assert updated.last_error == "1 failed"
+    assert updated.next_run_at is not None
     min_expected = before.timestamp() + 30
     max_expected = after.timestamp() + 30
-    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+    assert min_expected <= updated.next_run_at.timestamp() <= max_expected
 
 
 def test_execute_worker_runtime_error_updates_worker_before_raising(monkeypatch):
-    service, _ = build_service()
-    asyncio.run(service.sync_defaults_on_startup())
-    asyncio.run(service.update_worker("search", WorkerConfigUpdate(query={"keywords": ["Python"]}, interval_seconds=60)))
-    asyncio.run(service.start_worker("search"))
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.update_worker(WorkerConfigUpdate(query={"keywords": ["Python"]}, interval_seconds=60)))
+    asyncio.run(worker.start_worker())
 
     class FakeJobCollectionService:
         def __init__(self, database, boss_client) -> None:
@@ -274,27 +272,63 @@ def test_execute_worker_runtime_error_updates_worker_before_raising(monkeypatch)
 
     before = datetime.now(tz=UTC)
     with pytest.raises(WorkerFailException):
-        asyncio.run(service.execute_worker("search"))
+        asyncio.run(worker.execute())
     after = datetime.now(tz=UTC)
 
-    worker = asyncio.run(service.get_worker("search"))
-    assert worker.status == "error"
-    assert worker.last_error == "network boom"
-    assert worker.next_run_at is not None
+    updated = asyncio.run(worker.get_worker())
+    assert updated.status == "error"
+    assert updated.last_error == "network boom"
+    assert updated.next_run_at is not None
     min_expected = before.timestamp() + 60
     max_expected = after.timestamp() + 60
-    assert min_expected <= worker.next_run_at.timestamp() <= max_expected
+    assert min_expected <= updated.next_run_at.timestamp() <= max_expected
 
 
-def test_scheduler_exponential_backoff_starts_from_two_hours(monkeypatch):
-    scheduler = build_scheduler()
+def test_search_worker_success_advances_page_and_wraps(monkeypatch):
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(
+        worker.update_worker(
+            WorkerConfigUpdate(
+                query={"keywords": ["Python"]},
+                page=2,
+                page_max=2,
+            )
+        )
+    )
+    asyncio.run(worker.start_worker())
+
+    class FakeJobCollectionService:
+        def __init__(self, database, boss_client) -> None:
+            _ = database, boss_client
+
+        async def search_jobs(self, query):
+            assert query["page"] == 2
+            return GreetingTask(
+                task_type="search",
+                status=TaskStatus.SUCCEEDED,
+                result_summary={"total": 1},
+            )
+
+    monkeypatch.setattr("job_buddy.services.JobCollectionService", FakeJobCollectionService)
+
+    updated = asyncio.run(worker.execute())
+
+    assert updated.status == "idle"
+    assert updated.page == 1
+    assert updated.last_result_summary == {"total": 1}
+    assert worker.boss_client.goto_job_calls == 1
+
+
+def test_worker_exponential_backoff_starts_from_two_hours(monkeypatch):
+    worker, _ = build_search_worker()
     sleep_calls: list[float] = []
     run_once_calls = {"count": 0}
 
     async def fake_sleep(delay: float) -> None:
         sleep_calls.append(delay)
         if len(sleep_calls) >= 2:
-            scheduler._stopped.set()
+            worker._stopped.set()
 
     async def fake_run_once() -> None:
         run_once_calls["count"] += 1
@@ -302,16 +336,16 @@ def test_scheduler_exponential_backoff_starts_from_two_hours(monkeypatch):
 
     monkeypatch.setattr("job_buddy.services.random.random", lambda: 0.0)
     monkeypatch.setattr("job_buddy.services.asyncio.sleep", fake_sleep)
-    monkeypatch.setattr(scheduler, "run_once", fake_run_once)
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
 
-    asyncio.run(scheduler._run())
+    asyncio.run(worker._run())
 
     assert run_once_calls["count"] == 1
     assert sleep_calls == [3.0, 2 * 60 * 60]
 
 
-def test_scheduler_exponential_backoff_doubles_on_consecutive_failures_and_resets_after_success(monkeypatch):
-    scheduler = build_scheduler()
+def test_worker_exponential_backoff_resets_after_success(monkeypatch):
+    worker, _ = build_search_worker()
     sleep_calls: list[float] = []
     run_outcomes = iter(["fail", "fail", "success", "fail"])
     run_once_calls = {"count": 0}
@@ -323,7 +357,7 @@ def test_scheduler_exponential_backoff_doubles_on_consecutive_failures_and_reset
         run_once_calls["count"] += 1
         outcome = next(run_outcomes)
         if run_once_calls["count"] == 4:
-            scheduler._stopped.set()
+            worker._stopped.set()
         if outcome == "fail":
             raise WorkerFailException()
 
@@ -335,9 +369,9 @@ def test_scheduler_exponential_backoff_doubles_on_consecutive_failures_and_reset
     monkeypatch.setattr("job_buddy.services.random.random", lambda: 0.0)
     monkeypatch.setattr("job_buddy.services.asyncio.sleep", fake_sleep)
     monkeypatch.setattr("job_buddy.services.asyncio.wait_for", fake_wait_for)
-    monkeypatch.setattr(scheduler, "run_once", fake_run_once)
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
 
-    asyncio.run(scheduler._run())
+    asyncio.run(worker._run())
 
     assert run_once_calls["count"] == 4
     assert sleep_calls == [

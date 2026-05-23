@@ -5,12 +5,13 @@ from job_buddy.boss import BossClient, BossDoctorRunner
 from job_buddy.config import Settings
 from job_buddy.services import (
     DashboardService,
+    DetailWorker,
     FriendService,
     GreetingService,
     JobCollectionService,
+    SearchWorker,
     SystemService,
     TargetProfileService,
-    WorkerService,
 )
 
 
@@ -63,8 +64,9 @@ async def get_system_service(
     return SystemService(BossDoctorRunner(settings), settings, boss_client, db)
 
 
-async def get_worker_service(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    boss_client: BossClient = Depends(get_boss_client),
-) -> WorkerService:
-    return WorkerService(db, boss_client)
+async def get_search_worker(request: Request) -> SearchWorker:
+    return request.app.state.search_worker
+
+
+async def get_detail_worker(request: Request) -> DetailWorker:
+    return request.app.state.detail_worker

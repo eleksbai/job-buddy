@@ -9,7 +9,7 @@ from job_buddy.boss import BossClient, BossOperationError
 from job_buddy.config import configure_logging, get_settings
 from job_buddy.db import MongoManager, database_lifespan
 from job_buddy.routers import build_api_router
-from job_buddy.services import WorkerScheduler
+from job_buddy.services import DetailWorker, SearchWorker
 from job_buddy.web.app import register_web
 
 logger = logging.getLogger(__name__)
@@ -55,17 +55,21 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with database_lifespan(mongo_manager) as database:
             boss_client = BossClient(settings)
-            worker_scheduler = WorkerScheduler(database, boss_client)
+            search_worker = SearchWorker(database, boss_client)
+            detail_worker = DetailWorker(database, boss_client)
             app.state.settings = settings
             app.state.db = database
             app.state.boss_client = boss_client
-            app.state.worker_scheduler = worker_scheduler
+            app.state.search_worker = search_worker
+            app.state.detail_worker = detail_worker
 
             try:
-                await worker_scheduler.start()
+                await search_worker.start()
+                await detail_worker.start()
                 yield
             finally:
-                await worker_scheduler.stop()
+                await detail_worker.stop()
+                await search_worker.stop()
                 await boss_client.close()
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)

@@ -63,6 +63,7 @@ DEFAULT_CONNECTION_MODE = "launch"
 DEFAULT_PROFILE_DIR = "data/chrome_profile"
 LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
+JOB_URL = "https://www.zhipin.com/web/geek/jobs?ka=header-jobs"
 
 
 def _build_job_url(job_id: str | None, security_id: str | None = None) -> str | None:
@@ -479,8 +480,7 @@ class BossClient:
         all_text = "###".join(inline_scripts)
         matches = re.findall(r"_PAGE\s*=\s*({.*?})\s*###", all_text, re.S)
         if not matches:
-            logger.error("未提取到登录信息")
-            raise BossOperationError(code="500", message="未提取到登录信息")
+            return LoginOut(logged_in=False, message='没有提取到登录信息')
         page_payload = await self.js2dict(matches[0])
         # 从消息列表看isLogin是false， 基于用户名和id来一起判断
         is_login = bool(page_payload.get("name") and page_payload.get("uid"))
@@ -492,11 +492,18 @@ class BossClient:
             ip=str(page_payload.get("clientIP") or ""),
         )
 
+    async def goto_home(self):
+        await self.page.goto(HOME_URL, wait_until="domcontentloaded")
+
+    async def goto_job(self):
+        await self.page.goto(JOB_URL, wait_until="domcontentloaded")
+
     async def login(self, request: LoginIn) -> LoginOut:
         timeout = max(1, int(request.timeout))
         await self.check_page_health()
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("domcontentloaded")
+
         login_out = await self.extract_page()
         if login_out.logged_in:
             login_out.message = '已登录'

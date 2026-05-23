@@ -11,7 +11,7 @@ def main() -> None:
         host=os.getenv("APP_HOST", "0.0.0.0"),
         port=int(os.getenv("APP_PORT", "8000")),
         reload=True,
-        reload_dirs=["src", "tests"],
+        reload_dirs=["src", ],
         reload_excludes=["logs/*", "data/*", ".venv/*"],
     )
 

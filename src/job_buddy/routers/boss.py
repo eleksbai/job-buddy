@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from job_buddy.boss import BossOperationError
 from job_buddy.deps import (
+    get_detail_worker,
     get_friend_service,
     get_greeting_service,
     get_job_service,
+    get_search_worker,
     get_system_service,
     get_target_service,
-    get_worker_service,
 )
 from job_buddy.schemas import (
     AuthStatusResponse,
@@ -32,7 +33,15 @@ from job_buddy.schemas import (
     WorkerConfigRead,
     WorkerConfigUpdate,
 )
-from job_buddy.services import FriendService, GreetingService, JobCollectionService, SystemService, TargetProfileService, WorkerService
+from job_buddy.services import (
+    DetailWorker,
+    FriendService,
+    GreetingService,
+    JobCollectionService,
+    SearchWorker,
+    SystemService,
+    TargetProfileService,
+)
 
 router = APIRouter(prefix="/boss")
 
@@ -153,14 +162,21 @@ async def get_task(task_id: str, greeting_service: GreetingService = Depends(get
 
 
 @router.get("/workers", response_model=list[WorkerConfigRead], tags=["workers"], operation_id="list_workers")
-async def list_workers(worker_service: WorkerService = Depends(get_worker_service)) -> list[WorkerConfigRead]:
-    items = await worker_service.list_workers()
+async def list_workers(
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+) -> list[WorkerConfigRead]:
+    items = [await search_worker.get_worker(), await detail_worker.get_worker()]
     return [WorkerConfigRead(**item.model_dump()) for item in items]
 
 
 @router.get("/workers/{worker_name}", response_model=WorkerConfigRead, tags=["workers"], operation_id="get_worker")
-async def get_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
-    item = await worker_service.get_worker(worker_name)
+async def get_worker(
+    worker_name: str,
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+) -> WorkerConfigRead:
+    item = await _select_worker(worker_name, search_worker, detail_worker).get_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -168,21 +184,30 @@ async def get_worker(worker_name: str, worker_service: WorkerService = Depends(g
 async def update_worker(
     worker_name: str,
     payload: WorkerConfigUpdate,
-    worker_service: WorkerService = Depends(get_worker_service),
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
 ) -> WorkerConfigRead:
-    item = await worker_service.update_worker(worker_name, payload)
+    item = await _select_worker(worker_name, search_worker, detail_worker).update_worker(payload)
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/start", response_model=WorkerConfigRead, tags=["workers"], operation_id="start_worker")
-async def start_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
-    item = await worker_service.start_worker(worker_name)
+async def start_worker(
+    worker_name: str,
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+) -> WorkerConfigRead:
+    item = await _select_worker(worker_name, search_worker, detail_worker).start_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/stop", response_model=WorkerConfigRead, tags=["workers"], operation_id="stop_worker")
-async def stop_worker(worker_name: str, worker_service: WorkerService = Depends(get_worker_service)) -> WorkerConfigRead:
-    item = await worker_service.stop_worker(worker_name)
+async def stop_worker(
+    worker_name: str,
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+) -> WorkerConfigRead:
+    item = await _select_worker(worker_name, search_worker, detail_worker).stop_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -240,3 +265,9 @@ async def login_auth(service: SystemService = Depends(get_system_service)) -> Au
 @router.post("/system/auth/logout", response_model=AuthStatusResponse, tags=["system"], operation_id="logout_auth")
 async def logout_auth(service: SystemService = Depends(get_system_service)) -> AuthStatusResponse:
     return await service.logout()
+def _select_worker(worker_name: str, search_worker: SearchWorker, detail_worker: DetailWorker) -> SearchWorker | DetailWorker:
+    if worker_name == "search":
+        return search_worker
+    if worker_name == "detail":
+        return detail_worker
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found.")
