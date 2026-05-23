@@ -26,8 +26,10 @@ class FakeBossClient:
         self.health_message = "已登录"
         self.health_last_error = None
         self.search_error: Exception | None = None
+        self.scroll_search_error: Exception | None = None
         self.detail_error: Exception | None = None
         self.detail_payload: JobDetailOut | None = None
+        self.goto_job_calls = 0
         self.payloads = [
             [
                 {
@@ -89,6 +91,47 @@ class FakeBossClient:
             },
         )
 
+    async def job_list_by_scroll(self, query=None, tab_index=1) -> SearchOut:
+        _ = query, tab_index
+        if self.scroll_search_error is not None:
+            raise self.scroll_search_error
+        return SearchOut(
+            items=[
+                SearchJobItemOut(
+                    job_id="job-scroll-1",
+                    security_id="sec-scroll-1",
+                    title="Scroll Python Engineer",
+                    company="Scroll Demo",
+                    city="Shanghai",
+                    salary="30-40K",
+                    experience="5-10年",
+                    job_url="https://www.zhipin.com/job_detail/job-scroll-1.html?securityId=sec-scroll-1",
+                    raw_payload={
+                        "job_id": "job-scroll-1",
+                        "security_id": "sec-scroll-1",
+                        "title": "Scroll Python Engineer",
+                        "company": "Scroll Demo",
+                        "city": "Shanghai",
+                        "salary": "30-40K",
+                        "experience": "5-10年",
+                        "job_url": "https://www.zhipin.com/job_detail/job-scroll-1.html?securityId=sec-scroll-1",
+                    },
+                )
+            ],
+            trace={
+                "engine": "patchright",
+                "browser": "Patchright Chromium",
+                "request_url": "https://www.zhipin.com/wapi/zpgeek/pc/recommend/job/list.json",
+                "referer": "https://www.zhipin.com/web/geek/jobs?ka=header-jobs",
+                "requested_at": "2026-05-16T13:02:20+00:00",
+                "response_received_at": "2026-05-16T13:02:21+00:00",
+                "request_payload": dict(query or {}),
+                "request_params": {"tab_index": 1},
+                "response_payload": {"zpData": {"jobList": [{"encryptJobId": "job-scroll-1"}]}},
+                "result_count": 1,
+            },
+        )
+
     async def get_job_detail(self, request: JobDetailIn) -> JobDetailOut:
         _ = request
         if self.detail_error is not None:
@@ -136,6 +179,9 @@ class FakeBossClient:
             uid="uid-1" if self.logged_in else "",
             message=self.health_message,
         )
+
+    async def goto_job(self) -> None:
+        self.goto_job_calls += 1
 
 
 class FakeAuthStateCollection:
@@ -324,6 +370,21 @@ def test_search_jobs_writes_collection_records_and_deduped_leads():
     assert jobs.items["job-1"].last_searched_at is not None
     assert traces.items[0].request_url == "https://www.zhipin.com/wapi/zpgeek/search/joblist.json?query=Python"
     assert traces.items[0].browser == "Patchright Chromium"
+
+
+def test_search_jobs_by_scroll_writes_collection_records_and_job_leads():
+    service, jobs, records, traces = build_service()
+
+    task = asyncio.run(service.search_jobs_by_scroll(query={"keywords": ["Python"]}))
+
+    assert task.result_summary["collected"] == 1
+    assert task.result_summary["dedup_created"] == 1
+    assert len(records.items) == 1
+    assert len(traces.items) == 1
+    assert len(jobs.items) == 1
+    assert jobs.items["job-scroll-1"].title == "Scroll Python Engineer"
+    assert traces.items[0].request_url == "https://www.zhipin.com/wapi/zpgeek/pc/recommend/job/list.json"
+    assert service.boss_client.goto_job_calls == 0
 
 
 def test_search_jobs_fails_fast_when_login_state_is_invalid():

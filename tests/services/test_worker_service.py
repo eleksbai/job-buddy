@@ -126,6 +126,29 @@ def test_start_worker_sets_enabled_and_next_run():
     assert item.next_run_at is not None
 
 
+def test_release_worker_clears_error_and_schedules_immediately():
+    worker, _ = build_search_worker()
+    asyncio.run(worker.sync_default_on_startup())
+    asyncio.run(worker.update_worker(WorkerConfigUpdate(query={"keywords": ["Python"]})))
+    asyncio.run(worker.start_worker())
+    asyncio.run(
+        worker._update_worker_model(
+            {
+                "status": "error",
+                "last_error": "need login",
+                "next_run_at": datetime.now(tz=UTC),
+            }
+        )
+    )
+
+    released = asyncio.run(worker.release_worker())
+
+    assert released.enabled is True
+    assert released.status == "idle"
+    assert released.last_error is None
+    assert released.next_run_at is not None
+
+
 def test_execute_search_worker_delays_after_failed_task(monkeypatch):
     worker, _ = build_search_worker()
     asyncio.run(worker.sync_default_on_startup())

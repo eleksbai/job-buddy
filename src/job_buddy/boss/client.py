@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from patchright.async_api import Response
 import asyncio
 import traceback
 from dataclasses import dataclass
@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import re
+from random import random
 from urllib.parse import parse_qs, urlencode, urlparse
 from typing import Any, Dict
 
@@ -29,7 +30,7 @@ from job_buddy.boss.config import (
     SEARCH_URL,
     STAGE_CODES,
     WEB_GEEK_CHAT_URL,
-    WEB_GEEK_JOB_URL,
+    WEB_GEEK_JOB_URL, URL_JOB_LIST_BY_SCROLL,
 )
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import (
@@ -602,6 +603,95 @@ class BossClient:
             return SearchOut(items=[self._search_item_from_payload(item) for item in raw_items], trace=trace)
 
         items = [self._search_item_from_payload(self._normalize_raw_job(item)) for item in raw_items]
+        trace["result_count"] = len(items)
+        return SearchOut(items=items, trace=trace)
+
+    async def job_list_by_scroll(self, query: dict[str, Any] | None = None, tab_index: int = 1) -> SearchOut:
+        logger.info("BossClient job_list_by_scroll start")
+        await self.check_page_health()
+        trace = {
+            "engine": self.name,
+            "browser": "Patchright Chromium",
+            "requested_at": datetime.now(tz=UTC).isoformat(),
+            "request_payload": dict(query or {}),
+            "request_params": {"tab_index": tab_index},
+            "request_url": URL_JOB_LIST_BY_SCROLL,
+            "referer": JOB_URL,
+        }
+        raw_items: list[dict[str, Any]] = []
+        pending_responses: set[asyncio.Task[None]] = set()
+
+        async def handle_response(response: Response) -> None:
+            if URL_JOB_LIST_BY_SCROLL not in response.url:
+                return
+            data = await response.json()
+            if data.get("code") == 0:
+                items = data.get("zpData", {}).get("jobList", [])
+                if isinstance(items, list):
+                    logger.info("get job list by scroll, find %d + %d items",len(raw_items), len(items))
+                    raw_items.extend(item for item in items if isinstance(item, dict))
+                else:
+                    logger.warning("get job list by scroll, invalid payload=%s", data)
+            else:
+                logger.warning(
+                    "get job list by scroll, error %s %s",
+                    data.get("code"),
+                    data.get("message"),
+                )
+
+        def on_response(response: Response) -> None:
+            if URL_JOB_LIST_BY_SCROLL not in response.url:
+                return
+            task = asyncio.create_task(handle_response(response))
+            pending_responses.add(task)
+            task.add_done_callback(pending_responses.discard)
+
+        self.page.on("response", on_response)
+        try:
+            await self.goto_job()
+            await self.page.wait_for_load_state("domcontentloaded")
+            if tab_index == 0:
+                await self.page.locator("div.c-expect-select > a.synthesis").click()
+            else:
+                tabs = self.page.locator("div.c-expect-select > div.expect-list.has-add.no-part > a")
+                tab_count = await tabs.count()
+                if tab_count > 0:
+                    index = min(max(tab_index - 1, 0), tab_count - 1)
+                    await tabs.nth(index).click()
+
+            last_high = 0
+            freeze_count = 0
+            for _ in range(30):
+                await self.page.mouse.wheel(0, 1000 + random() * 1000)
+                await asyncio.sleep(random() * 5 + 3)
+                current_high = await self.page.evaluate("document.body.scrollHeight")
+                if current_high > last_high:
+                    freeze_count = 0
+                else:
+                    freeze_count += 1
+                if freeze_count >= 3:
+                    logger.info('freeze_count >= 3')
+                    break
+                last_high = current_high
+        finally:
+            self.page.remove_listener("response", on_response)
+            if pending_responses:
+                await asyncio.gather(*pending_responses, return_exceptions=True)
+
+        deduped: dict[str, dict[str, Any]] = {}
+        for item in raw_items:
+            job_id = str(item.get("encryptJobId") or "").strip()
+            if not job_id:
+                continue
+            deduped[job_id] = item
+
+        normalized_items = [self._normalize_raw_job(item) for item in deduped.values()]
+        welfare = (query or {}).get("welfare")
+        if welfare:
+            normalized_items = filter_jobs_by_welfare(normalized_items, str(welfare))
+        items = [self._search_item_from_payload(item) for item in normalized_items]
+        trace["response_received_at"] = datetime.now(tz=UTC).isoformat()
+        trace["response_payload"] = {"zpData": {"jobList": raw_items}}
         trace["result_count"] = len(items)
         return SearchOut(items=items, trace=trace)
 

@@ -28,6 +28,10 @@ class FakeWorker:
         self.worker = self.worker.model_copy(update={"enabled": False, "status": "idle"})
         return self.worker
 
+    async def release_worker(self) -> WorkerConfig:
+        self.worker = self.worker.model_copy(update={"status": "idle", "last_error": None})
+        return self.worker
+
 
 def build_fake_workers() -> tuple[FakeWorker, FakeWorker]:
     now = datetime.now(tz=UTC)
@@ -120,6 +124,24 @@ async def test_start_and_stop_worker_toggle_enabled():
     assert start_response.json()["enabled"] is True
     assert stop_response.status_code == 200
     assert stop_response.json()["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_release_worker_clears_error():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    search_worker, detail_worker = build_fake_workers()
+    search_worker.worker = search_worker.worker.model_copy(update={"enabled": True, "status": "error", "last_error": "boom"})
+    app.dependency_overrides[get_search_worker] = lambda: search_worker
+    app.dependency_overrides[get_detail_worker] = lambda: detail_worker
+
+    async with api_client(app) as client:
+        response = await client.post("/boss/workers/search/release")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "idle"
+    assert payload["last_error"] is None
 
 
 @pytest.mark.asyncio

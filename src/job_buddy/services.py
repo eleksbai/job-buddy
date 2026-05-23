@@ -518,6 +518,17 @@ class JobCollectionService:
         ]
 
     async def search_jobs(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
+        return await self._run_search_task(query, target, self._do_search)
+
+    async def search_jobs_by_scroll(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
+        return await self._run_search_task(query, target, self._do_search_by_scroll)
+
+    async def _run_search_task(
+        self,
+        query: dict[str, Any],
+        target: TargetProfile | None,
+        runner,
+    ) -> GreetingTask:
         task = await _create_model(
             self.tasks,
             GreetingTask(
@@ -530,7 +541,7 @@ class JobCollectionService:
             GreetingTask,
         )
         try:
-            search_out =  await asyncio.wait_for(self._do_search(task, query, target), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(runner(task, query, target), timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -570,7 +581,6 @@ class JobCollectionService:
             if failed is None:
                 raise
             return failed
-
         updated = await _get_model(self.tasks, GreetingTask, task.id)
         if updated is None:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
@@ -648,6 +658,33 @@ class JobCollectionService:
             logger.warning("BOSS search failed: task_id=%s query=%s error=%s", task.id, query, exc)
             raise map_boss_operation_error(exc) from exc
 
+        await self._persist_search_result(task, search_result, target)
+        return search_result
+
+    async def _do_search_by_scroll(
+        self,
+        task: GreetingTask,
+        query: dict[str, Any],
+        target: TargetProfile | None,
+    ) -> SearchOut:
+        await self._update_task_step(task.id, "healthcheck")
+        try:
+            await self.auth_service.require_authenticated()
+            await self._update_task_step(task.id, "scroll_collect")
+            search_result = await self.boss_client.job_list_by_scroll(query=dict(query))
+        except Exception as exc:
+            logger.warning("BOSS scroll search failed: task_id=%s query=%s error=%s", task.id, query, exc)
+            raise map_boss_operation_error(exc) from exc
+
+        await self._persist_search_result(task, search_result, target)
+        return search_result
+
+    async def _persist_search_result(
+        self,
+        task: GreetingTask,
+        search_result: SearchOut,
+        target: TargetProfile | None,
+    ) -> None:
         await self._update_task_step(task.id, "persist_results")
         trace_id: str | None = None
         if search_result.trace:
@@ -765,7 +802,6 @@ class JobCollectionService:
                 "finished_at": utc_now(),
             },
         )
-        return search_result
 
 
     async def _do_detail_sync(self, task: GreetingTask, limit: int) -> None:
@@ -1078,6 +1114,14 @@ class BaseWorker(ABC):
     async def stop_worker(self) -> WorkerConfig:
         return await self._update_worker_model(
             {"enabled": False, "status": "idle", "next_run_at": None, "last_error": None}
+        )
+
+    async def release_worker(self) -> WorkerConfig:
+        worker = await self.get_worker()
+        if not worker.enabled:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未启动的 worker 无需解除限制")
+        return await self._update_worker_model(
+            {"status": "idle", "next_run_at": utc_now(), "last_error": None}
         )
 
     async def has_running_task(self) -> bool:

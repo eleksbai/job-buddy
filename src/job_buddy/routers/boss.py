@@ -127,6 +127,27 @@ async def trigger_search_task(
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
+@router.post("/tasks/search/scroll", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_scroll_search_task")
+async def trigger_scroll_search_task(
+    payload: SearchTaskRequest,
+    target_service: TargetProfileService = Depends(get_target_service),
+    job_service: JobCollectionService = Depends(get_job_service),
+) -> TaskTriggerResponse:
+    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
+    query = payload.query_override or {}
+    if target:
+        query = {
+            "keywords": target.keywords,
+            "city": target.city,
+            "salary": target.salary,
+            "experience": target.experience,
+            **target.filters,
+            **query,
+        }
+    task = await job_service.search_jobs_by_scroll(query=query, target=target)
+    return TaskTriggerResponse(task_id=task.id, status=task.status)
+
+
 @router.post("/tasks/greet", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_greet_task")
 async def trigger_greet_task(
     payload: GreetTaskRequest,
@@ -208,6 +229,16 @@ async def stop_worker(
     detail_worker: DetailWorker = Depends(get_detail_worker),
 ) -> WorkerConfigRead:
     item = await _select_worker(worker_name, search_worker, detail_worker).stop_worker()
+    return WorkerConfigRead(**item.model_dump())
+
+
+@router.post("/workers/{worker_name}/release", response_model=WorkerConfigRead, tags=["workers"], operation_id="release_worker")
+async def release_worker(
+    worker_name: str,
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+) -> WorkerConfigRead:
+    item = await _select_worker(worker_name, search_worker, detail_worker).release_worker()
     return WorkerConfigRead(**item.model_dump())
 
 

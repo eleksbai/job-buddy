@@ -856,10 +856,16 @@ function renderWorkerMeta(containerId, worker, lines) {
 function renderWorkers() {
   const searchWorker = getWorker("search");
   const detailWorker = getWorker("detail");
+  const searchReleaseButton = document.getElementById("releaseSearchWorkerButton");
+  const detailReleaseButton = document.getElementById("releaseDetailWorkerButton");
 
   if (searchWorker) {
     document.getElementById("searchWorkerIntervalInput").value = String(searchWorker.interval_seconds || 60);
     document.getElementById("searchWorkerPageMaxInput").value = String(searchWorker.page_max || 5);
+    if (searchReleaseButton) {
+      searchReleaseButton.disabled = !(searchWorker.enabled && searchWorker.status === "error");
+      searchReleaseButton.classList.toggle("button-disabled", searchReleaseButton.disabled);
+    }
     renderWorkerMeta("searchWorkerMeta", searchWorker, [
       `<strong>状态</strong> ${renderStatusBadge(searchWorker.enabled ? searchWorker.status : "idle")} ${searchWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
       `<strong>当前页</strong> ${escapeHtml(searchWorker.page || 1)}`,
@@ -872,6 +878,10 @@ function renderWorkers() {
   if (detailWorker) {
     document.getElementById("detailWorkerIntervalInput").value = String(detailWorker.interval_seconds || 30);
     document.getElementById("detailWorkerBatchSizeInput").value = String(detailWorker.batch_size || 1);
+    if (detailReleaseButton) {
+      detailReleaseButton.disabled = !(detailWorker.enabled && detailWorker.status === "error");
+      detailReleaseButton.classList.toggle("button-disabled", detailReleaseButton.disabled);
+    }
     renderWorkerMeta("detailWorkerMeta", detailWorker, [
       `<strong>状态</strong> ${renderStatusBadge(detailWorker.enabled ? detailWorker.status : "idle")} ${detailWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
       `<strong>每轮条数</strong> ${escapeHtml(detailWorker.batch_size || 1)}`,
@@ -1438,6 +1448,33 @@ function collectSearchFormPayload() {
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== null && value !== ""));
 }
 
+function collectScrollSearchPayload() {
+  persistSearchFormState();
+  const keywordsText = document.getElementById("searchKeywordsInput").value.trim();
+  const keywords = keywordsText
+    .split(/[\s,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const payload = {
+    keywords,
+    city: document.getElementById("searchCitySelect").value || null,
+    salary: document.getElementById("searchSalarySelect").value || null,
+    experience: document.getElementById("searchExperienceSelect").value || null,
+    education: document.getElementById("searchEducationSelect").value || null,
+    industry: document.getElementById("searchIndustrySelect").value || null,
+    scale: document.getElementById("searchScaleSelect").value || null,
+    stage: document.getElementById("searchStageSelect").value || null,
+    job_type: document.getElementById("searchJobTypeSelect").value || null,
+    welfare: document.getElementById("searchWelfareInput").value.trim() || null,
+    page: getSearchPageValue(),
+  };
+
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== null && value !== "" && (!Array.isArray(value) || value.length > 0)),
+  );
+}
+
 function collectSearchWorkerPayload() {
   return {
     interval_seconds: Math.max(1, Number(document.getElementById("searchWorkerIntervalInput").value || 60)),
@@ -1496,6 +1533,18 @@ async function stopSearchWorker() {
   }
 }
 
+async function releaseSearchWorker() {
+  clearError();
+  setButtonBusy("releaseSearchWorkerButton", true, "解除中");
+  try {
+    await fetchJson("/boss/workers/search/release", { method: "POST" });
+    await loadWorkers();
+    showNotice("搜索 worker 已解除限制", 3000);
+  } finally {
+    setButtonBusy("releaseSearchWorkerButton", false);
+  }
+}
+
 async function saveDetailWorkerConfig() {
   clearError();
   setButtonBusy("saveDetailWorkerButton", true, "保存中");
@@ -1539,6 +1588,18 @@ async function stopDetailWorker() {
   }
 }
 
+async function releaseDetailWorker() {
+  clearError();
+  setButtonBusy("releaseDetailWorkerButton", true, "解除中");
+  try {
+    await fetchJson("/boss/workers/detail/release", { method: "POST" });
+    await loadWorkers();
+    showNotice("详情 worker 已解除限制", 3000);
+  } finally {
+    setButtonBusy("releaseDetailWorkerButton", false);
+  }
+}
+
 async function toggleAuth() {
   clearError();
   setButtonBusy("authActionButton", true, "处理中");
@@ -1559,7 +1620,21 @@ async function triggerSearch() {
   return triggerSearchWithPayload({
     buttonId: "searchButton",
     busyText: "搜索中",
+    endpoint: "/boss/tasks/search",
     payload: collectSearchFormPayload(),
+  });
+}
+
+async function triggerScrollSearch() {
+  showSearchUpdate("滚动采集已开始，正在等待页面滚动并收集职位，请稍候。", 0);
+  return triggerSearchWithPayload({
+    buttonId: "scrollSearchButton",
+    busyText: "滚动采集中",
+    endpoint: "/boss/tasks/search/scroll",
+    payload: collectScrollSearchPayload(),
+    onSuccess: (rows) => {
+      showSearchUpdate(`滚动采集完成，当前展示 ${rows.length} 条记录。`);
+    },
   });
 }
 
@@ -1574,6 +1649,7 @@ async function triggerNextPageSearch() {
   await triggerSearchWithPayload({
     buttonId: "nextPageSearchButton",
     busyText: "翻页中",
+    endpoint: "/boss/tasks/search",
     payload,
     onSuccess: (rows) => {
       setSearchPageValue(nextPage);
@@ -1582,11 +1658,11 @@ async function triggerNextPageSearch() {
   });
 }
 
-async function triggerSearchWithPayload({ buttonId, busyText, payload, onSuccess = null }) {
+async function triggerSearchWithPayload({ buttonId, busyText, endpoint, payload, onSuccess = null }) {
   clearError();
   setButtonBusy(buttonId, true, busyText);
   try {
-    const result = await fetchJson("/boss/tasks/search", {
+    const result = await fetchJson(endpoint, {
       method: "POST",
       body: JSON.stringify({ query_override: payload }),
     });
@@ -1789,6 +1865,9 @@ function bindEvents() {
     .getElementById("searchButton")
     .addEventListener("click", () => triggerSearch().catch((error) => showError(error.message)));
   document
+    .getElementById("scrollSearchButton")
+    .addEventListener("click", () => triggerScrollSearch().catch((error) => showError(error.message)));
+  document
     .getElementById("nextPageSearchButton")
     .addEventListener("click", () => triggerNextPageSearch().catch((error) => showError(error.message)));
   document
@@ -1804,6 +1883,9 @@ function bindEvents() {
     .getElementById("stopSearchWorkerButton")
     .addEventListener("click", () => stopSearchWorker().catch((error) => showError(error.message)));
   document
+    .getElementById("releaseSearchWorkerButton")
+    .addEventListener("click", () => releaseSearchWorker().catch((error) => showError(error.message)));
+  document
     .getElementById("saveDetailWorkerButton")
     .addEventListener("click", () => saveDetailWorkerConfig().catch((error) => showError(error.message)));
   document
@@ -1812,6 +1894,9 @@ function bindEvents() {
   document
     .getElementById("stopDetailWorkerButton")
     .addEventListener("click", () => stopDetailWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("releaseDetailWorkerButton")
+    .addEventListener("click", () => releaseDetailWorker().catch((error) => showError(error.message)));
   document
     .getElementById("refreshJobsButton")
     .addEventListener("click", () => loadJobs().catch((error) => showError(error.message)));

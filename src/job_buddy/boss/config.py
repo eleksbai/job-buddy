@@ -8,7 +8,7 @@ DETAIL_URL = f"{BASE_URL}/wapi/zpgeek/job/detail.json"
 GREET_URL = f"{BASE_URL}/wapi/zpgeek/friend/add.json"
 FRIEND_LIST_URL = f"{BASE_URL}/wapi/zprelation/friend/getGeekFriendList.json"
 CHAT_HISTORY_URL = f"{BASE_URL}/wapi/zpchat/geek/historyMsg"
-
+URL_JOB_LIST_BY_SCROLL = 'https://www.zhipin.com/wapi/zpgeek/pc/recommend/job/list.json'
 CITY_CODES = {
     "北京": "101010100",
     "上海": "101020100",

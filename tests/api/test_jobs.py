@@ -1,7 +1,7 @@
 import pytest
 from fastapi import FastAPI
 
-from job_buddy.deps import get_job_service
+from job_buddy.deps import get_job_service, get_target_service
 from job_buddy.models import JobCollectionRecord, JobLead
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
@@ -10,6 +10,7 @@ from tests.api._client import api_client
 class FakeJobService:
     def __init__(self) -> None:
         self.detail_calls: list[tuple[str, str | None, bool]] = []
+        self.scroll_search_payloads: list[dict] = []
 
     async def list_jobs(self, match_status, greeted, limit):
         _ = match_status, greeted, limit
@@ -69,6 +70,19 @@ class FakeJobService:
             False,
         )
 
+    async def search_jobs_by_scroll(self, query, target=None):
+        _ = target
+        self.scroll_search_payloads.append(dict(query))
+        from job_buddy.models import GreetingTask
+
+        return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a33", task_type="search", status="running")
+
+
+class FakeTargetService:
+    async def get_target(self, target_id):
+        _ = target_id
+        raise AssertionError("unexpected target lookup")
+
 
 @pytest.mark.asyncio
 async def test_list_jobs_includes_job_url():
@@ -92,6 +106,7 @@ async def test_get_job_detail_includes_contact_state():
     app.include_router(build_api_router())
     service = FakeJobService()
     app.dependency_overrides[get_job_service] = lambda: service
+    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
 
     async with api_client(app) as client:
         response = await client.get("/boss/jobs/job-1/detail")
@@ -114,3 +129,19 @@ async def test_get_job_detail_supports_force_refresh():
 
     assert response.status_code == 200
     assert service.detail_calls == [("job-1", "sec-1", True)]
+
+
+@pytest.mark.asyncio
+async def test_trigger_scroll_search_task_uses_scroll_service_entry():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    service = FakeJobService()
+    app.dependency_overrides[get_job_service] = lambda: service
+    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
+
+    async with api_client(app) as client:
+        response = await client.post("/boss/tasks/search/scroll", json={"query_override": {"keywords": ["Python"]}})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert service.scroll_search_payloads == [{"keywords": ["Python"]}]
