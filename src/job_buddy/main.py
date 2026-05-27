@@ -9,7 +9,7 @@ from job_buddy.boss import BossClient, BossOperationError
 from job_buddy.config import configure_logging, get_settings
 from job_buddy.db import MongoManager, database_lifespan
 from job_buddy.routers import build_api_router
-from job_buddy.services import DetailWorker, SearchWorker
+from job_buddy.services import DetailWorker, SearchWorker, fail_abandoned_running_tasks
 from job_buddy.web.app import register_web
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ def create_app() -> FastAPI:
             boss_client = BossClient(settings)
             search_worker = SearchWorker(database, boss_client)
             detail_worker = DetailWorker(database, boss_client)
+            recovered_tasks = await fail_abandoned_running_tasks(database)
+            if recovered_tasks:
+                logger.warning("Marked %s abandoned running tasks as failed on startup", recovered_tasks)
             app.state.settings = settings
             app.state.db = database
             app.state.boss_client = boss_client

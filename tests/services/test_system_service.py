@@ -7,8 +7,8 @@ from job_buddy.boss.client import BossDoctorResult
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import LoginOut
 from job_buddy.config import Settings
-from job_buddy.models import AuthState
-from job_buddy.services import SystemService
+from job_buddy.models import AuthState, GreetingTask, TaskStatus
+from job_buddy.services import SystemService, fail_abandoned_running_tasks
 
 
 class AuthRequired(Exception):
@@ -92,6 +92,11 @@ class FakeDeleteResult:
         self.deleted_count = deleted_count
 
 
+class FakeUpdateResult:
+    def __init__(self, modified_count: int) -> None:
+        self.modified_count = modified_count
+
+
 class FakeCollection:
     def __init__(self, deleted_count: int) -> None:
         self.deleted_count = deleted_count
@@ -103,6 +108,29 @@ class FakeCollection:
         return FakeDeleteResult(self.deleted_count)
 
 
+class FakeTaskCollection:
+    def __init__(self, deleted_count: int = 0) -> None:
+        self.payloads: list[dict] = []
+        self.delete_calls = 0
+        self.deleted_count = deleted_count
+
+    async def update_many(self, filters: dict, updates: dict) -> FakeUpdateResult:
+        modified = 0
+        target_status = filters.get("status")
+        for payload in self.payloads:
+            if payload.get("status") == target_status:
+                payload.update(updates["$set"])
+                modified += 1
+        return FakeUpdateResult(modified)
+
+    async def delete_many(self, filters: dict) -> FakeDeleteResult:
+        assert filters == {}
+        deleted = len(self.payloads) or self.deleted_count
+        self.payloads = []
+        self.delete_calls += 1
+        return FakeDeleteResult(deleted)
+
+
 class FakeDatabase:
     def __init__(self) -> None:
         self.auth_states = FakeAuthStateCollection()
@@ -111,6 +139,7 @@ class FakeDatabase:
             for index, name in enumerate(SystemService.data_collection_names)
         }
         self.collections["boss_auth_state"] = self.auth_states
+        self.collections["greeting_tasks"] = FakeTaskCollection(deleted_count=5)
 
     def __getitem__(self, collection_name: str) -> FakeCollection:
         return self.collections[collection_name]
@@ -216,6 +245,22 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
     assert len(result.lines) == 1
     assert result.lines[0].text.endswith("ERROR second")
     assert result.lines[0].level_hint == "error"
+
+
+def test_fail_abandoned_running_tasks_marks_running_tasks_as_failed():
+    database = FakeDatabase()
+    database["greeting_tasks"].payloads = [
+        GreetingTask(task_type="search", status=TaskStatus.RUNNING).model_dump(),
+        GreetingTask(task_type="detail_sync", status=TaskStatus.SUCCEEDED).model_dump(),
+    ]
+
+    modified = asyncio.run(fail_abandoned_running_tasks(database))
+
+    assert modified == 1
+    assert database["greeting_tasks"].payloads[0]["status"] == TaskStatus.FAILED
+    assert database["greeting_tasks"].payloads[0]["error_message"] == "应用关闭，任务已中断"
+    assert database["greeting_tasks"].payloads[0]["finished_at"] is not None
+    assert database["greeting_tasks"].payloads[1]["status"] == TaskStatus.SUCCEEDED
 
 
 def test_clear_data_deletes_business_collections():

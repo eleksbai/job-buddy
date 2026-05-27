@@ -6,6 +6,7 @@ import logging
 import random
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from http.cookiejar import debug
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -70,6 +71,22 @@ logger = logging.getLogger(__name__)
 
 _CST = timezone(timedelta(hours=8))
 ModelT = TypeVar("ModelT", bound=DocumentModel)
+
+
+async def fail_abandoned_running_tasks(database: AsyncIOMotorDatabase) -> int:
+    tasks = database["greeting_tasks"]
+    result = await tasks.update_many(
+        {"status": TaskStatus.RUNNING},
+        {
+            "$set": {
+                "status": TaskStatus.FAILED,
+                "error_message": "应用关闭，任务已中断",
+                "finished_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+        },
+    )
+    return int(result.modified_count)
 
 
 async def _list_models(
@@ -524,10 +541,10 @@ class JobCollectionService:
         return await self._run_search_task(query, target, self._do_search_by_scroll)
 
     async def _run_search_task(
-        self,
-        query: dict[str, Any],
-        target: TargetProfile | None,
-        runner,
+            self,
+            query: dict[str, Any],
+            target: TargetProfile | None,
+            runner,
     ) -> GreetingTask:
         task = await _create_model(
             self.tasks,
@@ -662,10 +679,10 @@ class JobCollectionService:
         return search_result
 
     async def _do_search_by_scroll(
-        self,
-        task: GreetingTask,
-        query: dict[str, Any],
-        target: TargetProfile | None,
+            self,
+            task: GreetingTask,
+            query: dict[str, Any],
+            target: TargetProfile | None,
     ) -> SearchOut:
         await self._update_task_step(task.id, "healthcheck")
         try:
@@ -680,10 +697,10 @@ class JobCollectionService:
         return search_result
 
     async def _persist_search_result(
-        self,
-        task: GreetingTask,
-        search_result: SearchOut,
-        target: TargetProfile | None,
+            self,
+            task: GreetingTask,
+            search_result: SearchOut,
+            target: TargetProfile | None,
     ) -> None:
         await self._update_task_step(task.id, "persist_results")
         trace_id: str | None = None
@@ -802,7 +819,6 @@ class JobCollectionService:
                 "finished_at": utc_now(),
             },
         )
-
 
     async def _do_detail_sync(self, task: GreetingTask, limit: int) -> None:
         await self._update_task_step(task.id, "fetch_jobs")
@@ -1036,10 +1052,10 @@ class BaseWorker(ABC):
     worker_name: str
 
     def __init__(
-        self,
-        database: AsyncIOMotorDatabase,
-        boss_client: BossClient,
-        poll_interval_seconds: float = 2.0,
+            self,
+            database: AsyncIOMotorDatabase,
+            boss_client: BossClient,
+            poll_interval_seconds: float = 2.0,
     ) -> None:
         self.database = database
         self.boss_client = boss_client
@@ -1125,6 +1141,9 @@ class BaseWorker(ABC):
         )
 
     async def has_running_task(self) -> bool:
+        #FIXME: DEBUG
+        # flag = await self.tasks.count_documents({"status": TaskStatus.RUNNING})
+        # logger.critical("has_running_task: %d", flag)
         return await self.tasks.count_documents({"status": TaskStatus.RUNNING}) > 0
 
     async def run_once(self) -> WorkerConfig:
@@ -1140,6 +1159,9 @@ class BaseWorker(ABC):
             return await self.execute()
 
     def _is_due(self, worker: WorkerConfig) -> bool:
+        # #FIXME: DEBUG
+        # flag = worker.enabled and worker.next_run_at is not None and worker.next_run_at <= utc_now()
+        # logger.critical("is_due %s", flag)
         return worker.enabled and worker.next_run_at is not None and worker.next_run_at <= utc_now()
 
     async def execute(self) -> WorkerConfig:
@@ -1171,11 +1193,11 @@ class BaseWorker(ABC):
         raise NotImplementedError
 
     async def complete_execution(
-        self,
-        worker: WorkerConfig,
-        task: GreetingTask,
-        *,
-        extra_updates: dict[str, Any] | None = None,
+            self,
+            worker: WorkerConfig,
+            task: GreetingTask,
+            *,
+            extra_updates: dict[str, Any] | None = None,
     ) -> WorkerConfig:
         next_status = "idle" if task.status == TaskStatus.SUCCEEDED else "error"
         updates = {
@@ -1205,9 +1227,13 @@ class BaseWorker(ABC):
 
     async def _run(self) -> None:
         fail_count = 0
+        debug_count = 0
         while not self._stopped.is_set():
             await asyncio.sleep(random.random() * 5 + 3)
             try:
+                debug_count += 1
+                if debug_count % 5 == 0:
+                    logger.info("worker run %s %d", self.worker_name, debug_count)
                 await self.run_once()
                 fail_count = 0
             except WorkerFailException:

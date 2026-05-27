@@ -697,7 +697,7 @@ class BossClient:
 
     async def detail(self, request: JobDetailIn) -> JobDetailOut:
         await self.check_page_health()
-
+        logger.info('get job detail %s', request.title)
         resolved_security_id = request.security_id or self._extract_security_id(request.job_url)
         if not resolved_security_id:
             logger.warning("BossClient detail missing securityId request=%s", request.model_dump())
