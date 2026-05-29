@@ -44,6 +44,7 @@ from job_buddy.models import (
     JobCollectionRecord,
     JobCollectionTrace,
     JobLead,
+    SCROLL_AND_COLLECT_TIMEOUT,
     TASK_TIMEOUT,
     TaskStatus,
     WorkerConfig,
@@ -1000,7 +1001,7 @@ class JobCollectionService:
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_scroll_and_collect(task, query), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(self._do_scroll_and_collect(task, query), timeout=SCROLL_AND_COLLECT_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -1013,7 +1014,7 @@ class JobCollectionService:
                 task.id,
                 {
                     "status": TaskStatus.FAILED,
-                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "error_message": f"任务超时（{SCROLL_AND_COLLECT_TIMEOUT}s），卡在步骤: {step}",
                     "finished_at": utc_now(),
                 },
             )
@@ -1054,6 +1055,7 @@ class JobCollectionService:
                 self.repository,
                 task.id,
                 query,
+                max_jobs=250,
             )
         except Exception as exc:
             logger.warning("BOSS scroll and collect failed: task_id=%s error=%s", task.id, exc)

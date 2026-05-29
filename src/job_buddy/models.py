@@ -40,6 +40,7 @@ class DocumentModel(BaseModel):
 
 
 TASK_TIMEOUT = 300
+SCROLL_AND_COLLECT_TIMEOUT = 1800  # 30 minutes
 
 
 class TaskStatus(StrEnum):

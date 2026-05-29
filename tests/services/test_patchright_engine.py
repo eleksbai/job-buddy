@@ -926,3 +926,45 @@ def test_job_detail_by_click_skips_invalid_response(monkeypatch, caplog):
     assert len(result) == 1
     assert result[0].job_id == "job-2"
     assert "handle response error" in caplog.text
+
+
+def test_scroll_and_collect_details_respects_max_jobs(monkeypatch):
+    monkeypatch.setattr("job_buddy.boss.client.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", lambda delay: _async_result(None)())
+
+    class FakeRepo:
+        async def get_recently_collected_source_job_ids(self, source_job_ids, hours=24):
+            return set()
+
+        async def save_scroll_record(self, task_id, item):
+            pass
+
+        async def upsert_job_lead_from_search(self, item):
+            return (None, True)
+
+        async def save_detail_record(self, task_id, detail):
+            pass
+
+        async def upsert_job_lead(self, detail):
+            return (None, True)
+
+    page = FakeDetailPage()
+    page.job_titles_count = 10
+
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    stats = asyncio.run(engine.scroll_and_collect_details(FakeRepo(), "task-1", max_jobs=5))
+
+    # With max_jobs=5 and 10 visible titles, the loop should break after the
+    # first round of clicks without scrolling further.
+    assert page._scroll_height_calls == 0
+    assert isinstance(stats, dict)
+    assert stats["scroll_collected"] == 0  # no list responses triggered
+    assert stats["detail_collected"] == 0  # no detail responses triggered
+    assert stats["detail_skipped"] == 0

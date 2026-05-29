@@ -184,8 +184,8 @@ class FakeBossClient:
         _ = tab_index
         return self.detail_click_results if hasattr(self, "detail_click_results") else []
 
-    async def scroll_and_collect_details(self, repository, task_id, query=None, tab_index=1):
-        _ = tab_index
+    async def scroll_and_collect_details(self, repository, task_id, query=None, tab_index=1, max_jobs=250):
+        _ = tab_index, max_jobs
         self.scroll_and_collect_query = query
         self.scroll_and_collect_task_id = task_id
         self.scroll_and_collect_repository = repository

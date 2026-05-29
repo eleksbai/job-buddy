@@ -895,6 +895,7 @@ class BossClient:
         task_id: str,
         query: dict[str, Any] | None = None,
         tab_index: int = 1,
+        max_jobs: int = 250,
     ) -> dict[str, int]:
         """Scroll the job list, intercept list responses, click un-collected jobs
         for details, and persist everything directly via *repository*.
@@ -924,6 +925,7 @@ class BossClient:
                             len(items),
                         )
                         raw_list_items.extend(item for item in items if isinstance(item, dict))
+
             except Exception as exc:
                 logger.warning("scroll_and_collect_details list response error: %s", exc)
 
@@ -1026,6 +1028,17 @@ class BossClient:
                         logger.warning(
                             "scroll_and_collect_details click job %d failed: %s", i, exc
                         )
+
+                logger.info(
+                    "scroll_and_collect_details round end, new_clicked=%d total_clicked=%d/%d",
+                    new_clicked,
+                    len(clicked_identifiers),
+                    max_jobs,
+                )
+
+                if len(clicked_identifiers) >= max_jobs:
+                    logger.info("scroll_and_collect_details reached max_jobs=%d, stopping", max_jobs)
+                    break
 
                 # Scroll down
                 await self.page.mouse.wheel(0, 1000 + random() * 1000)
