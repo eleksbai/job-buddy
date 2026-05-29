@@ -9,6 +9,7 @@ from job_buddy.boss import BossClient, BossOperationError
 from job_buddy.config import configure_logging, get_settings
 from job_buddy.db import MongoManager, database_lifespan
 from job_buddy.routers import build_api_router
+from job_buddy.worker import AIMatchingWorker
 from job_buddy.services import DetailWorker, ScrollAndCollectWorker, SearchWorker, fail_abandoned_running_tasks
 from job_buddy.web.app import register_web
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
             search_worker = SearchWorker(database, boss_client)
             detail_worker = DetailWorker(database, boss_client)
             scroll_and_collect_worker = ScrollAndCollectWorker(database, boss_client)
+            ai_matching_worker = AIMatchingWorker(database, boss_client, settings=settings)
             recovered_tasks = await fail_abandoned_running_tasks(database)
             if recovered_tasks:
                 logger.warning("Marked %s abandoned running tasks as failed on startup", recovered_tasks)
@@ -67,13 +69,16 @@ def create_app() -> FastAPI:
             app.state.search_worker = search_worker
             app.state.detail_worker = detail_worker
             app.state.scroll_and_collect_worker = scroll_and_collect_worker
+            app.state.ai_matching_worker = ai_matching_worker
 
             try:
                 await search_worker.start()
                 await detail_worker.start()
                 await scroll_and_collect_worker.start()
+                await ai_matching_worker.start()
                 yield
             finally:
+                await ai_matching_worker.stop()
                 await scroll_and_collect_worker.stop()
                 await detail_worker.stop()
                 await search_worker.stop()

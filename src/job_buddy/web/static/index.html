@@ -252,6 +252,8 @@
               <p>展示去重后的全部职位，支持排序和筛选。</p>
             </div>
             <div class="panel-actions">
+              <button id="aiEvaluateButton">AI评估全部</button>
+              <button id="aiClearMarksButton" class="button-secondary">清除AI标记</button>
               <button id="refreshJobsButton" class="button-secondary">刷新职位</button>
             </div>
           </div>
@@ -273,6 +275,8 @@
                   <option value="title_desc">职位名 Z-A</option>
                   <option value="search_count_desc">搜索次数 高-低</option>
                   <option value="search_count_asc">搜索次数 低-高</option>
+                  <option value="ai_score_desc">AI评分 高-低</option>
+                  <option value="ai_score_asc">AI评分 低-高</option>
                 </select>
               </label>
               <label>
@@ -289,6 +293,15 @@
                   <option value="">全部</option>
                   <option value="true">已打招呼</option>
                   <option value="false">未打招呼</option>
+                </select>
+              </label>
+              <label>
+                AI匹配
+                <select id="jobsAiMatchFilter">
+                  <option value="">全部</option>
+                  <option value="true">已匹配</option>
+                  <option value="false">未匹配</option>
+                  <option value="null">未评估</option>
                 </select>
               </label>
               <label>
@@ -420,6 +433,10 @@
             </div>
           </div>
 
+          <div class="panel-card" id="jobDetailAiPanelCard">
+            <div id="jobDetailAiPanel"></div>
+          </div>
+
           <div class="panel-header">
             <div>
               <span class="eyebrow">职位详情</span>
@@ -427,6 +444,7 @@
               <div id="jobDetailPageMeta" class="detail-meta"></div>
             </div>
             <div class="panel-actions">
+              <button id="jobDetailPageEvalButton">AI评估</button>
               <button id="jobDetailSyncDetailButton" class="button-secondary">同步职位详情</button>
               <button id="jobDetailGreetButton" hidden>打招呼</button>
             </div>
@@ -446,6 +464,7 @@
               <h2 id="jobDetailTitle">查看职位详情</h2>
               <div id="jobDetailMeta" class="detail-meta"></div>
             </div>
+            <button id="jobDetailDrawerEvalButton" type="button">AI评估</button>
             <button type="button" class="button-secondary" data-close-job-detail="true">关闭</button>
           </div>
           <div id="jobDetailContent" class="detail-drawer-body"></div>

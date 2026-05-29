@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from job_buddy.boss import BossClient, BossDoctorRunner
 from job_buddy.config import Settings
 from job_buddy.services import (
+    AIMatchingService,
     DashboardService,
     DetailWorker,
     FriendService,
@@ -70,3 +71,16 @@ async def get_detail_worker(request: Request) -> DetailWorker:
 
 async def get_scroll_and_collect_worker(request: Request) -> ScrollAndCollectWorker:
     return request.app.state.scroll_and_collect_worker
+
+
+async def get_ai_matching_service(
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> AIMatchingService:
+    return AIMatchingService(db, settings)
+
+
+async def get_ai_matching_worker(request: Request):
+    from job_buddy.worker import AIMatchingWorker
+
+    return request.app.state.ai_matching_worker

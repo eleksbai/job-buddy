@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from job_buddy.boss import BossOperationError
 from job_buddy.deps import (
+    get_ai_matching_service,
+    get_ai_matching_worker,
     get_detail_worker,
     get_friend_service,
     get_greeting_service,
@@ -33,7 +35,9 @@ from job_buddy.schemas import (
     WorkerConfigRead,
     WorkerConfigUpdate,
 )
+from job_buddy.worker import AIMatchingWorker
 from job_buddy.services import (
+    AIMatchingService,
     DetailWorker,
     FriendService,
     GreetingService,
@@ -102,6 +106,35 @@ async def list_job_collection_records(
         limit=limit,
     )
     return [JobCollectionRecordRead(**item.model_dump()) for item in items]
+
+
+# ── AI Matching Endpoints ──
+
+@router.post("/jobs/{source_job_id}/ai/evaluate", tags=["jobs"], operation_id="evaluate_single_job")
+async def evaluate_single_job(
+    source_job_id: str,
+    service: AIMatchingService = Depends(get_ai_matching_service),
+) -> dict:
+    """Evaluate a single job with AI and persist the result."""
+    return await service.evaluate_single_job(source_job_id)
+
+
+@router.post("/jobs/ai/evaluate", response_model=TaskTriggerResponse, tags=["jobs"], operation_id="trigger_ai_evaluation")
+async def trigger_ai_evaluation(
+    service: AIMatchingService = Depends(get_ai_matching_service),
+) -> TaskTriggerResponse:
+    """Trigger an AI evaluation task for all unevaluated jobs."""
+    task = await service.run_evaluation_task()
+    return TaskTriggerResponse(task_id=task.id, status=task.status)
+
+
+@router.post("/jobs/ai/clear", tags=["jobs"], operation_id="clear_ai_marks")
+async def clear_ai_marks(
+    service: AIMatchingService = Depends(get_ai_matching_service),
+) -> dict[str, int]:
+    """Clear all AI evaluation marks and scores."""
+    count = await service.clear_all_marks()
+    return {"cleared_count": count}
 
 
 @router.post("/tasks/search", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_search_task")
@@ -179,11 +212,13 @@ async def list_workers(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> list[WorkerConfigRead]:
     items = [
         await search_worker.get_worker(),
         await detail_worker.get_worker(),
         await scroll_and_collect_worker.get_worker(),
+        await ai_matching_worker.get_worker(),
     ]
     return [WorkerConfigRead(**item.model_dump()) for item in items]
 
@@ -194,8 +229,9 @@ async def get_worker(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker).get_worker()
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).get_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -206,8 +242,9 @@ async def update_worker(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker).update_worker(payload)
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).update_worker(payload)
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -217,8 +254,9 @@ async def start_worker(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker).start_worker()
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).start_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -228,8 +266,9 @@ async def stop_worker(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker).stop_worker()
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).stop_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -239,8 +278,9 @@ async def release_worker(
     search_worker: SearchWorker = Depends(get_search_worker),
     detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker).release_worker()
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).release_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -303,11 +343,14 @@ def _select_worker(
     search_worker: SearchWorker,
     detail_worker: DetailWorker,
     scroll_and_collect_worker: ScrollAndCollectWorker,
-) -> SearchWorker | DetailWorker | ScrollAndCollectWorker:
+    ai_matching_worker: "AIMatchingWorker",
+):
     if worker_name == "search":
         return search_worker
     if worker_name == "detail":
         return detail_worker
     if worker_name == "scroll_and_collect":
         return scroll_and_collect_worker
+    if worker_name == "ai_matching":
+        return ai_matching_worker
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found.")

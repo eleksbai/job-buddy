@@ -473,6 +473,84 @@ function renderJobDetailDrawerError(message) {
   document.getElementById("jobDetailMeta").innerHTML = "";
 }
 
+function buildAiMatchingPanel(job) {
+  if (!job.ai_evaluated_at) {
+    return `
+      <div class="detail-panel">
+        <h4>AI 匹配评估 <span class="status-badge status-info">未评估</span></h4>
+        <p class="hint-text">尚未进行 AI 评估，可在职位列表中点击"AI评估"按钮进行评估。</p>
+      </div>`;
+  }
+
+  const matchBadge = job.ai_match
+    ? '<span class="status-badge status-ok">匹配</span>'
+    : '<span class="status-badge status-error">不匹配</span>';
+
+  return `
+    <div class="detail-panel">
+      <h4>AI 匹配评估 ${matchBadge}</h4>
+      <div class="detail-list">
+        <div><strong>评分</strong><span>${job.ai_score ?? "-"} / 100</span></div>
+        <div><strong>评估时间</strong><span>${escapeHtml(formatDate(job.ai_evaluated_at))}</span></div>
+      </div>
+      ${job.ai_reasoning ? `<div style="margin-top:0.5rem"><strong>评估理由</strong><p style="margin-top:0.25rem;white-space:pre-wrap">${escapeHtml(job.ai_reasoning)}</p></div>` : ""}
+    </div>`;
+}
+
+function updateJobDetailEvalButton(job) {
+  const hasDetail = !!(job.detail_text || job.detail_fetched_at);
+  const text = job.ai_evaluated_at ? "重新评估" : "AI评估";
+  ["jobDetailDrawerEvalButton", "jobDetailPageEvalButton"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (hasDetail) {
+      btn.textContent = text;
+      btn.hidden = false;
+    } else {
+      btn.hidden = true;
+    }
+  });
+}
+
+async function evaluateJobDetail(buttonId) {
+  buttonId = buttonId || "jobDetailDrawerEvalButton";
+  const job = state.jobDetail?.job || state.jobDetailPagePayload?.job;
+  const sourceJobId = job?.source_job_id || state.jobDetailSourceJobId || state.jobDetailPageSourceJobId;
+  if (!sourceJobId) return;
+
+  clearError();
+  setButtonBusy(buttonId, true, "评估中");
+  try {
+    const result = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/ai/evaluate`, { method: "POST" });
+    showNotice(`评估完成: ${result.match ? "匹配" : "不匹配"} (${result.score}分)`, 5000);
+
+    // Refresh detail to get updated AI fields
+    const detailPayload = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/detail`);
+    const jobData = detailPayload?.job || {};
+
+    // Update drawer if open
+    if (state.jobDetail) {
+      state.jobDetail = detailPayload;
+      const { bodyHtml } = buildJobDetailHtml(detailPayload);
+      document.getElementById("jobDetailContent").innerHTML = buildAiMatchingPanel(jobData) + bodyHtml;
+      updateJobDetailEvalButton(jobData);
+    }
+
+    // Update full-page view if active
+    if (state.jobDetailPagePayload) {
+      state.jobDetailPagePayload = detailPayload;
+      document.getElementById("jobDetailAiPanel").innerHTML = buildAiMatchingPanel(jobData);
+      updateJobDetailEvalButton(jobData);
+    }
+
+    await loadJobs();
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setButtonBusy(buttonId, false);
+  }
+}
+
 function buildJobDetailHtml(payload) {
   const job = payload?.job || {};
   const detailPayload = job.detail_payload || {};
@@ -550,9 +628,12 @@ function buildJobDetailHtml(payload) {
 
 function renderJobDetailDrawer(payload) {
   const { title, metaHtml, bodyHtml } = buildJobDetailHtml(payload);
+  const job = payload?.job || {};
   document.getElementById("jobDetailTitle").textContent = title;
   document.getElementById("jobDetailMeta").innerHTML = metaHtml;
-  document.getElementById("jobDetailContent").innerHTML = bodyHtml;
+  document.getElementById("jobDetailContent").innerHTML =
+    buildAiMatchingPanel(job) + bodyHtml;
+  updateJobDetailEvalButton(job);
 }
 
 async function loadAuthStatus() {
@@ -714,6 +795,9 @@ function renderJobsTable() {
         label: "状态",
         render: (row) => escapeHtml(`${row.match_status}${row.greeted ? " / 已打招呼" : ""}`),
       },
+      { label: "AI评分", render: (row) => renderAiScore(row) },
+      { label: "AI匹配", render: (row) => renderAiMatchBadge(row) },
+      { label: "操作", render: (row) => renderJobActions(row) },
     ],
     items,
   );
@@ -732,6 +816,14 @@ function getSortedFilteredJobs() {
     items = items.filter((row) => row.greeted);
   } else if (greeted === "false") {
     items = items.filter((row) => !row.greeted);
+  }
+  const aiMatch = document.getElementById("jobsAiMatchFilter")?.value || "";
+  if (aiMatch === "true") {
+    items = items.filter((row) => row.ai_match === true);
+  } else if (aiMatch === "false") {
+    items = items.filter((row) => row.ai_match === false);
+  } else if (aiMatch === "null") {
+    items = items.filter((row) => row.ai_match === null || row.ai_match === undefined);
   }
   const cityFilter = (document.getElementById("jobsCityFilter")?.value || "").trim().toLowerCase();
   if (cityFilter) {
@@ -769,6 +861,10 @@ function getSortedFilteredJobs() {
         va = a.search_count ?? 0;
         vb = b.search_count ?? 0;
         break;
+      case "ai_score":
+        va = a.ai_score ?? -1;
+        vb = b.ai_score ?? -1;
+        break;
       default:
         return 0;
     }
@@ -783,6 +879,30 @@ function getSortedFilteredJobs() {
 function renderJobLinkButton(row) {
   if (!row.job_url) return "-";
   return `<button type="button" class="button-link" data-copy-link="${escapeHtml(row.job_url)}" title="复制职位链接">📋 复制链接</button>`;
+}
+
+function renderAiScore(row) {
+  if (row.ai_evaluated_at) {
+    return `<span class="ai-score">${row.ai_score ?? "-"}</span>`;
+  }
+  return '<span class="hint-text">-</span>';
+}
+
+function renderAiMatchBadge(row) {
+  if (row.ai_match === true) {
+    return '<span class="status-badge status-ok">匹配</span>';
+  }
+  if (row.ai_match === false) {
+    return '<span class="status-badge status-error">不匹配</span>';
+  }
+  return '<span class="status-badge status-info">未评</span>';
+}
+
+function renderJobActions(row) {
+  if (!row.detail_fetched_at) {
+    return '<span class="hint-text">待采集</span>';
+  }
+  return `<button type="button" class="button-link" data-ai-evaluate="${escapeHtml(row.source_job_id)}">AI评估</button>`;
 }
 
 async function copyJobLink(url, button) {
@@ -1243,10 +1363,13 @@ function renderJobDetailPageChat(payload) {
 
 function renderJobDetailPageDetail(payload) {
   const { title, metaHtml, bodyHtml } = buildJobDetailHtml(payload);
+  const job = payload?.job || {};
   document.getElementById("jobDetailPageTitle").textContent = title;
   document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
-  const contact = payload?.job?.contact;
+  document.getElementById("jobDetailAiPanel").innerHTML = buildAiMatchingPanel(job);
+  updateJobDetailEvalButton(job);
+  const contact = job.contact;
   document.getElementById("jobDetailGreetButton").hidden = contact === true;
   document.getElementById("jobDetailSyncChatButton").hidden = contact !== true;
   document.getElementById("jobDetailMessageInput").hidden = contact !== true;
@@ -1885,6 +2008,43 @@ async function clearData() {
   }
 }
 
+async function evaluateSingleJob(sourceJobId) {
+  clearError();
+  try {
+    const result = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/ai/evaluate`, { method: "POST" });
+    showNotice(`AI评估完成: ${result.match ? "匹配" : "不匹配"} (${result.score}分)`, 5000);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    await loadJobs();
+  }
+}
+
+async function triggerAiEvaluate() {
+  clearError();
+  setButtonBusy("aiEvaluateButton", true, "评估中");
+  try {
+    const result = await fetchJson("/boss/jobs/ai/evaluate", { method: "POST" });
+    showNotice(`已触发AI评估任务 ${result.task_id}`, 5000);
+  } finally {
+    setButtonBusy("aiEvaluateButton", false);
+  }
+}
+
+async function clearAiMarks() {
+  const confirmed = window.confirm("确认清除所有AI评分和匹配标记？此操作不可恢复。");
+  if (!confirmed) return;
+  clearError();
+  setButtonBusy("aiClearMarksButton", true, "清除中");
+  try {
+    const result = await fetchJson("/boss/jobs/ai/clear", { method: "POST" });
+    await loadJobs();
+    showNotice(`已清除 ${result.cleared_count} 条AI标记`, 5000);
+  } finally {
+    setButtonBusy("aiClearMarksButton", false);
+  }
+}
+
 async function loadView(viewId, params = {}) {
   clearError();
   switch (viewId) {
@@ -1984,6 +2144,14 @@ function bindEvents() {
       event.preventDefault();
       closeChatHistoryDrawer();
     }
+
+    const aiEvaluateButton = event.target.closest("[data-ai-evaluate]");
+    if (aiEvaluateButton) {
+      event.preventDefault();
+      const sourceJobId = aiEvaluateButton.dataset.aiEvaluate;
+      evaluateSingleJob(sourceJobId).catch((error) => showError(error.message));
+      return;
+    }
   });
 
   window.addEventListener("hashchange", () => {
@@ -2008,6 +2176,12 @@ function bindEvents() {
   document
     .getElementById("clearDataButton")
     .addEventListener("click", () => clearData().catch((error) => showError(error.message)));
+  document
+    .getElementById("aiEvaluateButton")
+    .addEventListener("click", () => triggerAiEvaluate().catch((error) => showError(error.message)));
+  document
+    .getElementById("aiClearMarksButton")
+    .addEventListener("click", () => clearAiMarks().catch((error) => showError(error.message)));
   document
     .getElementById("searchButton")
     .addEventListener("click", () => triggerSearch().catch((error) => showError(error.message)));
@@ -2066,7 +2240,7 @@ function bindEvents() {
     .getElementById("refreshJobsButton")
     .addEventListener("click", () => loadJobs().catch((error) => showError(error.message)));
 
-  ["jobsSortSelect", "jobsMatchStatusFilter", "jobsGreetedFilter"].forEach((id) => {
+  ["jobsSortSelect", "jobsMatchStatusFilter", "jobsGreetedFilter", "jobsAiMatchFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", renderJobsTable);
   });
   ["jobsCityFilter", "jobsKeywordFilter"].forEach((id) => {
@@ -2102,6 +2276,12 @@ function bindEvents() {
   document
     .getElementById("jobDetailSendMessageButton")
     .addEventListener("click", () => sendMessageForJobDetail().catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailDrawerEvalButton")
+    .addEventListener("click", () => evaluateJobDetail("jobDetailDrawerEvalButton").catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailPageEvalButton")
+    .addEventListener("click", () => evaluateJobDetail("jobDetailPageEvalButton").catch((error) => showError(error.message)));
   document.getElementById("jobDetailMessageInput").addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       sendMessageForJobDetail().catch((error) => showError(error.message));

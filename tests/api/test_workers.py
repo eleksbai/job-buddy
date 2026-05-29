@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 
-from job_buddy.deps import get_detail_worker, get_scroll_and_collect_worker, get_search_worker
+from job_buddy.deps import get_ai_matching_worker, get_detail_worker, get_scroll_and_collect_worker, get_search_worker
 from job_buddy.models import WorkerConfig
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
@@ -33,7 +33,7 @@ class FakeWorker:
         return self.worker
 
 
-def build_fake_workers() -> tuple[FakeWorker, FakeWorker, FakeWorker]:
+def build_fake_workers():
     now = datetime.now(tz=UTC)
     search_worker = FakeWorker(
         WorkerConfig(
@@ -83,24 +83,41 @@ def build_fake_workers() -> tuple[FakeWorker, FakeWorker, FakeWorker]:
             updated_at=now,
         )
     )
-    return search_worker, detail_worker, scroll_and_collect_worker
+    ai_matching_worker = FakeWorker(
+        WorkerConfig(
+            _id="6825fb1a7d4ce9adcc2d1a44",
+            worker_name="ai_matching",
+            enabled=False,
+            interval_seconds=3600,
+            next_run_at=None,
+            status="idle",
+            query={},
+            page=1,
+            page_max=5,
+            batch_size=10,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker
 
 
 @pytest.mark.asyncio
 async def test_list_workers_returns_default_disabled_configs():
     app = FastAPI()
     app.include_router(build_api_router())
-    search_worker, detail_worker, scroll_and_collect_worker = build_fake_workers()
+    search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker = build_fake_workers()
     app.dependency_overrides[get_search_worker] = lambda: search_worker
     app.dependency_overrides[get_detail_worker] = lambda: detail_worker
     app.dependency_overrides[get_scroll_and_collect_worker] = lambda: scroll_and_collect_worker
+    app.dependency_overrides[get_ai_matching_worker] = lambda: ai_matching_worker
 
     async with api_client(app) as client:
         response = await client.get("/boss/workers")
 
     assert response.status_code == 200
     payload = response.json()
-    assert {item["worker_name"] for item in payload} == {"search", "detail", "scroll_and_collect"}
+    assert {item["worker_name"] for item in payload} == {"search", "detail", "scroll_and_collect", "ai_matching"}
     assert all(item["enabled"] is False for item in payload)
 
 
@@ -108,10 +125,11 @@ async def test_list_workers_returns_default_disabled_configs():
 async def test_update_search_worker_accepts_query_and_page_max():
     app = FastAPI()
     app.include_router(build_api_router())
-    search_worker, detail_worker, scroll_and_collect_worker = build_fake_workers()
+    search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker = build_fake_workers()
     app.dependency_overrides[get_search_worker] = lambda: search_worker
     app.dependency_overrides[get_detail_worker] = lambda: detail_worker
     app.dependency_overrides[get_scroll_and_collect_worker] = lambda: scroll_and_collect_worker
+    app.dependency_overrides[get_ai_matching_worker] = lambda: ai_matching_worker
 
     async with api_client(app) as client:
         response = await client.put(
@@ -130,10 +148,11 @@ async def test_update_search_worker_accepts_query_and_page_max():
 async def test_start_and_stop_worker_toggle_enabled():
     app = FastAPI()
     app.include_router(build_api_router())
-    search_worker, detail_worker, scroll_and_collect_worker = build_fake_workers()
+    search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker = build_fake_workers()
     app.dependency_overrides[get_search_worker] = lambda: search_worker
     app.dependency_overrides[get_detail_worker] = lambda: detail_worker
     app.dependency_overrides[get_scroll_and_collect_worker] = lambda: scroll_and_collect_worker
+    app.dependency_overrides[get_ai_matching_worker] = lambda: ai_matching_worker
 
     async with api_client(app) as client:
         start_response = await client.post("/boss/workers/detail/start")
@@ -149,11 +168,12 @@ async def test_start_and_stop_worker_toggle_enabled():
 async def test_release_worker_clears_error():
     app = FastAPI()
     app.include_router(build_api_router())
-    search_worker, detail_worker, scroll_and_collect_worker = build_fake_workers()
+    search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker = build_fake_workers()
     search_worker.worker = search_worker.worker.model_copy(update={"enabled": True, "status": "error", "last_error": "boom"})
     app.dependency_overrides[get_search_worker] = lambda: search_worker
     app.dependency_overrides[get_detail_worker] = lambda: detail_worker
     app.dependency_overrides[get_scroll_and_collect_worker] = lambda: scroll_and_collect_worker
+    app.dependency_overrides[get_ai_matching_worker] = lambda: ai_matching_worker
 
     async with api_client(app) as client:
         response = await client.post("/boss/workers/search/release")
@@ -168,10 +188,11 @@ async def test_release_worker_clears_error():
 async def test_invalid_worker_name_returns_not_found():
     app = FastAPI()
     app.include_router(build_api_router())
-    search_worker, detail_worker, scroll_and_collect_worker = build_fake_workers()
+    search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker = build_fake_workers()
     app.dependency_overrides[get_search_worker] = lambda: search_worker
     app.dependency_overrides[get_detail_worker] = lambda: detail_worker
     app.dependency_overrides[get_scroll_and_collect_worker] = lambda: scroll_and_collect_worker
+    app.dependency_overrides[get_ai_matching_worker] = lambda: ai_matching_worker
 
     async with api_client(app) as client:
         response = await client.get("/boss/workers/unknown")

@@ -2069,3 +2069,217 @@ class SystemService:
             uid=local.uid or state.uid,
             message=local.message,
         )
+
+
+class AIMatchingService:
+    """AI-powered job-candidate matching evaluation."""
+
+    def __init__(self, database: AsyncIOMotorDatabase, settings: Settings) -> None:
+        self.jobs = database["job_leads"]
+        self.tasks = database["greeting_tasks"]
+        self.settings = settings
+        self._client = None
+        self._resume_mtime: float | None = None
+        self._resume_cache: str | None = None
+        self._criteria_mtime: float | None = None
+        self._criteria_cache: str | None = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            from job_buddy.ai.job_evaluation import AIMatchingClient
+
+            self._client = AIMatchingClient(self.settings)
+        return self._client
+
+    def _resolve_path(self, relative: str) -> Path:
+        path = Path(relative)
+        if not path.is_absolute():
+            path = self.settings.project_root / path
+        return path
+
+    def _load_resume_and_criteria(self) -> tuple[str, str]:
+        resume_path = self._resolve_path(self.settings.ai_resume_path)
+        criteria_path = self._resolve_path(self.settings.ai_criteria_path)
+
+        resume_mtime = resume_path.stat().st_mtime if resume_path.exists() else 0
+        criteria_mtime = criteria_path.stat().st_mtime if criteria_path.exists() else 0
+
+        if self._resume_cache is None or self._resume_mtime != resume_mtime:
+            from job_buddy.ai.job_evaluation import _load_markdown
+
+            self._resume_cache = _load_markdown(resume_path)
+            self._resume_mtime = resume_mtime
+
+        if self._criteria_cache is None or self._criteria_mtime != criteria_mtime:
+            from job_buddy.ai.job_evaluation import _load_markdown
+
+            self._criteria_cache = _load_markdown(criteria_path)
+            self._criteria_mtime = criteria_mtime
+
+        return self._resume_cache, self._criteria_cache
+
+    async def evaluate_single_job(self, source_job_id: str) -> dict:
+        """Evaluate a single job and persist the result to the database."""
+        payload = await self.jobs.find_one({"source_job_id": source_job_id})
+        if payload is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="岗位不存在")
+
+        job = JobLead.from_mongo(payload)
+
+        if not job.detail_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="岗位暂无详情数据，请先采集职位详情后再进行AI评估",
+            )
+
+        resume_text, criteria_text = self._load_resume_and_criteria()
+
+        from job_buddy.ai.job_evaluation import build_evaluation_prompt
+
+        prompt = build_evaluation_prompt(job, resume_text, criteria_text)
+        result = await self.client.evaluate(prompt)
+
+        await _update_model(
+            self.jobs,
+            JobLead,
+            job.id,
+            {
+                "ai_match": result["match"],
+                "ai_score": result["score"],
+                "ai_reasoning": result["reasoning"],
+                "ai_evaluated_at": utc_now(),
+            },
+        )
+        return result
+
+    async def clear_all_marks(self) -> int:
+        """Reset AI evaluation fields for all jobs. Returns count of updated documents."""
+        result = await self.jobs.update_many(
+            {},
+            {
+                "$set": {
+                    "ai_score": None,
+                    "ai_match": None,
+                    "ai_reasoning": None,
+                    "ai_evaluated_at": None,
+                }
+            },
+        )
+        return result.modified_count
+
+    async def run_evaluation_task(self, limit: int = 50) -> GreetingTask:
+        """Create a GreetingTask and evaluate unevaluated jobs one by one."""
+        task = await _create_model(
+            self.tasks,
+            GreetingTask(
+                task_type="ai_matching",
+                status=TaskStatus.RUNNING,
+                input_payload={"limit": limit},
+                started_at=utc_now(),
+            ),
+            GreetingTask,
+        )
+
+        try:
+            await asyncio.wait_for(
+                self._do_evaluate_batch(task, limit),
+                timeout=TASK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            current = await _get_model(self.tasks, GreetingTask, task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "finished_at": utc_now(),
+                },
+            )
+            updated = await _get_model(self.tasks, GreetingTask, task.id)
+            if updated is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return updated
+        except Exception as exc:
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": str(exc),
+                    "finished_at": utc_now(),
+                },
+            )
+            updated = await _get_model(self.tasks, GreetingTask, task.id)
+            if updated is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return updated
+
+        updated = await _get_model(self.tasks, GreetingTask, task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def _do_evaluate_batch(self, task: GreetingTask, limit: int) -> None:
+        cursor = self.jobs.find({"ai_match": None}).limit(limit)
+        jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
+
+        resume_text, criteria_text = self._load_resume_and_criteria()
+        from job_buddy.ai.job_evaluation import build_evaluation_prompt
+
+        success_count = 0
+        failed_count = 0
+
+        for idx, job in enumerate(jobs):
+            await self._update_step(task.id, f"evaluate_{idx + 1}_of_{len(jobs)}")
+            try:
+                prompt = build_evaluation_prompt(job, resume_text, criteria_text)
+                result = await self.client.evaluate(prompt)
+                await _update_model(
+                    self.jobs,
+                    JobLead,
+                    job.id,
+                    {
+                        "ai_match": result["match"],
+                        "ai_score": result["score"],
+                        "ai_reasoning": result["reasoning"],
+                        "ai_evaluated_at": utc_now(),
+                    },
+                )
+                success_count += 1
+            except Exception as exc:
+                logger.warning(
+                    "AI evaluation failed for job %s: %s",
+                    job.source_job_id,
+                    exc,
+                )
+                failed_count += 1
+
+            if idx < len(jobs) - 1:
+                await asyncio.sleep(self.settings.ai_request_delay_seconds)
+
+        final_status = TaskStatus.SUCCEEDED
+        if failed_count and success_count:
+            final_status = TaskStatus.PARTIAL_SUCCESS
+        elif failed_count and not success_count:
+            final_status = TaskStatus.FAILED
+
+        await _update_model(
+            self.tasks,
+            GreetingTask,
+            task.id,
+            {
+                "status": final_status,
+                "result_summary": {"total": len(jobs), "succeeded": success_count, "failed": failed_count},
+                "finished_at": utc_now(),
+            },
+        )
+
+    async def _update_step(self, task_id: str, step: str) -> None:
+        await _update_model(self.tasks, GreetingTask, task_id, {"result_summary": {"step": step}})

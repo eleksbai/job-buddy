@@ -78,6 +78,10 @@ class JobLead(DocumentModel):
     search_count: int = 1
     last_searched_at: datetime = Field(default_factory=utc_now)
     greeted: bool = False
+    ai_score: int | None = None
+    ai_match: bool | None = None
+    ai_reasoning: str | None = None
+    ai_evaluated_at: datetime | None = None
 
 
 class JobCollectionRecord(DocumentModel):

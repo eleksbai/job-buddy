@@ -44,6 +44,10 @@ class JobLeadRead(TimestampedSchema):
     raw_payload: dict[str, Any]
     detail_payload: dict[str, Any] = Field(default_factory=dict)
     detail_text: str | None = None
+    ai_score: int | None = None
+    ai_match: bool | None = None
+    ai_reasoning: str | None = None
+    ai_evaluated_at: datetime | None = None
 
 
 class JobLeadDetailRead(JobLeadRead):

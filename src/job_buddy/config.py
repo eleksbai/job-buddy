@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     )
     boss_profile_dir: str = Field(default="data/chrome_profile", alias="JOB_BUDDY_PROFILE_DIR")
 
+    # AI Matching
+    ai_api_base_url: str = Field(default="https://api.openai.com/v1", alias="AI_API_BASE_URL")
+    ai_api_key: str = Field(default="", alias="AI_API_KEY")
+    ai_model: str = Field(default="gpt-3.5-turbo", alias="AI_MODEL")
+    ai_resume_path: str = Field(default="data/resume.md", alias="AI_RESUME_PATH")
+    ai_criteria_path: str = Field(default="data/matching_criteria.md", alias="AI_CRITERIA_PATH")
+    ai_request_delay_seconds: float = Field(default=1.0, alias="AI_REQUEST_DELAY_SECONDS")
+    ai_temperature: float = Field(default=0.1, alias="AI_TEMPERATURE")
+
     @property
     def project_root(self) -> Path:
         return _PROJECT_ROOT
