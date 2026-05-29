@@ -188,7 +188,7 @@ def test_run_greetings_records_mapped_auth_errors():
     service.jobs = FakeJobCollection()
     service.auth_states = FakeAuthStateCollection()
 
-    task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
+    task = asyncio.run(service.run_greetings(source_job_ids=[], greeting_message=None, limit=5))
 
     assert task.status.value == "failed"
     assert task.result_summary == {"total": 1, "succeeded": 0, "failed": 1}
@@ -204,7 +204,7 @@ def test_run_greetings_marks_job_as_greeted_and_keeps_match_status_after_success
     service.jobs = FakeJobCollection()
     service.auth_states = FakeAuthStateCollection()
 
-    task = asyncio.run(service.run_greetings(target=None, source_job_ids=[], greeting_message=None, limit=5))
+    task = asyncio.run(service.run_greetings(source_job_ids=[], greeting_message=None, limit=5))
 
     assert task.status.value == "succeeded"
     assert service.jobs.updated[-1][1]["greeted"] is True
@@ -223,7 +223,6 @@ def test_run_greetings_accepts_source_job_id_list():
 
     task = asyncio.run(
         service.run_greetings(
-            target=None,
             source_job_ids=["source-job-1"],
             greeting_message=None,
             limit=1,

@@ -1,17 +1,17 @@
 from bson import ObjectId
 
-from job_buddy.models import TargetProfile
+from job_buddy.models import JobLead
 
 
 def test_document_model_round_trip():
     source = {
         "_id": ObjectId(),
-        "name": "Python Backend",
-        "keywords": ["Python", "FastAPI"],
-        "city": "Shanghai",
+        "source_job_id": "job-1",
+        "title": "Python Backend",
+        "company": "Demo Tech",
     }
 
-    model = TargetProfile.from_mongo(source)
+    model = JobLead.from_mongo(source)
 
     assert model.id is not None
-    assert model.to_mongo()["name"] == "Python Backend"
+    assert model.to_mongo()["title"] == "Python Backend"

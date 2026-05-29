@@ -50,17 +50,6 @@ class TaskStatus(StrEnum):
     PARTIAL_SUCCESS = "partial_success"
 
 
-class TargetProfile(DocumentModel):
-    name: str
-    keywords: list[str] = Field(default_factory=list)
-    city: str | None = None
-    salary: str | None = None
-    experience: str | None = None
-    filters: dict[str, Any] = Field(default_factory=dict)
-    greeting_template: str | None = None
-    is_active: bool = True
-
-
 class JobLead(DocumentModel):
     source: str = "boss"
     source_job_id: str
@@ -91,7 +80,6 @@ class JobLead(DocumentModel):
 class JobCollectionRecord(DocumentModel):
     task_id: str
     trace_id: str | None = None
-    target_profile_id: str | None = None
     source: str = "boss"
     source_job_id: str
     security_id: str | None = None
@@ -107,7 +95,6 @@ class JobCollectionRecord(DocumentModel):
 
 class JobCollectionTrace(DocumentModel):
     task_id: str
-    target_profile_id: str | None = None
     source: str = "boss"
     engine: str | None = None
     browser: str | None = None
@@ -124,7 +111,6 @@ class JobCollectionTrace(DocumentModel):
 class GreetingTask(DocumentModel):
     task_type: str
     status: TaskStatus = TaskStatus.PENDING
-    target_profile_id: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     result_summary: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None

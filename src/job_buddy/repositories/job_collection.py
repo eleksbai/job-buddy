@@ -7,7 +7,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from job_buddy.boss.schemas import JobDetailOut, SearchJobItemOut
-from job_buddy.models import JobCollectionRecord, JobLead, TargetProfile, utc_now
+from job_buddy.models import JobCollectionRecord, JobLead, utc_now
 
 
 class JobCollectionRepository:
@@ -97,7 +97,6 @@ class JobCollectionRepository:
     async def upsert_job_lead(
         self,
         detail: JobDetailOut,
-        target: TargetProfile | None,
     ) -> tuple[JobLead, bool]:
         """Create or update a ``JobLead`` from a ``JobDetailOut``.
 
@@ -119,7 +118,7 @@ class JobCollectionRepository:
                 salary=detail.job.salary or None,
                 experience=detail.job.experience or None,
                 job_url=detail.job_url or None,
-                match_status="matched" if target else "new",
+                match_status="new",
                 detail_payload=detail.model_dump(),
                 detail_text=detail.detail_text or None,
                 detail_source_url=detail.request_url or detail.job_url or None,
@@ -162,7 +161,6 @@ class JobCollectionRepository:
     async def upsert_job_lead_from_search(
         self,
         item: SearchJobItemOut,
-        target: TargetProfile | None,
     ) -> tuple[JobLead, bool]:
         """Create or update a ``JobLead`` from a ``SearchJobItemOut``.
 
@@ -184,7 +182,7 @@ class JobCollectionRepository:
                 salary=item.salary,
                 experience=item.experience,
                 job_url=item.job_url,
-                match_status="matched" if target else "new",
+                match_status="new",
                 raw_payload=item.raw_payload,
                 search_count=1,
                 last_searched_at=utc_now(),

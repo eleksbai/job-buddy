@@ -261,7 +261,7 @@ async def test_upsert_job_lead_creates_when_missing():
     repo, jobs, _records = _build_repo()
     detail = _make_detail("job-1")
 
-    lead, is_created = await repo.upsert_job_lead(detail, target=None)
+    lead, is_created = await repo.upsert_job_lead(detail)
 
     assert is_created is True
     assert lead.source_job_id == "job-1"
@@ -273,10 +273,10 @@ async def test_upsert_job_lead_creates_when_missing():
 async def test_upsert_job_lead_updates_when_existing():
     repo, jobs, _records = _build_repo()
     detail = _make_detail("job-1")
-    await repo.upsert_job_lead(detail, target=None)
+    await repo.upsert_job_lead(detail)
 
     detail.job.title = "Senior Python Engineer"
-    lead, is_created = await repo.upsert_job_lead(detail, target=None)
+    lead, is_created = await repo.upsert_job_lead(detail)
 
     assert is_created is False
     assert lead.title == "Senior Python Engineer"
@@ -287,7 +287,7 @@ async def test_upsert_job_lead_from_search_creates_when_missing():
     repo, jobs, _records = _build_repo()
     item = _make_search_item("job-1")
 
-    lead, is_created = await repo.upsert_job_lead_from_search(item, target=None)
+    lead, is_created = await repo.upsert_job_lead_from_search(item)
 
     assert is_created is True
     assert lead.source_job_id == "job-1"
@@ -298,10 +298,10 @@ async def test_upsert_job_lead_from_search_creates_when_missing():
 async def test_upsert_job_lead_from_search_increments_search_count():
     repo, jobs, _records = _build_repo()
     item = _make_search_item("job-1")
-    await repo.upsert_job_lead_from_search(item, target=None)
+    await repo.upsert_job_lead_from_search(item)
 
     item.salary = "30-40K"
-    lead, is_created = await repo.upsert_job_lead_from_search(item, target=None)
+    lead, is_created = await repo.upsert_job_lead_from_search(item)
 
     assert is_created is False
     assert lead.search_count == 2

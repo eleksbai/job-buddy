@@ -17,39 +17,6 @@ class TaskTriggerResponse(BaseModel):
     status: str
 
 
-class TargetProfileCreate(BaseModel):
-    name: str
-    keywords: list[str] = Field(default_factory=list)
-    city: str | None = None
-    salary: str | None = None
-    experience: str | None = None
-    filters: dict[str, Any] = Field(default_factory=dict)
-    greeting_template: str | None = None
-    is_active: bool = True
-
-
-class TargetProfileUpdate(BaseModel):
-    name: str | None = None
-    keywords: list[str] | None = None
-    city: str | None = None
-    salary: str | None = None
-    experience: str | None = None
-    filters: dict[str, Any] | None = None
-    greeting_template: str | None = None
-    is_active: bool | None = None
-
-
-class TargetProfileRead(TimestampedSchema):
-    name: str
-    keywords: list[str]
-    city: str | None = None
-    salary: str | None = None
-    experience: str | None = None
-    filters: dict[str, Any]
-    greeting_template: str | None = None
-    is_active: bool
-
-
 class JobLeadRead(TimestampedSchema):
     source: str
     source_job_id: str
@@ -110,7 +77,6 @@ class SearchJobsResponse(BaseModel):
 class JobCollectionRecordRead(TimestampedSchema):
     task_id: str
     trace_id: str | None = None
-    target_profile_id: str | None = None
     source: str
     source_job_id: str
     security_id: str | None = None
@@ -125,12 +91,10 @@ class JobCollectionRecordRead(TimestampedSchema):
 
 
 class SearchTaskRequest(BaseModel):
-    target_profile_id: str | None = None
     query_override: dict[str, Any] = Field(default_factory=dict)
 
 
 class GreetTaskRequest(BaseModel):
-    target_profile_id: str | None = None
     source_job_ids: list[str] = Field(default_factory=list)
     greeting_message: str | None = None
     limit: int = 20
@@ -139,7 +103,6 @@ class GreetTaskRequest(BaseModel):
 class GreetingTaskRead(TimestampedSchema):
     task_type: str
     status: str
-    target_profile_id: str | None = None
     input_payload: dict[str, Any]
     result_summary: dict[str, Any]
     error_message: str | None = None

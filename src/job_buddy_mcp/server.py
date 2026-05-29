@@ -121,7 +121,7 @@ def _summarize_task(task: dict[str, Any]) -> dict[str, Any]:
         "task_id": task.get("id"),
         "task_type": task.get("task_type"),
         "status": task.get("status"),
-        "target_profile_id": task.get("target_profile_id"),
+        "input_payload": task.get("input_payload", {}),
         "input_payload": task.get("input_payload", {}),
         "result_summary": task.get("result_summary", {}),
         "error_message": task.get("error_message"),
@@ -175,7 +175,7 @@ def _summarize_collection_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "record_id": record.get("id"),
         "task_id": record.get("task_id"),
-        "target_profile_id": record.get("target_profile_id"),
+        "source_job_id": record.get("source_job_id"),
         "source_job_id": record.get("source_job_id"),
         "security_id": record.get("security_id"),
         "title": record.get("title"),
@@ -427,7 +427,6 @@ async def list_jobs(
 async def job_collection_records(
     limit: int = 100,
     task_id: str | None = None,
-    target_profile_id: str | None = None,
     source_job_id: str | None = None,
     include_raw: bool = False,
 ) -> dict[str, Any]:
@@ -436,7 +435,6 @@ async def job_collection_records(
         {
             "limit": limit,
             "task_id": task_id,
-            "target_profile_id": target_profile_id,
             "source_job_id": source_job_id,
         }
     )
@@ -537,13 +535,11 @@ async def send_message(source_friend_id: str, content: str, include_raw: bool = 
 
 @mcp.tool
 async def start_search_task(
-    target_profile_id: str | None = None,
     query_override: dict[str, Any] | None = None,
     include_raw: bool = False,
 ) -> dict[str, Any]:
     """触发职位搜索任务。"""
     payload = {
-        "target_profile_id": target_profile_id,
         "query_override": query_override or {},
     }
     ok, response_payload, error = await _request_json("POST", "/boss/tasks/search", json=payload)
@@ -560,7 +556,6 @@ async def start_search_task(
 
 @mcp.tool
 async def start_greet_task(
-    target_profile_id: str | None = None,
     source_job_ids: list[str] | None = None,
     greeting_message: str | None = None,
     limit: int = 20,
@@ -568,7 +563,6 @@ async def start_greet_task(
 ) -> dict[str, Any]:
     """触发批量打招呼任务。"""
     payload = {
-        "target_profile_id": target_profile_id,
         "source_job_ids": source_job_ids or [],
         "greeting_message": greeting_message,
         "limit": limit,

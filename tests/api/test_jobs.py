@@ -1,7 +1,7 @@
 import pytest
 from fastapi import FastAPI
 
-from job_buddy.deps import get_job_service, get_target_service
+from job_buddy.deps import get_job_service
 from job_buddy.models import JobCollectionRecord, JobLead
 from job_buddy.routers import build_api_router
 from tests.api._client import api_client
@@ -28,8 +28,8 @@ class FakeJobService:
             )
         ]
 
-    async def list_collection_records(self, task_id, target_profile_id, source_job_id, limit):
-        _ = task_id, target_profile_id, source_job_id, limit
+    async def list_collection_records(self, task_id, source_job_id, limit):
+        _ = task_id, source_job_id, limit
         return [
             JobCollectionRecord(
                 _id="6825fb1a7d4ce9adcc2d1a32",
@@ -70,31 +70,22 @@ class FakeJobService:
             False,
         )
 
-    async def search_jobs_by_scroll(self, query, target=None):
-        _ = target
+    async def search_jobs_by_scroll(self, query):
         self.scroll_search_payloads.append(dict(query))
         from job_buddy.models import GreetingTask
 
         return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a33", task_type="search", status="running")
 
-    async def collect_job_details_by_click(self, target=None):
-        _ = target
+    async def collect_job_details_by_click(self):
         from job_buddy.models import GreetingTask
 
         return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a34", task_type="detail_click", status="running")
 
-    async def scroll_and_collect_jobs(self, query, target=None):
-        _ = target
+    async def scroll_and_collect_jobs(self, query):
         self.scroll_and_collect_payloads = [dict(query)]
         from job_buddy.models import GreetingTask
 
         return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a35", task_type="scroll_and_detail", status="running")
-
-
-class FakeTargetService:
-    async def get_target(self, target_id):
-        _ = target_id
-        raise AssertionError("unexpected target lookup")
 
 
 @pytest.mark.asyncio
@@ -119,7 +110,6 @@ async def test_get_job_detail_includes_contact_state():
     app.include_router(build_api_router())
     service = FakeJobService()
     app.dependency_overrides[get_job_service] = lambda: service
-    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
 
     async with api_client(app) as client:
         response = await client.get("/boss/jobs/job-1/detail")
@@ -150,7 +140,6 @@ async def test_trigger_scroll_search_task_uses_scroll_service_entry():
     app.include_router(build_api_router())
     service = FakeJobService()
     app.dependency_overrides[get_job_service] = lambda: service
-    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
 
     async with api_client(app) as client:
         response = await client.post("/boss/tasks/search/scroll", json={"query_override": {"keywords": ["Python"]}})
@@ -166,7 +155,6 @@ async def test_trigger_detail_click_task_uses_detail_click_service_entry():
     app.include_router(build_api_router())
     service = FakeJobService()
     app.dependency_overrides[get_job_service] = lambda: service
-    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
 
     async with api_client(app) as client:
         response = await client.post("/boss/tasks/search/detail-click", json={"query_override": {}})
@@ -182,7 +170,6 @@ async def test_trigger_scroll_and_detail_task_uses_scroll_and_detail_service_ent
     app.include_router(build_api_router())
     service = FakeJobService()
     app.dependency_overrides[get_job_service] = lambda: service
-    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
 
     async with api_client(app) as client:
         response = await client.post("/boss/tasks/search/scroll-and-detail", json={"query_override": {"keywords": ["Python"]}})

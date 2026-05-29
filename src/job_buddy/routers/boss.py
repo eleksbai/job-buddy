@@ -8,7 +8,6 @@ from job_buddy.deps import (
     get_job_service,
     get_search_worker,
     get_system_service,
-    get_target_service,
 )
 from job_buddy.schemas import (
     AuthStatusResponse,
@@ -40,7 +39,6 @@ from job_buddy.services import (
     JobCollectionService,
     SearchWorker,
     SystemService,
-    TargetProfileService,
 )
 
 router = APIRouter(prefix="/boss")
@@ -92,14 +90,12 @@ async def search_jobs(
 @router.get("/jobs/collections", response_model=list[JobCollectionRecordRead], tags=["jobs"], operation_id="list_job_collection_records")
 async def list_job_collection_records(
     task_id: str | None = None,
-    target_profile_id: str | None = None,
     source_job_id: str | None = None,
     limit: int = Query(default=100, le=200),
     service: JobCollectionService = Depends(get_job_service),
 ) -> list[JobCollectionRecordRead]:
     items = await service.list_collection_records(
         task_id=task_id,
-        target_profile_id=target_profile_id,
         source_job_id=source_job_id,
         limit=limit,
     )
@@ -109,86 +105,48 @@ async def list_job_collection_records(
 @router.post("/tasks/search", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_search_task")
 async def trigger_search_task(
     payload: SearchTaskRequest,
-    target_service: TargetProfileService = Depends(get_target_service),
     job_service: JobCollectionService = Depends(get_job_service),
 ) -> TaskTriggerResponse:
-    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
     query = payload.query_override or {}
-    if target:
-        query = {
-            "keywords": target.keywords,
-            "city": target.city,
-            "salary": target.salary,
-            "experience": target.experience,
-            **target.filters,
-            **query,
-        }
-    task = await job_service.search_jobs(query=query, target=target)
+    task = await job_service.search_jobs(query=query)
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
 @router.post("/tasks/search/scroll", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_scroll_search_task")
 async def trigger_scroll_search_task(
     payload: SearchTaskRequest,
-    target_service: TargetProfileService = Depends(get_target_service),
     job_service: JobCollectionService = Depends(get_job_service),
 ) -> TaskTriggerResponse:
-    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
     query = payload.query_override or {}
-    if target:
-        query = {
-            "keywords": target.keywords,
-            "city": target.city,
-            "salary": target.salary,
-            "experience": target.experience,
-            **target.filters,
-            **query,
-        }
-    task = await job_service.search_jobs_by_scroll(query=query, target=target)
+    task = await job_service.search_jobs_by_scroll(query=query)
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
 @router.post("/tasks/search/detail-click", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_detail_click_task")
 async def trigger_detail_click_task(
     payload: SearchTaskRequest,
-    target_service: TargetProfileService = Depends(get_target_service),
     job_service: JobCollectionService = Depends(get_job_service),
 ) -> TaskTriggerResponse:
-    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
-    task = await job_service.collect_job_details_by_click(target=target)
+    task = await job_service.collect_job_details_by_click()
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
 @router.post("/tasks/search/scroll-and-detail", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_scroll_and_detail_task")
 async def trigger_scroll_and_detail_task(
     payload: SearchTaskRequest,
-    target_service: TargetProfileService = Depends(get_target_service),
     job_service: JobCollectionService = Depends(get_job_service),
 ) -> TaskTriggerResponse:
-    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
     query = payload.query_override or {}
-    if target:
-        query = {
-            "keywords": target.keywords,
-            "city": target.city,
-            "salary": target.salary,
-            "experience": target.experience,
-            **target.filters,
-            **query,
-        }
-    task = await job_service.scroll_and_collect_jobs(query=query, target=target)
+    task = await job_service.scroll_and_collect_jobs(query=query)
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
 @router.post("/tasks/greet", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_greet_task")
 async def trigger_greet_task(
     payload: GreetTaskRequest,
-    target_service: TargetProfileService = Depends(get_target_service),
     greeting_service: GreetingService = Depends(get_greeting_service),
 ) -> TaskTriggerResponse:
-    target = await target_service.get_target(payload.target_profile_id) if payload.target_profile_id else None
     task = await greeting_service.run_greetings(
-        target=target,
         source_job_ids=payload.source_job_ids,
         greeting_message=payload.greeting_message,
         limit=payload.limit,

@@ -620,7 +620,6 @@ async function loadDoctor() {
 async function loadSummaryCards() {
   const summary = await fetchJson("/web/dashboard");
   const labels = {
-    targets: "目标岗位",
     jobs: "职位线索",
     tasks: "任务记录",
     friends: "沟通记录",

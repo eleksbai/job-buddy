@@ -895,7 +895,6 @@ class BossClient:
         task_id: str,
         query: dict[str, Any] | None = None,
         tab_index: int = 1,
-        target: Any | None = None,
     ) -> dict[str, int]:
         """Scroll the job list, intercept list responses, click un-collected jobs
         for details, and persist everything directly via *repository*.
@@ -1079,12 +1078,12 @@ class BossClient:
             search_item = self._search_item_from_payload(normalized)
             stats["scroll_collected"] += 1
             await repository.save_scroll_record(task_id, search_item)
-            await repository.upsert_job_lead_from_search(search_item, target)
+            await repository.upsert_job_lead_from_search(search_item)
 
         for job_id, detail in detail_deduped.items():
             stats["detail_collected"] += 1
             await repository.save_detail_record(task_id, detail)
-            _, is_created = await repository.upsert_job_lead(detail, target)
+            _, is_created = await repository.upsert_job_lead(detail)
             if is_created:
                 stats["detail_created"] += 1
             else:

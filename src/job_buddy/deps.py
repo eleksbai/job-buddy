@@ -11,7 +11,6 @@ from job_buddy.services import (
     JobCollectionService,
     SearchWorker,
     SystemService,
-    TargetProfileService,
 )
 
 
@@ -25,10 +24,6 @@ async def get_boss_client(request: Request) -> BossClient:
 
 async def get_settings(request: Request) -> Settings:
     return request.app.state.settings
-
-
-async def get_target_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> TargetProfileService:
-    return TargetProfileService(db)
 
 
 async def get_job_service(

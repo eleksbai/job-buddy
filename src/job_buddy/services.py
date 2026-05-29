@@ -45,7 +45,6 @@ from job_buddy.models import (
     JobCollectionTrace,
     JobLead,
     TASK_TIMEOUT,
-    TargetProfile,
     TaskStatus,
     WorkerConfig,
     utc_now,
@@ -331,34 +330,6 @@ class BossAuthService:
         )
 
 
-class TargetProfileService:
-    def __init__(self, database: AsyncIOMotorDatabase) -> None:
-        self.targets = database["target_profiles"]
-
-    async def list_targets(self) -> list[TargetProfile]:
-        return await _list_models(self.targets, TargetProfile, limit=200)
-
-    async def get_target(self, target_id: str) -> TargetProfile:
-        target = await _get_model(self.targets, TargetProfile, target_id)
-        if target is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target profile not found.")
-        return target
-
-    async def create_target(self, payload) -> TargetProfile:
-        return await _create_model(self.targets, TargetProfile(**payload.model_dump()), TargetProfile)
-
-    async def update_target(self, target_id: str, payload) -> TargetProfile:
-        target = await _update_model(self.targets, TargetProfile, target_id, payload.model_dump(exclude_none=True))
-        if target is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target profile not found.")
-        return target
-
-    async def delete_target(self, target_id: str) -> None:
-        deleted = await _delete_model(self.targets, target_id)
-        if not deleted:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target profile not found.")
-
-
 class JobCollectionService:
     def __init__(self, database: AsyncIOMotorDatabase, boss_client: BossClient) -> None:
         self.jobs = database["job_leads"]
@@ -391,15 +362,12 @@ class JobCollectionService:
     async def list_collection_records(
             self,
             task_id: str | None,
-            target_profile_id: str | None,
             source_job_id: str | None,
             limit: int,
     ) -> list[JobCollectionRecord]:
         filters: dict[str, Any] = {}
         if task_id:
             filters["task_id"] = task_id
-        if target_profile_id:
-            filters["target_profile_id"] = target_profile_id
         if source_job_id:
             filters["source_job_id"] = source_job_id
         return await _list_models(self.records, JobCollectionRecord, filters=filters, limit=limit)
@@ -536,16 +504,15 @@ class JobCollectionService:
             for item in search_result.items
         ]
 
-    async def search_jobs(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
-        return await self._run_search_task(query, target, self._do_search)
+    async def search_jobs(self, query: dict[str, Any]) -> GreetingTask:
+        return await self._run_search_task(query, self._do_search)
 
-    async def search_jobs_by_scroll(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
-        return await self._run_search_task(query, target, self._do_search_by_scroll)
+    async def search_jobs_by_scroll(self, query: dict[str, Any]) -> GreetingTask:
+        return await self._run_search_task(query, self._do_search_by_scroll)
 
     async def _run_search_task(
             self,
             query: dict[str, Any],
-            target: TargetProfile | None,
             runner,
     ) -> GreetingTask:
         task = await _create_model(
@@ -553,14 +520,13 @@ class JobCollectionService:
             GreetingTask(
                 task_type="search",
                 status=TaskStatus.RUNNING,
-                target_profile_id=target.id if target else None,
                 input_payload=query,
                 started_at=utc_now(),
             ),
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(runner(task, query, target), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(runner(task, query), timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -582,9 +548,8 @@ class JobCollectionService:
             return failed
         except Exception as exc:
             logger.exception(
-                "search task failed: task_id=%s target_profile_id=%s query=%s",
+                "search task failed: task_id=%s query=%s",
                 task.id,
-                target.id if target else None,
                 query,
             )
             failed = await _update_model(
@@ -657,7 +622,7 @@ class JobCollectionService:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
         return updated
 
-    async def _do_search(self, task: GreetingTask, query: dict[str, Any], target: TargetProfile | None) -> SearchOut:
+    async def _do_search(self, task: GreetingTask, query: dict[str, Any]) -> SearchOut:
         await self._update_task_step(task.id, "healthcheck")
         try:
             await self.auth_service.require_authenticated()
@@ -677,14 +642,13 @@ class JobCollectionService:
             logger.warning("BOSS search failed: task_id=%s query=%s error=%s", task.id, query, exc)
             raise map_boss_operation_error(exc) from exc
 
-        await self._persist_search_result(task, search_result, target)
+        await self._persist_search_result(task, search_result)
         return search_result
 
     async def _do_search_by_scroll(
             self,
             task: GreetingTask,
             query: dict[str, Any],
-            target: TargetProfile | None,
     ) -> SearchOut:
         await self._update_task_step(task.id, "healthcheck")
         try:
@@ -695,14 +659,13 @@ class JobCollectionService:
             logger.warning("BOSS scroll search failed: task_id=%s query=%s error=%s", task.id, query, exc)
             raise map_boss_operation_error(exc) from exc
 
-        await self._persist_search_result(task, search_result, target)
+        await self._persist_search_result(task, search_result)
         return search_result
 
     async def _persist_search_result(
             self,
             task: GreetingTask,
             search_result: SearchOut,
-            target: TargetProfile | None,
     ) -> None:
         await self._update_task_step(task.id, "persist_results")
         trace_id: str | None = None
@@ -713,7 +676,6 @@ class JobCollectionService:
                 self.traces,
                 JobCollectionTrace(
                     task_id=task.id,
-                    target_profile_id=target.id if target else None,
                     engine=search_result.trace.get("engine"),
                     browser=search_result.trace.get("browser"),
                     request_url=search_result.trace.get("request_url"),
@@ -739,7 +701,6 @@ class JobCollectionService:
                 JobCollectionRecord(
                     task_id=task.id,
                     trace_id=trace_id,
-                    target_profile_id=target.id if target else None,
                     source_job_id=item.job_id,
                     security_id=item.security_id,
                     title=item.title,
@@ -772,7 +733,7 @@ class JobCollectionService:
                         salary=item.salary,
                         experience=item.experience,
                         job_url=item.job_url,
-                        match_status="matched" if target else "new",
+                        match_status="new",
                         raw_payload=item.raw_payload,
                         search_count=1,
                         last_searched_at=utc_now(),
@@ -856,20 +817,19 @@ class JobCollectionService:
             },
         )
 
-    async def collect_job_details_by_click(self, target: TargetProfile | None = None) -> GreetingTask:
+    async def collect_job_details_by_click(self) -> GreetingTask:
         task = await _create_model(
             self.tasks,
             GreetingTask(
                 task_type="detail_click",
                 status=TaskStatus.RUNNING,
-                target_profile_id=target.id if target else None,
                 input_payload={},
                 started_at=utc_now(),
             ),
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_collect_job_details_by_click(task, target), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(self._do_collect_job_details_by_click(task), timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -913,7 +873,6 @@ class JobCollectionService:
     async def _do_collect_job_details_by_click(
         self,
         task: GreetingTask,
-        target: TargetProfile | None,
     ) -> None:
         await self._update_task_step(task.id, "healthcheck")
         try:
@@ -928,7 +887,7 @@ class JobCollectionService:
         created = 0
         updated = 0
         for detail in detail_results:
-            persisted = await self._persist_job_detail_out(detail, target)
+            persisted = await self._persist_job_detail_out(detail)
             if persisted == "created":
                 created += 1
             elif persisted == "updated":
@@ -952,7 +911,6 @@ class JobCollectionService:
     async def _persist_job_detail_out(
         self,
         detail: JobDetailOut,
-        target: TargetProfile | None,
     ) -> str:
         existing = await self._get_job_by_source_job_id(detail.job_id)
         if existing is None:
@@ -972,7 +930,7 @@ class JobCollectionService:
                     salary=detail.job.salary or None,
                     experience=detail.job.experience or None,
                     job_url=detail.job_url or None,
-                    match_status="matched" if target else "new",
+                    match_status="new",
                     detail_payload=detail.model_dump(),
                     detail_text=detail.detail_text or None,
                     detail_source_url=detail.request_url or detail.job_url or None,
@@ -1030,20 +988,19 @@ class JobCollectionService:
         }
         await self.friends.update_one({"source_friend_id": job.source_friend_id}, {"$set": updates})
 
-    async def scroll_and_collect_jobs(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
+    async def scroll_and_collect_jobs(self, query: dict[str, Any]) -> GreetingTask:
         task = await _create_model(
             self.tasks,
             GreetingTask(
                 task_type="scroll_and_detail",
                 status=TaskStatus.RUNNING,
-                target_profile_id=target.id if target else None,
                 input_payload=query,
                 started_at=utc_now(),
             ),
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_scroll_and_collect(task, query, target), timeout=TASK_TIMEOUT)
+            await asyncio.wait_for(self._do_scroll_and_collect(task, query), timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -1088,7 +1045,6 @@ class JobCollectionService:
         self,
         task: GreetingTask,
         query: dict[str, Any],
-        target: TargetProfile | None,
     ) -> None:
         await self._update_task_step(task.id, "healthcheck")
         try:
@@ -1098,7 +1054,6 @@ class JobCollectionService:
                 self.repository,
                 task.id,
                 query,
-                target=target,
             )
         except Exception as exc:
             logger.warning("BOSS scroll and collect failed: task_id=%s error=%s", task.id, exc)
@@ -1135,7 +1090,6 @@ class GreetingService:
 
     async def run_greetings(
             self,
-            target: TargetProfile | None,
             source_job_ids: list[str],
             greeting_message: str | None,
             limit: int,
@@ -1145,14 +1099,13 @@ class GreetingService:
             GreetingTask(
                 task_type="greet",
                 status=TaskStatus.RUNNING,
-                target_profile_id=target.id if target else None,
                 input_payload={"source_job_ids": source_job_ids, "greeting_message": greeting_message, "limit": limit},
                 started_at=utc_now(),
             ),
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_greet(task, target, source_job_ids, greeting_message, limit),
+            await asyncio.wait_for(self._do_greet(task, source_job_ids, greeting_message, limit),
                                    timeout=TASK_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
@@ -1181,7 +1134,6 @@ class GreetingService:
     async def _do_greet(
             self,
             task: GreetingTask,
-            target: TargetProfile | None,
             source_job_ids: list[str],
             greeting_message: str | None,
             limit: int,
@@ -1200,7 +1152,7 @@ class GreetingService:
 
         success_count = 0
         failed_count = 0
-        default_message = greeting_message or (target.greeting_template if target else None)
+        default_message = greeting_message
         for idx, job in enumerate(jobs):
             await self._update_step(task.id, f"greet_job_{idx + 1}_of_{len(jobs)}")
             try:
