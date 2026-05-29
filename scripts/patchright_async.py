@@ -73,6 +73,9 @@ async def main() -> None:
     )
 
     page = context.pages[0] if context.pages else await context.new_page()
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    # page.wait_for_load_state("load")
     await page.goto(HOME_URL)
     # 这个监听时间无法在这里加
     # page.on("response", on_response)

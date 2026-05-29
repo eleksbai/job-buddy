@@ -631,7 +631,7 @@ class BossClient:
             if data.get("code") == 0:
                 items = data.get("zpData", {}).get("jobList", [])
                 if isinstance(items, list):
-                    logger.info("get job list by scroll, find %d + %d items",len(raw_items), len(items))
+                    logger.info("get job list by scroll, find %d + %d items", len(raw_items), len(items))
                     raw_items.extend(item for item in items if isinstance(item, dict))
                 else:
                     logger.warning("get job list by scroll, invalid payload=%s", data)
@@ -699,13 +699,13 @@ class BossClient:
         return SearchOut(items=items, trace=trace)
 
     def _build_job_detail_out(
-        self,
-        raw_payload: dict[str, Any],
-        fallback: dict[str, Any] | None = None,
-        *,
-        request_url: str = "",
-        requested_at: str = "",
-        response_received_at: str = "",
+            self,
+            raw_payload: dict[str, Any],
+            fallback: dict[str, Any] | None = None,
+            *,
+            request_url: str = "",
+            requested_at: str = "",
+            response_received_at: str = "",
     ) -> JobDetailOut:
         normalized = _normalize_job_detail(raw_payload, fallback)
         detail_payload = dict(normalized["detail_payload"])
@@ -715,7 +715,8 @@ class BossClient:
         fallback = dict(fallback or {})
         job_out = JobDetailJobOut(
             job_id=str(job_payload.get("job_id") or normalized.get("job_id") or fallback.get("job_id") or ""),
-            security_id=str(job_payload.get("security_id") or normalized.get("security_id") or fallback.get("security_id") or ""),
+            security_id=str(
+                job_payload.get("security_id") or normalized.get("security_id") or fallback.get("security_id") or ""),
             job_url=str(job_payload.get("job_url") or normalized.get("job_url") or fallback.get("job_url") or ""),
             title=str(job_payload.get("title") or fallback.get("title") or ""),
             salary=str(job_payload.get("salary") or ""),
@@ -762,7 +763,8 @@ class BossClient:
                 job=job_out,
                 company=company_out,
                 boss=boss_out,
-                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"), dict) else {},
+                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"),
+                                                                            dict) else {},
             ),
             detail_text=str(normalized.get("detail_text") or ""),
             job_id=str(normalized.get("job_id") or fallback.get("job_id") or ""),
@@ -773,7 +775,8 @@ class BossClient:
             boss_active_text=str(normalized.get("boss_active_text") or ""),
             job_active_time=int(normalized.get("job_active_time") or 0),
             job_url=str(normalized.get("job_url") or fallback.get("job_url") or ""),
-            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"), dict) else {},
+            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"),
+                                                                                  dict) else {},
         )
 
     async def job_detail_by_click(self, tab_index: int = 1) -> list[JobDetailOut]:
@@ -839,7 +842,8 @@ class BossClient:
             for _ in range(30):
                 titles = self.page.locator("div.job-info > div.job-title")
                 count = await titles.count()
-                logger.info("job_detail_by_click round start, current titles=%d clicked=%d", count, len(clicked_identifiers))
+                logger.info("job_detail_by_click round start, current titles=%d clicked=%d", count,
+                            len(clicked_identifiers))
 
                 new_clicked = 0
                 for i in range(count):
@@ -890,12 +894,12 @@ class BossClient:
         return list(deduped.values())
 
     async def scroll_and_collect_details(
-        self,
-        repository: "JobCollectionRepository",
-        task_id: str,
-        query: dict[str, Any] | None = None,
-        tab_index: int = 1,
-        max_jobs: int = 250,
+            self,
+            repository: "JobCollectionRepository",
+            task_id: str,
+            query: dict[str, Any] | None = None,
+            tab_index: int = 1,
+            max_jobs: int = 250,
     ) -> dict[str, int]:
         """Scroll the job list, intercept list responses, click un-collected jobs
         for details, and persist everything directly via *repository*.
@@ -963,6 +967,7 @@ class BossClient:
         try:
             await self.goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(3)
             if tab_index == 0:
                 await self.page.locator("div.c-expect-select > a.synthesis").click()
             else:
@@ -973,7 +978,9 @@ class BossClient:
                 if tab_count > 0:
                     index = min(max(tab_index - 1, 0), tab_count - 1)
                     await tabs.nth(index).click()
+
             await self.page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(3)
             await asyncio.sleep(random() * 2 + 1)
 
             clicked_identifiers: set[str] = set()
