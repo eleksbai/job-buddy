@@ -855,8 +855,10 @@ function renderWorkerMeta(containerId, worker, lines) {
 function renderWorkers() {
   const searchWorker = getWorker("search");
   const detailWorker = getWorker("detail");
+  const scrollAndCollectWorker = getWorker("scroll_and_collect");
   const searchReleaseButton = document.getElementById("releaseSearchWorkerButton");
   const detailReleaseButton = document.getElementById("releaseDetailWorkerButton");
+  const scrollAndCollectReleaseButton = document.getElementById("releaseScrollAndCollectWorkerButton");
 
   if (searchWorker) {
     document.getElementById("searchWorkerIntervalInput").value = String(searchWorker.interval_seconds || 60);
@@ -887,6 +889,36 @@ function renderWorkers() {
       `<strong>下一次执行</strong> ${escapeHtml(formatDate(detailWorker.next_run_at))}`,
       `<strong>最近错误</strong> ${escapeHtml(detailWorker.last_error || "-")}`,
       `<strong>最近结果</strong> ${escapeHtml(JSON.stringify(detailWorker.last_result_summary || {}))}`,
+    ]);
+  }
+
+  if (scrollAndCollectWorker) {
+    document.getElementById("scrollAndCollectWorkerBatchSizeInput").value = String(scrollAndCollectWorker.batch_size || 100);
+    document.getElementById("scrollAndCollectWorkerJitterInput").value = String(scrollAndCollectWorker.query?.schedule_jitter_minutes ?? 30);
+    const scheduleTimes = scrollAndCollectWorker.query?.schedule_times || ["09:00", "14:00", "18:00"];
+    document.getElementById("scrollAndCollectWorkerScheduleInput").value = Array.isArray(scheduleTimes) ? scheduleTimes.join(",") : "";
+    if (scrollAndCollectReleaseButton) {
+      scrollAndCollectReleaseButton.disabled = !(scrollAndCollectWorker.enabled && scrollAndCollectWorker.status === "error");
+      scrollAndCollectReleaseButton.classList.toggle("button-disabled", scrollAndCollectReleaseButton.disabled);
+    }
+    const daily = scrollAndCollectWorker.last_result_summary?.daily_executions || {};
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayState = daily[todayStr] || {};
+    const stateLines = (scrollAndCollectWorker.query?.schedule_times || [])
+      .map((t) => {
+        const s = todayState[t];
+        const label = s === "executed" ? "已执行" : s === "skipped" ? "已放弃" : s === "failed" ? "失败" : "待执行";
+        return `${t}: ${label}`;
+      })
+      .join(" | ");
+    renderWorkerMeta("scrollAndCollectWorkerMeta", scrollAndCollectWorker, [
+      `<strong>状态</strong> ${renderStatusBadge(scrollAndCollectWorker.enabled ? scrollAndCollectWorker.status : "idle")} ${scrollAndCollectWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
+      `<strong>最大采集数</strong> ${escapeHtml(scrollAndCollectWorker.batch_size || 100)}`,
+      `<strong>时间点</strong> ${escapeHtml((scrollAndCollectWorker.query?.schedule_times || []).join(", "))}`,
+      `<strong>随机偏移</strong> ±${escapeHtml(scrollAndCollectWorker.query?.schedule_jitter_minutes ?? 30)} 分钟`,
+      `<strong>下次执行</strong> ${escapeHtml(formatDate(scrollAndCollectWorker.next_run_at))}`,
+      `<strong>最近错误</strong> ${escapeHtml(scrollAndCollectWorker.last_error || "-")}`,
+      `<strong>今日执行</strong> ${stateLines || "无记录"}`,
     ]);
   }
 }
@@ -1489,6 +1521,21 @@ function collectDetailWorkerPayload() {
   };
 }
 
+function collectScrollAndCollectWorkerPayload() {
+  const raw = document.getElementById("scrollAndCollectWorkerScheduleInput").value || "";
+  const scheduleTimes = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d{2}:\d{2}$/.test(s));
+  return {
+    batch_size: Math.max(1, Number(document.getElementById("scrollAndCollectWorkerBatchSizeInput").value || 100)),
+    query: {
+      schedule_times: scheduleTimes.length > 0 ? scheduleTimes : ["09:00", "14:00", "18:00"],
+      schedule_jitter_minutes: Math.max(0, Math.min(120, Number(document.getElementById("scrollAndCollectWorkerJitterInput").value || 30))),
+    },
+  };
+}
+
 async function saveSearchWorkerConfig() {
   clearError();
   setButtonBusy("saveSearchWorkerButton", true, "保存中");
@@ -1596,6 +1643,61 @@ async function releaseDetailWorker() {
     showNotice("详情 worker 已解除限制", 3000);
   } finally {
     setButtonBusy("releaseDetailWorkerButton", false);
+  }
+}
+
+async function saveScrollAndCollectWorkerConfig() {
+  clearError();
+  setButtonBusy("saveScrollAndCollectWorkerButton", true, "保存中");
+  try {
+    await fetchJson("/boss/workers/scroll_and_collect", {
+      method: "PUT",
+      body: JSON.stringify(collectScrollAndCollectWorkerPayload()),
+    });
+    await loadWorkers();
+    showNotice("滚动采集 worker 配置已保存", 3000);
+  } finally {
+    setButtonBusy("saveScrollAndCollectWorkerButton", false);
+  }
+}
+
+async function startScrollAndCollectWorker() {
+  clearError();
+  setButtonBusy("startScrollAndCollectWorkerButton", true, "启动中");
+  try {
+    await fetchJson("/boss/workers/scroll_and_collect", {
+      method: "PUT",
+      body: JSON.stringify(collectScrollAndCollectWorkerPayload()),
+    });
+    await fetchJson("/boss/workers/scroll_and_collect/start", { method: "POST" });
+    await loadWorkers();
+    showNotice("滚动采集 worker 已启动", 3000);
+  } finally {
+    setButtonBusy("startScrollAndCollectWorkerButton", false);
+  }
+}
+
+async function stopScrollAndCollectWorker() {
+  clearError();
+  setButtonBusy("stopScrollAndCollectWorkerButton", true, "停止中");
+  try {
+    await fetchJson("/boss/workers/scroll_and_collect/stop", { method: "POST" });
+    await loadWorkers();
+    showNotice("滚动采集 worker 已停止", 3000);
+  } finally {
+    setButtonBusy("stopScrollAndCollectWorkerButton", false);
+  }
+}
+
+async function releaseScrollAndCollectWorker() {
+  clearError();
+  setButtonBusy("releaseScrollAndCollectWorkerButton", true, "解除中");
+  try {
+    await fetchJson("/boss/workers/scroll_and_collect/release", { method: "POST" });
+    await loadWorkers();
+    showNotice("滚动采集 worker 已解除限制", 3000);
+  } finally {
+    setButtonBusy("releaseScrollAndCollectWorkerButton", false);
   }
 }
 
@@ -1948,6 +2050,18 @@ function bindEvents() {
   document
     .getElementById("releaseDetailWorkerButton")
     .addEventListener("click", () => releaseDetailWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("saveScrollAndCollectWorkerButton")
+    .addEventListener("click", () => saveScrollAndCollectWorkerConfig().catch((error) => showError(error.message)));
+  document
+    .getElementById("startScrollAndCollectWorkerButton")
+    .addEventListener("click", () => startScrollAndCollectWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("stopScrollAndCollectWorkerButton")
+    .addEventListener("click", () => stopScrollAndCollectWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("releaseScrollAndCollectWorkerButton")
+    .addEventListener("click", () => releaseScrollAndCollectWorker().catch((error) => showError(error.message)));
   document
     .getElementById("refreshJobsButton")
     .addEventListener("click", () => loadJobs().catch((error) => showError(error.message)));

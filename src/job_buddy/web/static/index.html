@@ -204,6 +204,33 @@
                 </div>
                 <div id="detailWorkerMeta" class="stack-list" style="margin-top: 1rem"></div>
               </article>
+
+              <article class="panel-card">
+                <div class="panel-card-header">
+                  <h3>滚动采集 Worker</h3>
+                  <div class="panel-actions">
+                    <button id="saveScrollAndCollectWorkerButton" class="button-secondary">保存配置</button>
+                    <button id="startScrollAndCollectWorkerButton">启动</button>
+                    <button id="stopScrollAndCollectWorkerButton" class="button-secondary">停止</button>
+                    <button id="releaseScrollAndCollectWorkerButton" class="button-secondary">解除限制</button>
+                  </div>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    最大采集数量
+                    <input id="scrollAndCollectWorkerBatchSizeInput" type="number" min="1" value="100" />
+                  </label>
+                  <label>
+                    随机偏移分钟数
+                    <input id="scrollAndCollectWorkerJitterInput" type="number" min="0" max="120" value="30" />
+                  </label>
+                  <label>
+                    执行时间点
+                    <input id="scrollAndCollectWorkerScheduleInput" type="text" placeholder="如 09:00,14:00,18:00" value="09:00,14:00,18:00" />
+                  </label>
+                </div>
+                <div id="scrollAndCollectWorkerMeta" class="stack-list" style="margin-top: 1rem"></div>
+              </article>
             </div>
           </div>
 

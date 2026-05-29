@@ -9,6 +9,7 @@ from job_buddy.services import (
     FriendService,
     GreetingService,
     JobCollectionService,
+    ScrollAndCollectWorker,
     SearchWorker,
     SystemService,
 )
@@ -65,3 +66,7 @@ async def get_search_worker(request: Request) -> SearchWorker:
 
 async def get_detail_worker(request: Request) -> DetailWorker:
     return request.app.state.detail_worker
+
+
+async def get_scroll_and_collect_worker(request: Request) -> ScrollAndCollectWorker:
+    return request.app.state.scroll_and_collect_worker

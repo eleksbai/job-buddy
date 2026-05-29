@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import logging
 import random
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http.cookiejar import debug
 from pathlib import Path
 from typing import Any, TypeVar
@@ -989,7 +989,7 @@ class JobCollectionService:
         }
         await self.friends.update_one({"source_friend_id": job.source_friend_id}, {"$set": updates})
 
-    async def scroll_and_collect_jobs(self, query: dict[str, Any]) -> GreetingTask:
+    async def scroll_and_collect_jobs(self, query: dict[str, Any], max_jobs: int = 250) -> GreetingTask:
         task = await _create_model(
             self.tasks,
             GreetingTask(
@@ -1001,7 +1001,7 @@ class JobCollectionService:
             GreetingTask,
         )
         try:
-            await asyncio.wait_for(self._do_scroll_and_collect(task, query), timeout=SCROLL_AND_COLLECT_TIMEOUT)
+            await asyncio.wait_for(self._do_scroll_and_collect(task, query, max_jobs), timeout=SCROLL_AND_COLLECT_TIMEOUT)
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
             step = "unknown"
@@ -1046,6 +1046,7 @@ class JobCollectionService:
         self,
         task: GreetingTask,
         query: dict[str, Any],
+        max_jobs: int = 250,
     ) -> None:
         await self._update_task_step(task.id, "healthcheck")
         try:
@@ -1055,7 +1056,7 @@ class JobCollectionService:
                 self.repository,
                 task.id,
                 query,
-                max_jobs=250,
+                max_jobs=max_jobs,
             )
         except Exception as exc:
             logger.warning("BOSS scroll and collect failed: task_id=%s error=%s", task.id, exc)
@@ -1497,6 +1498,126 @@ class DetailWorker(BaseWorker):
         task = await job_service.run_detail_sync(limit=max(1, worker.batch_size))
         logger.info("executing worker %s %s", self.worker_name, task.status)
         return await self.complete_execution(worker, task)
+
+
+class ScrollAndCollectWorker(BaseWorker):
+    worker_name = "scroll_and_collect"
+
+    def default_config(self) -> WorkerConfig:
+        return WorkerConfig(
+            worker_name="scroll_and_collect",
+            interval_seconds=60,
+            batch_size=100,
+            query={"schedule_times": ["09:00", "14:00", "18:00"]},
+        )
+
+    def _actual_time(self, time_str: str, date_val: date, jitter_minutes: int = 30) -> datetime:
+        base_time = datetime.strptime(time_str, "%H:%M").time()
+        seed = f"{date_val.isoformat()}|{time_str}"
+        rng = random.Random(seed)
+        offset_minutes = rng.randint(-jitter_minutes, jitter_minutes)
+        return datetime.combine(date_val, base_time, tzinfo=_CST) + timedelta(minutes=offset_minutes)
+
+    def _daily_state(self, worker: WorkerConfig, date_str: str) -> dict[str, str]:
+        return worker.last_result_summary.get("daily_executions", {}).get(date_str, {})
+
+    async def _mark_today(self, time_str: str, state: str) -> None:
+        worker = await self.get_worker()
+        date_str = datetime.now(tz=_CST).date().isoformat()
+        daily_executions = dict(worker.last_result_summary.get("daily_executions", {}))
+        day_state = dict(daily_executions.get(date_str, {}))
+        day_state[time_str] = state
+        daily_executions[date_str] = day_state
+        await self._update_worker_model({
+            "last_result_summary": {**dict(worker.last_result_summary), "daily_executions": daily_executions}
+        })
+
+    async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
+        job_service = JobCollectionService(self.database, self.boss_client)
+        logger.info("executing worker %s start", self.worker_name)
+        query = dict(worker.query)
+        query.pop("schedule_times", None)
+        query.pop("schedule_jitter_minutes", None)
+        task = await job_service.scroll_and_collect_jobs(query=query, max_jobs=worker.batch_size)
+        logger.info("executing worker %s %s", self.worker_name, task.status)
+        return await self.complete_execution(worker, task)
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                worker = await self.get_worker()
+                if not worker.enabled:
+                    try:
+                        await asyncio.wait_for(self._stopped.wait(), timeout=10)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+
+                now = datetime.now(tz=_CST)
+                schedule_times = worker.query.get("schedule_times", ["09:00", "14:00", "18:00"])
+                jitter_minutes = max(0, worker.query.get("schedule_jitter_minutes", 30))
+                today_str = now.date().isoformat()
+                daily_state = self._daily_state(worker, today_str)
+
+                handled = False
+                for time_str in schedule_times:
+                    if daily_state.get(time_str):
+                        continue
+                    actual = self._actual_time(time_str, now.date(), jitter_minutes)
+                    if now >= actual:
+                        running = await self.tasks.count_documents(
+                            {"status": TaskStatus.RUNNING, "task_type": "scroll_and_detail"}
+                        ) > 0
+                        if running:
+                            logger.warning(
+                                "worker %s skip %s, another scroll_and_detail task running",
+                                self.worker_name,
+                                time_str,
+                            )
+                            await self._mark_today(time_str, "skipped")
+                        else:
+                            try:
+                                await self.execute()
+                                await self._mark_today(time_str, "executed")
+                            except Exception:
+                                logger.exception("worker %s run failed", self.worker_name)
+                                await self._mark_today(time_str, "failed")
+                        handled = True
+                        break
+
+                if handled:
+                    await asyncio.sleep(5)
+                    continue
+
+                next_wake = None
+                for time_str in schedule_times:
+                    if daily_state.get(time_str):
+                        continue
+                    actual = self._actual_time(time_str, now.date(), jitter_minutes)
+                    if next_wake is None or actual < next_wake:
+                        next_wake = actual
+
+                if next_wake is None:
+                    tomorrow = now.date() + timedelta(days=1)
+                    first_time = schedule_times[0]
+                    next_wake = self._actual_time(first_time, tomorrow, jitter_minutes)
+
+                await self._update_worker_model({"next_run_at": next_wake})
+
+                wait_seconds = max(5, (next_wake - now).total_seconds())
+                logger.info(
+                    "worker %s next wake in %.0fs at %s",
+                    self.worker_name,
+                    wait_seconds,
+                    next_wake.isoformat(),
+                )
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=wait_seconds)
+                except asyncio.TimeoutError:
+                    pass
+            except Exception:
+                logger.exception("worker loop failed: worker=%s", self.worker_name)
+                await asyncio.sleep(60)
 
 
 class FriendService:
