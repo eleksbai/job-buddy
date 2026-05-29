@@ -10,9 +10,12 @@ from pathlib import Path
 import re
 from random import random
 from urllib.parse import parse_qs, urlencode, urlparse
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 from patchright.async_api import async_playwright
+
+if TYPE_CHECKING:
+    from job_buddy.repositories.job_collection import JobCollectionRepository
 
 from job_buddy.boss.config import (
     BASE_URL,
@@ -30,7 +33,7 @@ from job_buddy.boss.config import (
     SEARCH_URL,
     STAGE_CODES,
     WEB_GEEK_CHAT_URL,
-    WEB_GEEK_JOB_URL, URL_JOB_LIST_BY_SCROLL,
+    WEB_GEEK_JOB_URL, URL_JOB_LIST_BY_SCROLL, URL_JOB_DETAIL_BY_CLICK,
 )
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import (
@@ -695,6 +698,403 @@ class BossClient:
         trace["result_count"] = len(items)
         return SearchOut(items=items, trace=trace)
 
+    def _build_job_detail_out(
+        self,
+        raw_payload: dict[str, Any],
+        fallback: dict[str, Any] | None = None,
+        *,
+        request_url: str = "",
+        requested_at: str = "",
+        response_received_at: str = "",
+    ) -> JobDetailOut:
+        normalized = _normalize_job_detail(raw_payload, fallback)
+        detail_payload = dict(normalized["detail_payload"])
+        job_payload = detail_payload.get("job") if isinstance(detail_payload.get("job"), dict) else {}
+        company_payload = detail_payload.get("company") if isinstance(detail_payload.get("company"), dict) else {}
+        boss_payload = detail_payload.get("boss") if isinstance(detail_payload.get("boss"), dict) else {}
+        fallback = dict(fallback or {})
+        job_out = JobDetailJobOut(
+            job_id=str(job_payload.get("job_id") or normalized.get("job_id") or fallback.get("job_id") or ""),
+            security_id=str(job_payload.get("security_id") or normalized.get("security_id") or fallback.get("security_id") or ""),
+            job_url=str(job_payload.get("job_url") or normalized.get("job_url") or fallback.get("job_url") or ""),
+            title=str(job_payload.get("title") or fallback.get("title") or ""),
+            salary=str(job_payload.get("salary") or ""),
+            experience=str(job_payload.get("experience") or ""),
+            degree=str(job_payload.get("degree") or ""),
+            city=str(job_payload.get("city") or ""),
+            address=str(job_payload.get("address") or ""),
+            skills=[str(item) for item in job_payload.get("skills") or []],
+            description=str(job_payload.get("description") or ""),
+            status=str(job_payload.get("status") or ""),
+            active_time=int(job_payload.get("active_time") or 0),
+        )
+        company_out = JobDetailCompanyOut(
+            name=str(company_payload.get("name") or fallback.get("company") or ""),
+            stage=str(company_payload.get("stage") or ""),
+            scale=str(company_payload.get("scale") or ""),
+            industry=str(company_payload.get("industry") or ""),
+            intro=str(company_payload.get("intro") or ""),
+        )
+        boss_out = JobDetailBossOut(
+            name=str(boss_payload.get("name") or ""),
+            title=str(boss_payload.get("title") or ""),
+            active_text=str(boss_payload.get("active_text") or ""),
+            online=bool(boss_payload.get("online") or False),
+        )
+        return JobDetailOut(
+            engine=self.name,
+            browser="Patchright Chromium",
+            request_url=request_url,
+            requested_at=requested_at,
+            response_received_at=response_received_at,
+            request_payload={
+                "job_id": fallback.get("job_id") or job_out.job_id,
+                "security_id": fallback.get("security_id") or job_out.security_id,
+                "job_url": fallback.get("job_url") or job_out.job_url,
+                "title": fallback.get("title") or job_out.title,
+                "company": fallback.get("company") or company_out.name,
+            },
+            response_payload=raw_payload,
+            job=job_out,
+            company=company_out,
+            boss=boss_out,
+            detail_payload=JobDetailPayloadOut(
+                job=job_out,
+                company=company_out,
+                boss=boss_out,
+                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"), dict) else {},
+            ),
+            detail_text=str(normalized.get("detail_text") or ""),
+            job_id=str(normalized.get("job_id") or fallback.get("job_id") or ""),
+            security_id=str(normalized.get("security_id") or fallback.get("security_id") or ""),
+            encrypt_boss_id=str(normalized.get("encrypt_boss_id") or ""),
+            contact=bool(normalized.get("contact") or False),
+            boss_online=bool(normalized.get("boss_online") or False),
+            boss_active_text=str(normalized.get("boss_active_text") or ""),
+            job_active_time=int(normalized.get("job_active_time") or 0),
+            job_url=str(normalized.get("job_url") or fallback.get("job_url") or ""),
+            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"), dict) else {},
+        )
+
+    async def job_detail_by_click(self, tab_index: int = 1) -> list[JobDetailOut]:
+        logger.info("BossClient job_detail_by_click start")
+        await self.check_page_health()
+        trace = {
+            "engine": self.name,
+            "browser": "Patchright Chromium",
+            "requested_at": datetime.now(tz=UTC).isoformat(),
+            "request_url": URL_JOB_DETAIL_BY_CLICK,
+            "referer": JOB_URL,
+        }
+        detail_list: list[JobDetailOut] = []
+        pending_responses: set[asyncio.Task[None]] = set()
+
+        async def handle_response(response: Response) -> None:
+            if URL_JOB_DETAIL_BY_CLICK not in response.url:
+                return
+            try:
+                data = await response.json()
+                if data.get("code") == 0:
+                    detail_out = self._build_job_detail_out(
+                        raw_payload=data,
+                        request_url=response.url,
+                        response_received_at=datetime.now(tz=UTC).isoformat(),
+                    )
+                    detail_list.append(detail_out)
+                    logger.info("get job detail by click, job_id=%s title=%s", detail_out.job_id, detail_out.job.title)
+                else:
+                    logger.warning(
+                        "get job detail by click, error %s %s",
+                        data.get("code"),
+                        data.get("message"),
+                    )
+            except Exception as exc:
+                logger.warning("get job detail by click, handle response error: %s", exc)
+
+        def on_response(response: Response) -> None:
+            if URL_JOB_DETAIL_BY_CLICK not in response.url:
+                return
+            task = asyncio.create_task(handle_response(response))
+            pending_responses.add(task)
+            task.add_done_callback(pending_responses.discard)
+
+        self.page.on("response", on_response)
+        try:
+            await self.goto_job()
+            await self.page.wait_for_load_state("domcontentloaded")
+            if tab_index == 0:
+                await self.page.locator("div.c-expect-select > a.synthesis").click()
+            else:
+                tabs = self.page.locator("div.c-expect-select > div.expect-list.has-add.no-part > a")
+                tab_count = await tabs.count()
+                if tab_count > 0:
+                    index = min(max(tab_index - 1, 0), tab_count - 1)
+                    await tabs.nth(index).click()
+            await self.page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(random() * 2 + 1)
+
+            clicked_identifiers: set[str] = set()
+            last_high = 0
+            freeze_count = 0
+            for _ in range(30):
+                titles = self.page.locator("div.job-info > div.job-title")
+                count = await titles.count()
+                logger.info("job_detail_by_click round start, current titles=%d clicked=%d", count, len(clicked_identifiers))
+
+                new_clicked = 0
+                for i in range(count):
+                    try:
+                        identifier = await titles.nth(i).evaluate("""
+                            el => {
+                                const card = el.closest('[data-jid], [data-job-id], [data-id], .job-card-wrapper, .job-card');
+                                return card?.dataset?.jid || card?.dataset?.jobId || card?.dataset?.id || el.textContent?.trim();
+                            }
+                        """)
+                        identifier = str(identifier or "").strip()
+                        if not identifier or identifier in clicked_identifiers:
+                            continue
+
+                        await titles.nth(i).click()
+                        clicked_identifiers.add(identifier)
+                        new_clicked += 1
+                        await asyncio.sleep(random() * 2 + 1)
+                    except Exception as exc:
+                        logger.warning("job_detail_by_click click job %d failed: %s", i, exc)
+
+                await self.page.mouse.wheel(0, 1000 + random() * 1000)
+                await asyncio.sleep(random() * 5 + 3)
+                current_high = await self.page.evaluate("document.body.scrollHeight")
+                if current_high > last_high:
+                    freeze_count = 0
+                else:
+                    freeze_count += 1
+                if freeze_count >= 3 and new_clicked == 0:
+                    logger.info('job_detail_by_click freeze_count >= 3 and no new jobs clicked')
+                    break
+                last_high = current_high
+        finally:
+            self.page.remove_listener("response", on_response)
+            if pending_responses:
+                await asyncio.gather(*pending_responses, return_exceptions=True)
+
+        deduped: dict[str, JobDetailOut] = {}
+        for item in detail_list:
+            job_id = str(item.job_id or "").strip()
+            if not job_id:
+                continue
+            deduped[job_id] = item
+
+        trace["response_received_at"] = datetime.now(tz=UTC).isoformat()
+        trace["result_count"] = len(deduped)
+        logger.info("job_detail_by_click finished, collected %d details", len(deduped))
+        return list(deduped.values())
+
+    async def scroll_and_collect_details(
+        self,
+        repository: "JobCollectionRepository",
+        task_id: str,
+        query: dict[str, Any] | None = None,
+        tab_index: int = 1,
+        target: Any | None = None,
+    ) -> dict[str, int]:
+        """Scroll the job list, intercept list responses, click un-collected jobs
+        for details, and persist everything directly via *repository*.
+
+        Returns a stats dict with keys:
+        ``scroll_collected``, ``detail_collected``, ``detail_created``,
+        ``detail_updated``, ``detail_skipped``.
+        """
+        logger.info("BossClient scroll_and_collect_details start")
+        await self.check_page_health()
+
+        raw_list_items: list[dict[str, Any]] = []
+        detail_list: list[JobDetailOut] = []
+        pending_list_responses: set[asyncio.Task[None]] = set()
+        pending_detail_responses: set[asyncio.Task[None]] = set()
+
+        async def handle_list_response(response: Response) -> None:
+            if URL_JOB_LIST_BY_SCROLL not in response.url:
+                return
+            try:
+                data = await response.json()
+                if data.get("code") == 0:
+                    items = data.get("zpData", {}).get("jobList", [])
+                    if isinstance(items, list):
+                        logger.info(
+                            "scroll_and_collect_details list response: +%d items",
+                            len(items),
+                        )
+                        raw_list_items.extend(item for item in items if isinstance(item, dict))
+            except Exception as exc:
+                logger.warning("scroll_and_collect_details list response error: %s", exc)
+
+        async def handle_detail_response(response: Response) -> None:
+            if URL_JOB_DETAIL_BY_CLICK not in response.url:
+                return
+            try:
+                data = await response.json()
+                if data.get("code") == 0:
+                    detail_out = self._build_job_detail_out(
+                        raw_payload=data,
+                        request_url=response.url,
+                        response_received_at=datetime.now(tz=UTC).isoformat(),
+                    )
+                    detail_list.append(detail_out)
+                    logger.info(
+                        "scroll_and_collect_details detail response: job_id=%s title=%s",
+                        detail_out.job_id,
+                        detail_out.job.title,
+                    )
+            except Exception as exc:
+                logger.warning("scroll_and_collect_details detail response error: %s", exc)
+
+        def on_response(response: Response) -> None:
+            if URL_JOB_LIST_BY_SCROLL in response.url:
+                task = asyncio.create_task(handle_list_response(response))
+                pending_list_responses.add(task)
+                task.add_done_callback(pending_list_responses.discard)
+            elif URL_JOB_DETAIL_BY_CLICK in response.url:
+                task = asyncio.create_task(handle_detail_response(response))
+                pending_detail_responses.add(task)
+                task.add_done_callback(pending_detail_responses.discard)
+
+        self.page.on("response", on_response)
+        try:
+            await self.goto_job()
+            await self.page.wait_for_load_state("domcontentloaded")
+            if tab_index == 0:
+                await self.page.locator("div.c-expect-select > a.synthesis").click()
+            else:
+                tabs = self.page.locator(
+                    "div.c-expect-select > div.expect-list.has-add.no-part > a"
+                )
+                tab_count = await tabs.count()
+                if tab_count > 0:
+                    index = min(max(tab_index - 1, 0), tab_count - 1)
+                    await tabs.nth(index).click()
+            await self.page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(random() * 2 + 1)
+
+            clicked_identifiers: set[str] = set()
+            last_high = 0
+            freeze_count = 0
+
+            for _ in range(30):
+                titles = self.page.locator("div.job-info > div.job-title")
+                count = await titles.count()
+                logger.info(
+                    "scroll_and_collect_details round start, titles=%d clicked=%d",
+                    count,
+                    len(clicked_identifiers),
+                )
+
+                # Extract identifiers of newly visible jobs
+                new_identifiers: list[tuple[int, str]] = []
+                for i in range(count):
+                    try:
+                        identifier = await titles.nth(i).evaluate(
+                            """
+                            el => {
+                                const card = el.closest('[data-jid], [data-job-id], [data-id], .job-card-wrapper, .job-card');
+                                return card?.dataset?.jid || card?.dataset?.jobId || card?.dataset?.id || el.textContent?.trim();
+                            }
+                            """
+                        )
+                        identifier = str(identifier or "").strip()
+                        if identifier and identifier not in clicked_identifiers:
+                            new_identifiers.append((i, identifier))
+                    except Exception:
+                        continue
+
+                # Batch check DB for recently collected jobs
+                identifiers_to_check = [ident for _, ident in new_identifiers]
+                skip_identifiers = await repository.get_recently_collected_source_job_ids(
+                    identifiers_to_check
+                )
+
+                # Click non-skipped jobs
+                new_clicked = 0
+                for i, identifier in new_identifiers:
+                    if identifier in skip_identifiers:
+                        clicked_identifiers.add(identifier)
+                        continue
+                    try:
+                        await titles.nth(i).click()
+                        clicked_identifiers.add(identifier)
+                        new_clicked += 1
+                        await asyncio.sleep(random() * 2 + 1)
+                    except Exception as exc:
+                        logger.warning(
+                            "scroll_and_collect_details click job %d failed: %s", i, exc
+                        )
+
+                # Scroll down
+                await self.page.mouse.wheel(0, 1000 + random() * 1000)
+                await asyncio.sleep(random() * 5 + 3)
+                current_high = await self.page.evaluate("document.body.scrollHeight")
+                if current_high > last_high:
+                    freeze_count = 0
+                else:
+                    freeze_count += 1
+                if freeze_count >= 3 and new_clicked == 0:
+                    logger.info(
+                        "scroll_and_collect_details freeze_count >= 3 and no new jobs clicked"
+                    )
+                    break
+                last_high = current_high
+        finally:
+            self.page.remove_listener("response", on_response)
+            if pending_list_responses:
+                await asyncio.gather(*pending_list_responses, return_exceptions=True)
+            if pending_detail_responses:
+                await asyncio.gather(*pending_detail_responses, return_exceptions=True)
+
+        # Dedupe list items
+        list_deduped: dict[str, dict[str, Any]] = {}
+        for item in raw_list_items:
+            job_id = str(item.get("encryptJobId") or "").strip()
+            if not job_id:
+                continue
+            list_deduped[job_id] = item
+
+        # Dedupe detail items
+        detail_deduped: dict[str, JobDetailOut] = {}
+        for item in detail_list:
+            job_id = str(item.job_id or "").strip()
+            if not job_id:
+                continue
+            detail_deduped[job_id] = item
+
+        # Persist via repository
+        stats: dict[str, int] = {
+            "scroll_collected": 0,
+            "detail_collected": 0,
+            "detail_created": 0,
+            "detail_updated": 0,
+            "detail_skipped": 0,
+        }
+
+        for job_id, raw_item in list_deduped.items():
+            normalized = self._normalize_raw_job(raw_item)
+            search_item = self._search_item_from_payload(normalized)
+            stats["scroll_collected"] += 1
+            await repository.save_scroll_record(task_id, search_item)
+            await repository.upsert_job_lead_from_search(search_item, target)
+
+        for job_id, detail in detail_deduped.items():
+            stats["detail_collected"] += 1
+            await repository.save_detail_record(task_id, detail)
+            _, is_created = await repository.upsert_job_lead(detail, target)
+            if is_created:
+                stats["detail_created"] += 1
+            else:
+                stats["detail_updated"] += 1
+
+        stats["detail_skipped"] = len(list_deduped) - len(detail_deduped)
+
+        logger.info("scroll_and_collect_details finished: %s", stats)
+        return stats
+
     async def detail(self, request: JobDetailIn) -> JobDetailOut:
         await self.check_page_health()
         logger.info('get job detail %s', request.title)
@@ -732,83 +1132,18 @@ class BossClient:
                 boss_side=True,
             )
 
-        normalized = _normalize_job_detail(
-            payload,
-            {
+        return self._build_job_detail_out(
+            raw_payload=payload,
+            fallback={
                 "job_id": request.job_id,
                 "security_id": resolved_security_id,
                 "job_url": request.job_url,
                 "title": request.title,
                 "company": request.company,
             },
-        )
-        detail_payload = dict(normalized["detail_payload"])
-        job_payload = detail_payload.get("job") if isinstance(detail_payload.get("job"), dict) else {}
-        company_payload = detail_payload.get("company") if isinstance(detail_payload.get("company"), dict) else {}
-        boss_payload = detail_payload.get("boss") if isinstance(detail_payload.get("boss"), dict) else {}
-        job_out = JobDetailJobOut(
-            job_id=str(job_payload.get("job_id") or normalized.get("job_id") or request.job_id),
-            security_id=str(job_payload.get("security_id") or normalized.get("security_id") or resolved_security_id),
-            job_url=str(job_payload.get("job_url") or normalized.get("job_url") or request.job_url or ""),
-            title=str(job_payload.get("title") or request.title or ""),
-            salary=str(job_payload.get("salary") or ""),
-            experience=str(job_payload.get("experience") or ""),
-            degree=str(job_payload.get("degree") or ""),
-            city=str(job_payload.get("city") or ""),
-            address=str(job_payload.get("address") or ""),
-            skills=[str(item) for item in job_payload.get("skills") or []],
-            description=str(job_payload.get("description") or ""),
-            status=str(job_payload.get("status") or ""),
-            active_time=int(job_payload.get("active_time") or 0),
-        )
-        company_out = JobDetailCompanyOut(
-            name=str(company_payload.get("name") or request.company or ""),
-            stage=str(company_payload.get("stage") or ""),
-            scale=str(company_payload.get("scale") or ""),
-            industry=str(company_payload.get("industry") or ""),
-            intro=str(company_payload.get("intro") or ""),
-        )
-        boss_out = JobDetailBossOut(
-            name=str(boss_payload.get("name") or ""),
-            title=str(boss_payload.get("title") or ""),
-            active_text=str(boss_payload.get("active_text") or ""),
-            online=bool(boss_payload.get("online") or False),
-        )
-        return JobDetailOut(
-            engine=self.name,
-            browser="Patchright Chromium",
             request_url=request_url,
             requested_at=requested_at,
             response_received_at=response_received_at,
-            request_payload={
-                "job_id": request.job_id,
-                "security_id": resolved_security_id,
-                "job_url": request.job_url or "",
-                "title": request.title or "",
-                "company": request.company or "",
-            },
-            response_payload=payload,
-            job=job_out,
-            company=company_out,
-            boss=boss_out,
-            detail_payload=JobDetailPayloadOut(
-                job=job_out,
-                company=company_out,
-                boss=boss_out,
-                raw_payload=detail_payload.get("raw_payload") if isinstance(detail_payload.get("raw_payload"),
-                                                                            dict) else {},
-            ),
-            detail_text=str(normalized.get("detail_text") or ""),
-            job_id=str(normalized.get("job_id") or request.job_id),
-            security_id=str(normalized.get("security_id") or resolved_security_id),
-            encrypt_boss_id=str(normalized.get("encrypt_boss_id") or ""),
-            contact=bool(normalized.get("contact") or False),
-            boss_online=bool(normalized.get("boss_online") or False),
-            boss_active_text=str(normalized.get("boss_active_text") or ""),
-            job_active_time=int(normalized.get("job_active_time") or 0),
-            job_url=str(normalized.get("job_url") or request.job_url or ""),
-            detail_raw_payload=normalized.get("detail_raw_payload") if isinstance(normalized.get("detail_raw_payload"),
-                                                                                  dict) else {},
         )
 
     async def friend_list(self, request: FriendListIn) -> list[FriendListItemOut]:

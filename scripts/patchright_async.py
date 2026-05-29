@@ -76,8 +76,18 @@ async def main() -> None:
     await page.goto(HOME_URL)
     # 这个监听时间无法在这里加
     # page.on("response", on_response)
-    await add_listener(page)
+    # await add_listener(page)
     await page.goto(HOME_URL)
+    """
+    page.locator("div.c-expect-select > a.synthesis").click()
+
+      div.job-info > div.job-title
+
+      page.locator('div.job-info > div.job-title')
+      page.locator('div.job-info > div.job-title')
+      page.locator("div.job-info > div.job-title").nth(2).click()
+
+    """
 
 
     # 保持浏览器常驻，便于手动调试。退出请 Ctrl+C。

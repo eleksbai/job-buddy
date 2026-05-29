@@ -180,6 +180,23 @@ class FakeBossClient:
             message=self.health_message,
         )
 
+    async def job_detail_by_click(self, tab_index=1):
+        _ = tab_index
+        return self.detail_click_results if hasattr(self, "detail_click_results") else []
+
+    async def scroll_and_collect_details(self, repository, task_id, query=None, tab_index=1, target=None):
+        _ = tab_index, target
+        self.scroll_and_collect_query = query
+        self.scroll_and_collect_task_id = task_id
+        self.scroll_and_collect_repository = repository
+        return getattr(self, "scroll_and_collect_stats", {
+            "scroll_collected": 1,
+            "detail_collected": 1,
+            "detail_created": 1,
+            "detail_updated": 0,
+            "detail_skipped": 0,
+        })
+
     async def goto_job(self) -> None:
         self.goto_job_calls += 1
 
@@ -336,6 +353,7 @@ def build_service() -> tuple[
     FakeJobCollectionRecordCollection,
     FakeJobCollectionTraceCollection,
 ]:
+    from job_buddy.repositories import JobCollectionRepository
     service = JobCollectionService.__new__(JobCollectionService)
     service.boss_client = FakeBossClient()
     service.tasks = FakeTaskCollection()
@@ -343,6 +361,7 @@ def build_service() -> tuple[
     service.records = FakeJobCollectionRecordCollection()
     service.traces = FakeJobCollectionTraceCollection()
     service.auth_states = FakeAuthStateCollection()
+    service.repository = JobCollectionRepository(service.jobs, service.records)
     return service, service.jobs, service.records, service.traces
 
 
@@ -442,6 +461,51 @@ def test_get_job_detail_returns_cached_detail_without_refetching():
     assert len(traces.items) == 1
 
 
+def test_collect_job_details_by_click_creates_and_updates_leads():
+    service, jobs, records, traces = build_service()
+    service.boss_client.detail_click_results = [
+        JobDetailOut(
+            engine="patchright",
+            browser="Patchright Chromium",
+            request_url="https://www.zhipin.com/wapi/zpgeek/job/detail.json",
+            requested_at="2026-05-16T13:02:20+00:00",
+            response_received_at="2026-05-16T13:02:21+00:00",
+            request_payload={},
+            response_payload={"code": 0},
+            job=JobDetailJobOut(job_id="job-click-1", security_id="sec-click-1", job_url="", title="Click Job 1", salary="20-30K", experience="3-5年", degree="本科", city="上海", address="", skills=[], description="", status="在招", active_time=0),
+            company=JobDetailCompanyOut(name="Click Tech", stage="A轮", scale="100-499人", industry="互联网", intro=""),
+            boss=JobDetailBossOut(name="Alice", title="招聘经理", active_text="", online=False),
+            detail_payload=JobDetailPayloadOut(
+                job=JobDetailJobOut(job_id="job-click-1", security_id="sec-click-1", job_url="", title="Click Job 1", salary="20-30K", experience="3-5年", degree="本科", city="上海", address="", skills=[], description="", status="在招", active_time=0),
+                company=JobDetailCompanyOut(name="Click Tech", stage="A轮", scale="100-499人", industry="互联网", intro=""),
+                boss=JobDetailBossOut(name="Alice", title="招聘经理", active_text="", online=False),
+                raw_payload={},
+            ),
+            detail_text="职位名称：Click Job 1\n公司：Click Tech",
+            job_id="job-click-1",
+            security_id="sec-click-1",
+            encrypt_boss_id="boss-1",
+            contact=False,
+            boss_online=False,
+            boss_active_text="",
+            job_active_time=0,
+            job_url="",
+            detail_raw_payload={},
+        )
+    ]
+
+    task = asyncio.run(service.collect_job_details_by_click())
+
+    assert task.status.value == "succeeded"
+    assert task.result_summary["collected"] == 1
+    assert task.result_summary["created"] == 1
+    assert task.result_summary["updated"] == 0
+    assert len(jobs.items) == 1
+    assert jobs.items["job-click-1"].title == "Click Job 1"
+    assert jobs.items["job-click-1"].company == "Click Tech"
+    assert jobs.items["job-click-1"].detail_text == "职位名称：Click Job 1\n公司：Click Tech"
+
+
 def test_get_job_detail_fetches_and_persists_detail_when_missing():
     service, jobs, records, traces = build_service()
     asyncio.run(service.search_jobs(query={"keywords": ["Python"]}))
@@ -456,3 +520,38 @@ def test_get_job_detail_fetches_and_persists_detail_when_missing():
     assert result.job_active_time == 1779249002309
     assert result.boss_active_text == "本周活跃"
     assert jobs.items["job-1"].detail_payload["detail_payload"]["company"]["name"] == "Demo Tech"
+
+
+def test_scroll_and_collect_jobs_creates_task_and_returns_stats():
+    service, jobs, records, traces = build_service()
+
+    task = asyncio.run(service.scroll_and_collect_jobs(query={"keywords": ["Python"]}))
+
+    assert task.status.value == "succeeded"
+    assert task.task_type == "scroll_and_detail"
+    assert task.result_summary["scroll_collected"] == 1
+    assert task.result_summary["detail_collected"] == 1
+    assert task.result_summary["detail_created"] == 1
+    assert task.result_summary["detail_updated"] == 0
+    assert service.boss_client.scroll_and_collect_task_id == task.id
+
+
+def test_scroll_and_collect_jobs_passes_query_to_boss_client():
+    service, jobs, records, traces = build_service()
+    _ = jobs, records, traces
+
+    asyncio.run(service.scroll_and_collect_jobs(query={"keywords": ["Python"], "city": "Shanghai"}))
+
+    assert service.boss_client.scroll_and_collect_query == {"keywords": ["Python"], "city": "Shanghai"}
+
+
+def test_scroll_and_collect_jobs_fails_fast_when_login_state_is_invalid():
+    service, jobs, records, traces = build_service()
+    service.boss_client.logged_in = False
+    service.boss_client.health_message = "登录态无效，请重新登录"
+    service.boss_client.health_last_error = "userinfo failed"
+
+    task = asyncio.run(service.scroll_and_collect_jobs(query={"keywords": ["Python"]}))
+
+    assert task.status.value == "failed"
+    assert task.error_message == "登录态无效，请重新登录"

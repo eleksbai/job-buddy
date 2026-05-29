@@ -1638,6 +1638,52 @@ async function triggerScrollSearch() {
   });
 }
 
+async function triggerDetailClick() {
+  showSearchUpdate("点击采集详情已开始，正在逐一点击职位并收集详情，请稍候。", 0);
+  clearError();
+  setButtonBusy("detailClickButton", true, "采集中");
+  try {
+    const result = await fetchJson("/boss/tasks/search/detail-click", {
+      method: "POST",
+      body: JSON.stringify({ query_override: {} }),
+    });
+    const [rows] = await Promise.all([
+      loadCurrentSearchResults(),
+      loadJobs(),
+      loadTasks(),
+      loadSummaryCards(),
+      fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks),
+    ]);
+    showSearchUpdate(`点击采集详情完成，当前展示 ${rows.length} 条记录。`);
+    showNotice(`已触发点击采集详情任务 ${result.task_id}`, 5000);
+  } finally {
+    setButtonBusy("detailClickButton", false);
+  }
+}
+
+async function triggerScrollAndDetail() {
+  showSearchUpdate("滚动+详情采集已开始，正在滚动页面并逐一点击职位收集详情，请稍候。", 0);
+  clearError();
+  setButtonBusy("scrollAndDetailButton", true, "采集中");
+  try {
+    const result = await fetchJson("/boss/tasks/search/scroll-and-detail", {
+      method: "POST",
+      body: JSON.stringify({ query_override: {} }),
+    });
+    const [rows] = await Promise.all([
+      loadCurrentSearchResults(),
+      loadJobs(),
+      loadTasks(),
+      loadSummaryCards(),
+      fetchJson("/boss/tasks?limit=5").then(renderDashboardTasks),
+    ]);
+    showSearchUpdate(`滚动+详情采集完成，当前展示 ${rows.length} 条记录。`);
+    showNotice(`已触发滚动+详情采集任务 ${result.task_id}`, 5000);
+  } finally {
+    setButtonBusy("scrollAndDetailButton", false);
+  }
+}
+
 async function triggerNextPageSearch() {
   const currentPage = getSearchPageValue();
   const nextPage = currentPage + 1;
@@ -1867,6 +1913,12 @@ function bindEvents() {
   document
     .getElementById("scrollSearchButton")
     .addEventListener("click", () => triggerScrollSearch().catch((error) => showError(error.message)));
+  document
+    .getElementById("detailClickButton")
+    .addEventListener("click", () => triggerDetailClick().catch((error) => showError(error.message)));
+  document
+    .getElementById("scrollAndDetailButton")
+    .addEventListener("click", () => triggerScrollAndDetail().catch((error) => showError(error.message)));
   document
     .getElementById("nextPageSearchButton")
     .addEventListener("click", () => triggerNextPageSearch().catch((error) => showError(error.message)));

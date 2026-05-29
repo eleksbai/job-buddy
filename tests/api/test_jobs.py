@@ -77,6 +77,19 @@ class FakeJobService:
 
         return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a33", task_type="search", status="running")
 
+    async def collect_job_details_by_click(self, target=None):
+        _ = target
+        from job_buddy.models import GreetingTask
+
+        return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a34", task_type="detail_click", status="running")
+
+    async def scroll_and_collect_jobs(self, query, target=None):
+        _ = target
+        self.scroll_and_collect_payloads = [dict(query)]
+        from job_buddy.models import GreetingTask
+
+        return GreetingTask(_id="6825fb1a7d4ce9adcc2d1a35", task_type="scroll_and_detail", status="running")
+
 
 class FakeTargetService:
     async def get_target(self, target_id):
@@ -145,3 +158,36 @@ async def test_trigger_scroll_search_task_uses_scroll_service_entry():
     assert response.status_code == 200
     assert response.json()["status"] == "running"
     assert service.scroll_search_payloads == [{"keywords": ["Python"]}]
+
+
+@pytest.mark.asyncio
+async def test_trigger_detail_click_task_uses_detail_click_service_entry():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    service = FakeJobService()
+    app.dependency_overrides[get_job_service] = lambda: service
+    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
+
+    async with api_client(app) as client:
+        response = await client.post("/boss/tasks/search/detail-click", json={"query_override": {}})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["task_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_trigger_scroll_and_detail_task_uses_scroll_and_detail_service_entry():
+    app = FastAPI()
+    app.include_router(build_api_router())
+    service = FakeJobService()
+    app.dependency_overrides[get_job_service] = lambda: service
+    app.dependency_overrides[get_target_service] = lambda: FakeTargetService()
+
+    async with api_client(app) as client:
+        response = await client.post("/boss/tasks/search/scroll-and-detail", json={"query_override": {"keywords": ["Python"]}})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+    assert response.json()["task_id"] is not None
+    assert service.scroll_and_collect_payloads == [{"keywords": ["Python"]}]

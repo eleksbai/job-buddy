@@ -54,6 +54,85 @@ class FakePage:
     async def bring_to_front(self) -> None:
         return None
 
+    def on(self, event: str, callback) -> None:
+        _ = event, callback
+
+    def remove_listener(self, event: str, callback) -> None:
+        _ = event, callback
+
+
+class FakeMouse:
+    async def wheel(self, dx: int, dy: int) -> None:
+        _ = dx, dy
+
+
+class FakeLocator:
+    def __init__(self, page: FakePage, selector: str, count: int = 0) -> None:
+        self._page = page
+        self._selector = selector
+        self._count = count
+
+    async def count(self) -> int:
+        return self._count
+
+    def nth(self, index: int):
+        return FakeNthLocator(self._page, self._selector, index)
+
+
+class FakeNthLocator:
+    def __init__(self, page: FakePage, selector: str, index: int) -> None:
+        self._page = page
+        self._selector = selector
+        self._index = index
+
+    async def click(self) -> None:
+        return None
+
+    async def evaluate(self, script: str, *args):
+        _ = script, args
+        if "closest" in script:
+            return f"job-title-{self._index}"
+        return 1
+
+
+class FakeResponse:
+    def __init__(self, url: str, data: dict) -> None:
+        self.url = url
+        self._data = data
+
+    async def json(self) -> dict:
+        return self._data
+
+
+class FakeDetailPage(FakePage):
+    def __init__(self) -> None:
+        super().__init__()
+        self._response_callbacks: list = []
+        self.detail_responses: list[dict] = []
+        self.job_titles_count = 0
+        self.mouse = FakeMouse()
+        self._scroll_height_calls = 0
+
+    def on(self, event: str, callback) -> None:
+        if event == "response":
+            self._response_callbacks.append(callback)
+
+    def remove_listener(self, event: str, callback) -> None:
+        if event == "response":
+            self._response_callbacks.remove(callback)
+
+    def locator(self, selector: str):
+        if "job-title" in selector:
+            return FakeLocator(self, selector, self.job_titles_count)
+        return FakeLocator(self, selector, 0)
+
+    async def evaluate(self, script: str, *args):
+        if "document.body.scrollHeight" in script:
+            self._scroll_height_calls += 1
+            # Return same height after first call to trigger freeze_count exit
+            return 1000 + min(self._scroll_height_calls, 1) * 100
+        return await super().evaluate(script, *args)
+
 
 class FakeContext:
     def __init__(self, page: FakePage | None = None) -> None:
@@ -609,3 +688,241 @@ def _async_result(value):
         return value
 
     return runner
+
+
+def test_job_detail_by_click_collects_details(monkeypatch):
+    monkeypatch.setattr("job_buddy.boss.client.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", lambda delay: _async_result(None)())
+    page = FakeDetailPage()
+    page.job_titles_count = 2
+    page.detail_responses = [
+        {
+            "code": 0,
+            "zpData": {
+                "jobInfo": {
+                    "encryptId": "job-1",
+                    "securityId": "sec-1",
+                    "jobName": "Python Engineer",
+                    "salaryDesc": "20-30K",
+                    "experienceName": "3-5年",
+                    "degreeName": "本科",
+                    "locationName": "上海",
+                    "address": "Demo Address",
+                    "showSkills": ["Python"],
+                    "postDescription": "Build APIs",
+                    "jobStatusDesc": "在招",
+                },
+                "brandComInfo": {
+                    "brandName": "Demo Tech",
+                    "stageName": "A轮",
+                    "scaleName": "100-499人",
+                    "industryName": "互联网",
+                    "introduce": "Demo intro",
+                },
+                "bossInfo": {"name": "Alice", "title": "招聘经理"},
+            },
+        },
+        {
+            "code": 0,
+            "zpData": {
+                "jobInfo": {
+                    "encryptId": "job-2",
+                    "securityId": "sec-2",
+                    "jobName": "Go Engineer",
+                    "salaryDesc": "30-40K",
+                    "experienceName": "5-10年",
+                    "degreeName": "本科",
+                    "locationName": "北京",
+                    "address": "Beijing Address",
+                    "showSkills": ["Go"],
+                    "postDescription": "Build services",
+                    "jobStatusDesc": "在招",
+                },
+                "brandComInfo": {
+                    "brandName": "Other Tech",
+                    "stageName": "B轮",
+                    "scaleName": "500-999人",
+                    "industryName": "软件",
+                    "introduce": "Other intro",
+                },
+                "bossInfo": {"name": "Bob", "title": "技术总监"},
+            },
+        },
+    ]
+
+    def trigger_responses():
+        for callback in page._response_callbacks:
+            for resp in page.detail_responses:
+                callback(FakeResponse("https://www.zhipin.com/wapi/zpgeek/job/detail.json", resp))
+
+    original_click = FakeNthLocator.click
+
+    async def patched_click(self):
+        await original_click(self)
+        trigger_responses()
+
+    monkeypatch.setattr(FakeNthLocator, "click", patched_click)
+
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(engine.job_detail_by_click())
+
+    assert len(result) == 2
+    assert result[0].job.title == "Python Engineer"
+    assert result[1].job.title == "Go Engineer"
+
+
+def test_job_detail_by_click_dedupes_by_job_id(monkeypatch):
+    monkeypatch.setattr("job_buddy.boss.client.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", lambda delay: _async_result(None)())
+    page = FakeDetailPage()
+    page.job_titles_count = 2
+    page.detail_responses = [
+        {
+            "code": 0,
+            "zpData": {
+                "jobInfo": {
+                    "encryptId": "job-1",
+                    "securityId": "sec-1",
+                    "jobName": "Python Engineer",
+                    "salaryDesc": "20-30K",
+                    "experienceName": "3-5年",
+                    "degreeName": "本科",
+                    "locationName": "上海",
+                    "address": "Demo Address",
+                    "showSkills": ["Python"],
+                    "postDescription": "Build APIs",
+                    "jobStatusDesc": "在招",
+                },
+                "brandComInfo": {
+                    "brandName": "Demo Tech",
+                    "stageName": "A轮",
+                    "scaleName": "100-499人",
+                    "industryName": "互联网",
+                    "introduce": "Demo intro",
+                },
+                "bossInfo": {"name": "Alice", "title": "招聘经理"},
+            },
+        },
+        {
+            "code": 0,
+            "zpData": {
+                "jobInfo": {
+                    "encryptId": "job-1",
+                    "securityId": "sec-1",
+                    "jobName": "Python Engineer Updated",
+                    "salaryDesc": "25-35K",
+                    "experienceName": "3-5年",
+                    "degreeName": "本科",
+                    "locationName": "上海",
+                    "address": "Demo Address",
+                    "showSkills": ["Python"],
+                    "postDescription": "Build APIs",
+                    "jobStatusDesc": "在招",
+                },
+                "brandComInfo": {
+                    "brandName": "Demo Tech",
+                    "stageName": "A轮",
+                    "scaleName": "100-499人",
+                    "industryName": "互联网",
+                    "introduce": "Demo intro",
+                },
+                "bossInfo": {"name": "Alice", "title": "招聘经理"},
+            },
+        },
+    ]
+
+    def trigger_responses():
+        for callback in page._response_callbacks:
+            for resp in page.detail_responses:
+                callback(FakeResponse("https://www.zhipin.com/wapi/zpgeek/job/detail.json", resp))
+
+    original_click = FakeNthLocator.click
+
+    async def patched_click(self):
+        await original_click(self)
+        trigger_responses()
+
+    monkeypatch.setattr(FakeNthLocator, "click", patched_click)
+
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(engine.job_detail_by_click())
+
+    assert len(result) == 1
+    assert result[0].job_id == "job-1"
+
+
+def test_job_detail_by_click_skips_invalid_response(monkeypatch, caplog):
+    monkeypatch.setattr("job_buddy.boss.client.random", lambda: 0.0)
+    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", lambda delay: _async_result(None)())
+    page = FakeDetailPage()
+    page.job_titles_count = 2
+    page.detail_responses = [
+        {"code": 0, "zpData": {}},
+        {
+            "code": 0,
+            "zpData": {
+                "jobInfo": {
+                    "encryptId": "job-2",
+                    "securityId": "sec-2",
+                    "jobName": "Go Engineer",
+                    "salaryDesc": "30-40K",
+                    "experienceName": "5-10年",
+                    "degreeName": "本科",
+                    "locationName": "北京",
+                    "address": "Beijing Address",
+                    "showSkills": ["Go"],
+                    "postDescription": "Build services",
+                    "jobStatusDesc": "在招",
+                },
+                "brandComInfo": {
+                    "brandName": "Other Tech",
+                    "stageName": "B轮",
+                    "scaleName": "500-999人",
+                    "industryName": "软件",
+                    "introduce": "Other intro",
+                },
+                "bossInfo": {"name": "Bob", "title": "技术总监"},
+            },
+        },
+    ]
+
+    def trigger_responses():
+        for callback in page._response_callbacks:
+            for resp in page.detail_responses:
+                callback(FakeResponse("https://www.zhipin.com/wapi/zpgeek/job/detail.json", resp))
+
+    original_click = FakeNthLocator.click
+
+    async def patched_click(self):
+        await original_click(self)
+        trigger_responses()
+
+    monkeypatch.setattr(FakeNthLocator, "click", patched_click)
+
+    context = FakeContext(page)
+    playwright = FakePlaywright(lambda _path: context)
+    starter = FakeStarter(playwright)
+    monkeypatch.setattr("job_buddy.boss.client.async_playwright", lambda: starter)
+
+    engine = BossClient(Settings())
+    engine.is_login = _async_result(True)  # type: ignore[method-assign]
+
+    result = asyncio.run(engine.job_detail_by_click())
+
+    assert len(result) == 1
+    assert result[0].job_id == "job-2"
+    assert "handle response error" in caplog.text

@@ -31,7 +31,7 @@ from job_buddy.boss.config import (
     SCALE_CODES,
     STAGE_CODES,
 )
-from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, LoginIn, LoginOut, SearchIn, \
+from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, JobDetailOut, LoginIn, LoginOut, SearchIn, \
     SendMessageIn, SearchOut
 from job_buddy.config import Settings
 from job_buddy.models import (
@@ -50,6 +50,7 @@ from job_buddy.models import (
     WorkerConfig,
     utc_now,
 )
+from job_buddy.repositories import JobCollectionRepository
 from job_buddy.schemas import (
     AuthStatusResponse,
     DataClearResponse,
@@ -368,6 +369,7 @@ class JobCollectionService:
         self.auth_states = database["boss_auth_state"]
         self.boss_client = boss_client
         self._auth_service: BossAuthService | None = None
+        self.repository = JobCollectionRepository(self.jobs, self.records)
 
     @property
     def auth_service(self) -> BossAuthService:
@@ -854,6 +856,159 @@ class JobCollectionService:
             },
         )
 
+    async def collect_job_details_by_click(self, target: TargetProfile | None = None) -> GreetingTask:
+        task = await _create_model(
+            self.tasks,
+            GreetingTask(
+                task_type="detail_click",
+                status=TaskStatus.RUNNING,
+                target_profile_id=target.id if target else None,
+                input_payload={},
+                started_at=utc_now(),
+            ),
+            GreetingTask,
+        )
+        try:
+            await asyncio.wait_for(self._do_collect_job_details_by_click(task, target), timeout=TASK_TIMEOUT)
+        except asyncio.TimeoutError:
+            current = await _get_model(self.tasks, GreetingTask, task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            logger.error("detail click task timed out: task_id=%s step=%s", task.id, step)
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return failed
+        except Exception as exc:
+            logger.exception("detail click task failed: task_id=%s", task.id)
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": str(exc),
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise
+            return failed
+
+        updated = await _get_model(self.tasks, GreetingTask, task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def _do_collect_job_details_by_click(
+        self,
+        task: GreetingTask,
+        target: TargetProfile | None,
+    ) -> None:
+        await self._update_task_step(task.id, "healthcheck")
+        try:
+            await self.auth_service.require_authenticated()
+            await self._update_task_step(task.id, "detail_click_collect")
+            detail_results = await self.boss_client.job_detail_by_click()
+        except Exception as exc:
+            logger.warning("BOSS detail click collect failed: task_id=%s error=%s", task.id, exc)
+            raise map_boss_operation_error(exc) from exc
+
+        await self._update_task_step(task.id, "persist_results")
+        created = 0
+        updated = 0
+        for detail in detail_results:
+            persisted = await self._persist_job_detail_out(detail, target)
+            if persisted == "created":
+                created += 1
+            elif persisted == "updated":
+                updated += 1
+
+        await _update_model(
+            self.tasks,
+            GreetingTask,
+            task.id,
+            {
+                "status": TaskStatus.SUCCEEDED,
+                "result_summary": {
+                    "collected": len(detail_results),
+                    "created": created,
+                    "updated": updated,
+                },
+                "finished_at": utc_now(),
+            },
+        )
+
+    async def _persist_job_detail_out(
+        self,
+        detail: JobDetailOut,
+        target: TargetProfile | None,
+    ) -> str:
+        existing = await self._get_job_by_source_job_id(detail.job_id)
+        if existing is None:
+            await _create_model(
+                self.jobs,
+                JobLead(
+                    source_job_id=detail.job_id,
+                    security_id=detail.job.security_id or None,
+                    source_friend_id=detail.encrypt_boss_id or None,
+                    contact=detail.contact,
+                    boss_online=detail.boss_online,
+                    boss_active_text=detail.boss_active_text or None,
+                    job_active_time=detail.job_active_time or None,
+                    title=detail.job.title or detail.job_id,
+                    company=detail.company.name or "",
+                    city=detail.job.city or None,
+                    salary=detail.job.salary or None,
+                    experience=detail.job.experience or None,
+                    job_url=detail.job_url or None,
+                    match_status="matched" if target else "new",
+                    detail_payload=detail.model_dump(),
+                    detail_text=detail.detail_text or None,
+                    detail_source_url=detail.request_url or detail.job_url or None,
+                    detail_fetched_at=utc_now(),
+                    raw_payload=detail.detail_raw_payload or {},
+                ),
+                JobLead,
+            )
+            return "created"
+        else:
+            await _update_model(
+                self.jobs,
+                JobLead,
+                existing.id,
+                {
+                    "security_id": detail.job.security_id or existing.security_id,
+                    "source_friend_id": detail.encrypt_boss_id or existing.source_friend_id,
+                    "contact": detail.contact if detail.contact is not None else existing.contact,
+                    "boss_online": detail.boss_online if detail.boss_online is not None else existing.boss_online,
+                    "boss_active_text": detail.boss_active_text or existing.boss_active_text,
+                    "job_active_time": detail.job_active_time if detail.job_active_time is not None else existing.job_active_time,
+                    "title": detail.job.title or existing.title,
+                    "company": detail.company.name or existing.company,
+                    "city": detail.job.city or existing.city,
+                    "salary": detail.job.salary or existing.salary,
+                    "experience": detail.job.experience or existing.experience,
+                    "job_url": detail.job_url or existing.job_url,
+                    "detail_payload": detail.model_dump(),
+                    "detail_text": detail.detail_text or existing.detail_text,
+                    "detail_source_url": detail.request_url or detail.job_url or existing.detail_source_url,
+                    "detail_fetched_at": utc_now(),
+                    "last_seen_at": utc_now(),
+                },
+            )
+            return "updated"
+
     async def _update_task_step(self, task_id: str, step: str) -> None:
         await _update_model(self.tasks, GreetingTask, task_id, {"result_summary": {"step": step}})
 
@@ -874,6 +1029,91 @@ class JobCollectionService:
             "updated_at": utc_now(),
         }
         await self.friends.update_one({"source_friend_id": job.source_friend_id}, {"$set": updates})
+
+    async def scroll_and_collect_jobs(self, query: dict[str, Any], target: TargetProfile | None = None) -> GreetingTask:
+        task = await _create_model(
+            self.tasks,
+            GreetingTask(
+                task_type="scroll_and_detail",
+                status=TaskStatus.RUNNING,
+                target_profile_id=target.id if target else None,
+                input_payload=query,
+                started_at=utc_now(),
+            ),
+            GreetingTask,
+        )
+        try:
+            await asyncio.wait_for(self._do_scroll_and_collect(task, query, target), timeout=TASK_TIMEOUT)
+        except asyncio.TimeoutError:
+            current = await _get_model(self.tasks, GreetingTask, task.id)
+            step = "unknown"
+            if current and current.result_summary:
+                step = current.result_summary.get("step", "unknown")
+            logger.error("scroll and collect task timed out: task_id=%s step=%s", task.id, step)
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+            return failed
+        except Exception as exc:
+            logger.exception("scroll and collect task failed: task_id=%s", task.id)
+            failed = await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": str(exc),
+                    "finished_at": utc_now(),
+                },
+            )
+            if failed is None:
+                raise
+            return failed
+
+        updated = await _get_model(self.tasks, GreetingTask, task.id)
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
+        return updated
+
+    async def _do_scroll_and_collect(
+        self,
+        task: GreetingTask,
+        query: dict[str, Any],
+        target: TargetProfile | None,
+    ) -> None:
+        await self._update_task_step(task.id, "healthcheck")
+        try:
+            await self.auth_service.require_authenticated()
+            await self._update_task_step(task.id, "scroll_and_collect")
+            stats = await self.boss_client.scroll_and_collect_details(
+                self.repository,
+                task.id,
+                query,
+                target=target,
+            )
+        except Exception as exc:
+            logger.warning("BOSS scroll and collect failed: task_id=%s error=%s", task.id, exc)
+            raise map_boss_operation_error(exc) from exc
+
+        await _update_model(
+            self.tasks,
+            GreetingTask,
+            task.id,
+            {
+                "status": TaskStatus.SUCCEEDED,
+                "result_summary": stats,
+                "finished_at": utc_now(),
+            },
+        )
 
 
 class GreetingService:
