@@ -36,6 +36,8 @@ class JobLeadRead(TimestampedSchema):
     search_count: int
     last_searched_at: datetime | None = None
     detail_fetched_at: datetime | None = None
+    fetch_count_list: int = 0
+    fetch_count_detail: int = 0
     detail_source_url: str | None = None
     last_seen_at: datetime
     greeted: bool

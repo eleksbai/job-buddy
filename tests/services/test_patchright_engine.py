@@ -79,6 +79,24 @@ class FakeLocator:
         return FakeNthLocator(self._page, self._selector, index)
 
 
+class FakeJobTitleLocator:
+    def __init__(self, page: FakePage, selector: str, count: int = 0) -> None:
+        self._page = page
+        self._selector = selector
+        self._count = count
+
+    async def count(self) -> int:
+        import sys
+        self._page._fire_list_responses()
+        await asyncio.sleep(0)
+        sys.__stderr__.write(f"DEBUG FakeJobTitleLocator.count fired={self._page._list_responses_fired} callbacks={len(self._page._response_callbacks)} count={self._count}\n")
+        sys.__stderr__.flush()
+        return self._count
+
+    def nth(self, index: int):
+        return FakeNthLocator(self._page, self._selector, index)
+
+
 class FakeNthLocator:
     def __init__(self, page: FakePage, selector: str, index: int) -> None:
         self._page = page
@@ -109,6 +127,8 @@ class FakeDetailPage(FakePage):
         super().__init__()
         self._response_callbacks: list = []
         self.detail_responses: list[dict] = []
+        self.list_responses: list[dict] = []
+        self._list_responses_fired = False
         self.job_titles_count = 0
         self.mouse = FakeMouse()
         self._scroll_height_calls = 0
@@ -121,9 +141,20 @@ class FakeDetailPage(FakePage):
         if event == "response":
             self._response_callbacks.remove(callback)
 
+    def _fire_list_responses(self) -> None:
+        if self._list_responses_fired:
+            return
+        self._list_responses_fired = True
+        for callback in self._response_callbacks:
+            for resp_data in self.list_responses:
+                callback(FakeResponse(
+                    "https://www.zhipin.com/wapi/zpgeek/pc/recommend/job/list.json",
+                    resp_data,
+                ))
+
     def locator(self, selector: str):
         if "job-title" in selector:
-            return FakeLocator(self, selector, self.job_titles_count)
+            return FakeJobTitleLocator(self, selector, self.job_titles_count)
         return FakeLocator(self, selector, 0)
 
     async def evaluate(self, script: str, *args):
@@ -930,10 +961,28 @@ def test_job_detail_by_click_skips_invalid_response(monkeypatch, caplog):
 
 def test_scroll_and_collect_details_respects_max_jobs(monkeypatch):
     monkeypatch.setattr("job_buddy.boss.client.random", lambda: 0.0)
-    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", lambda delay: _async_result(None)())
+
+    _original_sleep = asyncio.sleep
+
+    async def _fake_sleep(delay):
+        await _original_sleep(0)
+
+    monkeypatch.setattr("job_buddy.boss.client.asyncio.sleep", _fake_sleep)
+
+    class FakeJobsCollection:
+        async def update_one(self, *args, **kwargs):
+            return None
+
+        async def find_one(self, *args, **kwargs):
+            return None
 
     class FakeRepo:
+        jobs = FakeJobsCollection()
+
         async def get_recently_collected_source_job_ids(self, source_job_ids, hours=24):
+            return set()
+
+        async def get_source_job_ids_with_recent_details(self, source_job_ids, hours=24):
             return set()
 
         async def save_scroll_record(self, task_id, item):
@@ -950,6 +999,23 @@ def test_scroll_and_collect_details_respects_max_jobs(monkeypatch):
 
     page = FakeDetailPage()
     page.job_titles_count = 10
+    page.list_responses = [
+        {
+            "code": 0,
+            "zpData": {
+                "jobList": [
+                    {
+                        "encryptJobId": f"job-{i}",
+                        "jobName": f"Job {i}",
+                        "brandName": f"Company {i}",
+                        "salaryDesc": "10-20K",
+                        "locationName": "北京",
+                    }
+                    for i in range(10)
+                ]
+            },
+        }
+    ]
 
     context = FakeContext(page)
     playwright = FakePlaywright(lambda _path: context)
@@ -965,6 +1031,6 @@ def test_scroll_and_collect_details_respects_max_jobs(monkeypatch):
     # first round of clicks without scrolling further.
     assert page._scroll_height_calls == 0
     assert isinstance(stats, dict)
-    assert stats["scroll_collected"] == 0  # no list responses triggered
+    assert stats["scroll_collected"] == 10  # list items persisted immediately
     assert stats["detail_collected"] == 0  # no detail responses triggered
-    assert stats["detail_skipped"] == 0
+    assert stats["detail_skipped"] == 10

@@ -50,6 +50,25 @@ class JobCollectionRepository:
         results = await cursor.to_list(length=len(source_job_ids))
         return {r["source_job_id"] for r in results}
 
+    async def get_source_job_ids_with_recent_details(
+        self,
+        source_job_ids: list[str],
+        hours: int = 24,
+    ) -> set[str]:
+        """Return the subset of *source_job_ids* whose ``JobLead.detail_fetched_at``
+        is within the last *hours* hours."""
+        if not source_job_ids:
+            return set()
+        since = datetime.now(tz=UTC) - timedelta(hours=hours)
+        cursor = self.jobs.find(
+            {
+                "source_job_id": {"$in": source_job_ids},
+                "detail_fetched_at": {"$gte": since},
+            }
+        )
+        results = await cursor.to_list(length=len(source_job_ids))
+        return {r["source_job_id"] for r in results}
+
     async def save_scroll_record(
         self, task_id: str, item: SearchJobItemOut
     ) -> JobCollectionRecord:

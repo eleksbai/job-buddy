@@ -912,9 +912,18 @@ class BossClient:
         await self.check_page_health()
 
         raw_list_items: list[dict[str, Any]] = []
-        detail_list: list[JobDetailOut] = []
+        seen_list_job_ids: set[str] = set()
+        seen_detail_job_ids: set[str] = set()
         pending_list_responses: set[asyncio.Task[None]] = set()
         pending_detail_responses: set[asyncio.Task[None]] = set()
+
+        stats: dict[str, int] = {
+            "scroll_collected": 0,
+            "detail_collected": 0,
+            "detail_created": 0,
+            "detail_updated": 0,
+            "detail_skipped": 0,
+        }
 
         async def handle_list_response(response: Response) -> None:
             if URL_JOB_LIST_BY_SCROLL not in response.url:
@@ -924,12 +933,26 @@ class BossClient:
                 if data.get("code") == 0:
                     items = data.get("zpData", {}).get("jobList", [])
                     if isinstance(items, list):
+                        new_items = [item for item in items if isinstance(item, dict)]
                         logger.info(
                             "scroll_and_collect_details list response: +%d items",
-                            len(items),
+                            len(new_items),
                         )
-                        raw_list_items.extend(item for item in items if isinstance(item, dict))
-
+                        for raw_item in new_items:
+                            job_id = str(raw_item.get("encryptJobId") or "").strip()
+                            if not job_id or job_id in seen_list_job_ids:
+                                continue
+                            seen_list_job_ids.add(job_id)
+                            raw_list_items.append(raw_item)
+                            normalized = self._normalize_raw_job(raw_item)
+                            search_item = self._search_item_from_payload(normalized)
+                            await repository.save_scroll_record(task_id, search_item)
+                            await repository.upsert_job_lead_from_search(search_item)
+                            await repository.jobs.update_one(
+                                {"source_job_id": job_id},
+                                {"$inc": {"fetch_count_list": 1}},
+                            )
+                            stats["scroll_collected"] += 1
             except Exception as exc:
                 logger.warning("scroll_and_collect_details list response error: %s", exc)
 
@@ -944,12 +967,29 @@ class BossClient:
                         request_url=response.url,
                         response_received_at=datetime.now(tz=UTC).isoformat(),
                     )
-                    detail_list.append(detail_out)
                     logger.info(
                         "scroll_and_collect_details detail response: job_id=%s title=%s",
                         detail_out.job_id,
                         detail_out.job.title,
                     )
+                    await repository.save_detail_record(task_id, detail_out)
+                    existing = await repository.jobs.find_one(
+                        {"source_job_id": detail_out.job_id}
+                    )
+                    is_first_detail = (
+                        existing is None
+                        or existing.get("detail_fetched_at") is None
+                    )
+                    await repository.upsert_job_lead(detail_out)
+                    await repository.jobs.update_one(
+                        {"source_job_id": detail_out.job_id},
+                        {"$inc": {"fetch_count_detail": 1}},
+                    )
+                    stats["detail_collected"] += 1
+                    if is_first_detail:
+                        stats["detail_created"] += 1
+                    else:
+                        stats["detail_updated"] += 1
             except Exception as exc:
                 logger.warning("scroll_and_collect_details detail response error: %s", exc)
 
@@ -967,7 +1007,10 @@ class BossClient:
         try:
             await self.goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
+            # 跳转前对旧数据清空
+            raw_list_items.clear()
+            await asyncio.sleep(5)
             if tab_index == 0:
                 await self.page.locator("div.c-expect-select > a.synthesis").click()
             else:
@@ -983,67 +1026,68 @@ class BossClient:
             await asyncio.sleep(3)
             await asyncio.sleep(random() * 2 + 1)
 
-            clicked_identifiers: set[str] = set()
+
+            cursor = 0
             last_high = 0
             freeze_count = 0
 
             for _ in range(30):
                 titles = self.page.locator("div.job-info > div.job-title")
                 count = await titles.count()
+                total_items = len(raw_list_items)
                 logger.info(
-                    "scroll_and_collect_details round start, titles=%d clicked=%d",
+                    "scroll_and_collect_details round start, titles=%d total_items=%d cursor=%d",
                     count,
-                    len(clicked_identifiers),
+                    total_items,
+                    cursor,
                 )
 
-                # Extract identifiers of newly visible jobs
-                new_identifiers: list[tuple[int, str]] = []
-                for i in range(count):
-                    try:
-                        identifier = await titles.nth(i).evaluate(
-                            """
-                            el => {
-                                const card = el.closest('[data-jid], [data-job-id], [data-id], .job-card-wrapper, .job-card');
-                                return card?.dataset?.jid || card?.dataset?.jobId || card?.dataset?.id || el.textContent?.trim();
-                            }
-                            """
-                        )
-                        identifier = str(identifier or "").strip()
-                        if identifier and identifier not in clicked_identifiers:
-                            new_identifiers.append((i, identifier))
-                    except Exception:
-                        continue
+                # Build skip-set from cursor onwards using source_job_id from list data
+                clickable_count = min(total_items, count)
+                if count> total_items:
+                    logger.warning("maybe loss raw item data! count=%d >  total_items=%d", count, total_items)
+                if cursor < clickable_count:
+                    pending_ids = [
+                        str(raw_list_items[i].get("encryptJobId") or "").strip()
+                        for i in range(cursor, clickable_count)
+                    ]
+                    assert len(pending_ids)  == clickable_count-cursor
+                    pending_ids = [jid for jid in pending_ids if jid]
+                    skip_ids = await repository.get_source_job_ids_with_recent_details(
+                        pending_ids
+                    )
+                else:
+                    skip_ids: set[str] = set()
 
-                # Batch check DB for recently collected jobs
-                identifiers_to_check = [ident for _, ident in new_identifiers]
-                skip_identifiers = await repository.get_recently_collected_source_job_ids(
-                    identifiers_to_check
-                )
-
-                # Click non-skipped jobs
+                # Click non-skipped jobs from cursor position
                 new_clicked = 0
-                for i, identifier in new_identifiers:
-                    if identifier in skip_identifiers:
-                        clicked_identifiers.add(identifier)
+                while cursor < clickable_count and cursor < max_jobs:
+                    item = raw_list_items[cursor]
+                    job_id = str(item.get("encryptJobId") or "").strip()
+                    if not job_id or job_id in skip_ids:
+                        cursor += 1
                         continue
                     try:
-                        await titles.nth(i).click()
-                        clicked_identifiers.add(identifier)
+                        await titles.nth(cursor).click()
                         new_clicked += 1
+                        cursor += 1
                         await asyncio.sleep(random() * 2 + 1)
                     except Exception as exc:
                         logger.warning(
-                            "scroll_and_collect_details click job %d failed: %s", i, exc
+                            "scroll_and_collect_details click job cursor=%d failed: %s",
+                            cursor,
+                            exc,
                         )
+                        cursor += 1
 
                 logger.info(
-                    "scroll_and_collect_details round end, new_clicked=%d total_clicked=%d/%d",
+                    "scroll_and_collect_details round end, new_clicked=%d cursor=%d/%d",
                     new_clicked,
-                    len(clicked_identifiers),
+                    cursor,
                     max_jobs,
                 )
 
-                if len(clicked_identifiers) >= max_jobs:
+                if cursor >= max_jobs:
                     logger.info("scroll_and_collect_details reached max_jobs=%d, stopping", max_jobs)
                     break
 
@@ -1068,48 +1112,7 @@ class BossClient:
             if pending_detail_responses:
                 await asyncio.gather(*pending_detail_responses, return_exceptions=True)
 
-        # Dedupe list items
-        list_deduped: dict[str, dict[str, Any]] = {}
-        for item in raw_list_items:
-            job_id = str(item.get("encryptJobId") or "").strip()
-            if not job_id:
-                continue
-            list_deduped[job_id] = item
-
-        # Dedupe detail items
-        detail_deduped: dict[str, JobDetailOut] = {}
-        for item in detail_list:
-            job_id = str(item.job_id or "").strip()
-            if not job_id:
-                continue
-            detail_deduped[job_id] = item
-
-        # Persist via repository
-        stats: dict[str, int] = {
-            "scroll_collected": 0,
-            "detail_collected": 0,
-            "detail_created": 0,
-            "detail_updated": 0,
-            "detail_skipped": 0,
-        }
-
-        for job_id, raw_item in list_deduped.items():
-            normalized = self._normalize_raw_job(raw_item)
-            search_item = self._search_item_from_payload(normalized)
-            stats["scroll_collected"] += 1
-            await repository.save_scroll_record(task_id, search_item)
-            await repository.upsert_job_lead_from_search(search_item)
-
-        for job_id, detail in detail_deduped.items():
-            stats["detail_collected"] += 1
-            await repository.save_detail_record(task_id, detail)
-            _, is_created = await repository.upsert_job_lead(detail)
-            if is_created:
-                stats["detail_created"] += 1
-            else:
-                stats["detail_updated"] += 1
-
-        stats["detail_skipped"] = len(list_deduped) - len(detail_deduped)
+        stats["detail_skipped"] = stats["scroll_collected"] - stats["detail_collected"]
 
         logger.info("scroll_and_collect_details finished: %s", stats)
         return stats

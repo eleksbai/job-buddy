@@ -72,6 +72,8 @@ class JobLead(DocumentModel):
     detail_text: str | None = None
     detail_source_url: str | None = None
     detail_fetched_at: datetime | None = None
+    fetch_count_list: int = 0
+    fetch_count_detail: int = 0
     last_seen_at: datetime = Field(default_factory=utc_now)
     search_count: int = 1
     last_searched_at: datetime = Field(default_factory=utc_now)
