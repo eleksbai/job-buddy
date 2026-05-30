@@ -81,6 +81,10 @@ class JobLead(DocumentModel):
     ai_score: int | None = None
     ai_match: bool | None = None
     ai_reasoning: str | None = None
+    ai_reasoning_content: str | None = None
+    ai_prompt_tokens: int | None = None
+    ai_completion_tokens: int | None = None
+    ai_cache_hit_tokens: int | None = None
     ai_evaluated_at: datetime | None = None
 
 

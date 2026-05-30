@@ -414,10 +414,12 @@ async def list_jobs(
     ok, payload, error = await _request_json("GET", "/boss/jobs", params=params)
     if not ok:
         return error or _error_result("获取职位列表失败")
-    items = payload if isinstance(payload, list) else []
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    total = payload.get("total", len(items)) if isinstance(payload, dict) else len(items)
     result = {
         "success": True,
         "count": len(items),
+        "total": total,
         "items": [_summarize_job(item) for item in items if isinstance(item, dict)],
     }
     return _attach_raw(result, payload, include_raw)

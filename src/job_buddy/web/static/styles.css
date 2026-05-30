@@ -645,3 +645,37 @@ a {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+
+/* ── Pagination ── */
+
+.pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pagination-limit-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.93rem;
+  color: var(--muted);
+}
+
+.pagination-limit-label select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.94);
+}

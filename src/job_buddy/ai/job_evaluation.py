@@ -98,18 +98,38 @@ class AIMatchingClient:
         )
 
         content = response.choices[0].message.content
+        reasoning_content = getattr(response.choices[0].message, "reasoning_content", None)
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else None
+        completion_tokens = usage.completion_tokens if usage else None
+        cache_hit_tokens = getattr(usage, "prompt_cache_hit_tokens", None) if usage else None
+
         if not content:
             logger.warning("LLM returned empty content")
-            return {"match": False, "score": 0, "reasoning": "AI 返回空结果"}
+            return {
+                "match": False, "score": 0, "reasoning": "AI 返回空结果",
+                "reasoning_content": reasoning_content,
+                "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                "cache_hit_tokens": cache_hit_tokens,
+            }
 
         try:
             result = json.loads(content)
         except json.JSONDecodeError:
             logger.warning("Failed to parse LLM response as JSON: %s", content[:200])
-            return {"match": False, "score": 0, "reasoning": f"AI 返回格式异常: {content[:100]}"}
+            return {
+                "match": False, "score": 0, "reasoning": f"AI 返回格式异常: {content[:100]}",
+                "reasoning_content": reasoning_content,
+                "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                "cache_hit_tokens": cache_hit_tokens,
+            }
 
         return {
             "match": bool(result.get("match", False)),
             "score": max(0, min(100, int(result.get("score", 0)))),
             "reasoning": str(result.get("reasoning", "")),
+            "reasoning_content": reasoning_content,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cache_hit_tokens": cache_hit_tokens,
         }

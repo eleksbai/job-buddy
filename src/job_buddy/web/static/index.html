@@ -252,10 +252,34 @@
               <p>展示去重后的全部职位，支持排序和筛选。</p>
             </div>
             <div class="panel-actions">
-              <button id="aiEvaluateButton">AI评估全部</button>
+              <button id="aiEvaluateButton">手动触发一次评估</button>
               <button id="aiClearMarksButton" class="button-secondary">清除AI标记</button>
               <button id="refreshJobsButton" class="button-secondary">刷新职位</button>
             </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-header">
+              <h3>AI匹配 Worker</h3>
+              <span class="hint-text">定时自动评估未评估的职位，启动前请先保存配置。</span>
+              <div class="panel-actions">
+                <button id="saveAiMatchingWorkerButton" class="button-secondary">保存配置</button>
+                <button id="startAiMatchingWorkerButton">启动</button>
+                <button id="stopAiMatchingWorkerButton" class="button-secondary">停止</button>
+                <button id="releaseAiMatchingWorkerButton" class="button-secondary">解除限制</button>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>
+                间隔秒数
+                <input id="aiMatchingWorkerIntervalInput" type="number" min="1" value="3600" />
+              </label>
+              <label>
+                每轮数量
+                <input id="aiMatchingWorkerBatchSizeInput" type="number" min="1" value="10" />
+              </label>
+            </div>
+            <div id="aiMatchingWorkerMeta" class="stack-list" style="margin-top: 1rem"></div>
           </div>
 
           <div class="panel-card">
@@ -314,6 +338,27 @@
               </label>
             </div>
             <div id="jobsTable"></div>
+
+            <div id="jobsPagination" class="pagination-bar" hidden>
+              <span id="jobsPageInfo" class="hint-text"></span>
+              <div class="pagination-actions">
+                <label class="pagination-limit-label">
+                  每页
+                  <select id="jobsLimitSelect">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                  </select>
+                  条
+                </label>
+                <button id="jobsPrevPageButton" class="button-secondary">&laquo; 上一页</button>
+                <span id="jobsCurrentPage" class="hint-text">第 1 页</span>
+                <button id="jobsNextPageButton" class="button-secondary">下一页 &raquo;</button>
+              </div>
+            </div>
           </div>
         </section>
 

@@ -12,21 +12,24 @@ class FakeJobService:
         self.detail_calls: list[tuple[str, str | None, bool]] = []
         self.scroll_search_payloads: list[dict] = []
 
-    async def list_jobs(self, match_status, greeted, limit):
-        _ = match_status, greeted, limit
-        return [
-            JobLead(
-                _id="6825fb1a7d4ce9adcc2d1a31",
-                source_job_id="job-1",
-                security_id="sec-1",
-                title="Python Backend Engineer",
-                company="Demo Tech",
-                city="Shanghai",
-                salary="20-30K",
-                experience="3-5年",
-                job_url="https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
-            )
-        ]
+    async def list_jobs(self, match_status, greeted, skip=0, limit=100):
+        _ = match_status, greeted, skip, limit
+        return (
+            [
+                JobLead(
+                    _id="6825fb1a7d4ce9adcc2d1a31",
+                    source_job_id="job-1",
+                    security_id="sec-1",
+                    title="Python Backend Engineer",
+                    company="Demo Tech",
+                    city="Shanghai",
+                    salary="20-30K",
+                    experience="3-5年",
+                    job_url="https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1",
+                )
+            ],
+            1,
+        )
 
     async def list_collection_records(self, task_id, source_job_id, limit):
         _ = task_id, source_job_id, limit
@@ -98,10 +101,14 @@ async def test_list_jobs_includes_job_url():
         response = await client.get("/boss/jobs")
 
     assert response.status_code == 200
-    assert response.json()[0]["job_url"] == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
-    assert response.json()[0]["source_job_id"] == "job-1"
-    assert response.json()[0]["search_count"] == 1
-    assert response.json()[0]["last_searched_at"] is not None
+    body = response.json()
+    assert body["items"][0]["job_url"] == "https://www.zhipin.com/job_detail/job-1.html?securityId=sec-1"
+    assert body["items"][0]["source_job_id"] == "job-1"
+    assert body["items"][0]["search_count"] == 1
+    assert body["items"][0]["last_searched_at"] is not None
+    assert body["total"] == 1
+    assert body["page"] == 1
+    assert body["limit"] == 100
 
 
 @pytest.mark.asyncio

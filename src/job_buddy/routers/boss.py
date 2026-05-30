@@ -23,6 +23,7 @@ from job_buddy.schemas import (
     JobDetailResponse,
     JobLeadDetailRead,
     JobLeadRead,
+    JobListResponse,
     SearchTaskRequest,
     SearchJobsRequest,
     SearchJobsResponse,
@@ -50,15 +51,22 @@ from job_buddy.services import (
 router = APIRouter(prefix="/boss")
 
 
-@router.get("/jobs", response_model=list[JobLeadRead], tags=["jobs"], operation_id="list_jobs")
+@router.get("/jobs", response_model=JobListResponse, tags=["jobs"], operation_id="list_jobs")
 async def list_jobs(
     match_status: str | None = None,
     greeted: bool | None = None,
-    limit: int = Query(default=100, le=200),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=100, ge=1, le=1000),
     service: JobCollectionService = Depends(get_job_service),
-) -> list[JobLeadRead]:
-    jobs = await service.list_jobs(match_status=match_status, greeted=greeted, limit=limit)
-    return [JobLeadRead(**item.model_dump()) for item in jobs]
+) -> JobListResponse:
+    skip = (page - 1) * limit
+    jobs, total = await service.list_jobs(match_status=match_status, greeted=greeted, skip=skip, limit=limit)
+    return JobListResponse(
+        items=[JobLeadRead(**item.model_dump()) for item in jobs],
+        total=total,
+        page=page,
+        limit=limit,
+    )
 
 
 @router.get("/jobs/{source_job_id}/detail", response_model=JobDetailResponse, tags=["jobs"], operation_id="get_job_detail")

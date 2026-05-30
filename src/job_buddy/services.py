@@ -351,14 +351,16 @@ class JobCollectionService:
             self._auth_service = auth_service
         return auth_service
 
-    async def list_jobs(self, match_status: str | None, greeted: bool | None, limit: int) -> list[JobLead]:
+    async def list_jobs(self, match_status: str | None, greeted: bool | None, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
         filters: dict[str, Any] = {}
         if match_status:
             filters["match_status"] = match_status
         if greeted is not None:
             filters["greeted"] = greeted
-        cursor = self.jobs.find(filters).sort([("last_searched_at", -1), ("_id", -1)]).limit(limit)
-        return [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
+        total = await self.jobs.count_documents(filters)
+        cursor = self.jobs.find(filters).sort([("last_searched_at", -1), ("_id", -1)]).skip(skip).limit(limit)
+        items = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
+        return items, total
 
     async def list_collection_records(
             self,
@@ -2148,6 +2150,10 @@ class AIMatchingService:
                 "ai_match": result["match"],
                 "ai_score": result["score"],
                 "ai_reasoning": result["reasoning"],
+                "ai_reasoning_content": result.get("reasoning_content"),
+                "ai_prompt_tokens": result.get("prompt_tokens"),
+                "ai_completion_tokens": result.get("completion_tokens"),
+                "ai_cache_hit_tokens": result.get("cache_hit_tokens"),
                 "ai_evaluated_at": utc_now(),
             },
         )
@@ -2162,6 +2168,10 @@ class AIMatchingService:
                     "ai_score": None,
                     "ai_match": None,
                     "ai_reasoning": None,
+                    "ai_reasoning_content": None,
+                    "ai_prompt_tokens": None,
+                    "ai_completion_tokens": None,
+                    "ai_cache_hit_tokens": None,
                     "ai_evaluated_at": None,
                 }
             },
@@ -2249,6 +2259,10 @@ class AIMatchingService:
                         "ai_match": result["match"],
                         "ai_score": result["score"],
                         "ai_reasoning": result["reasoning"],
+                        "ai_reasoning_content": result.get("reasoning_content"),
+                        "ai_prompt_tokens": result.get("prompt_tokens"),
+                        "ai_completion_tokens": result.get("completion_tokens"),
+                        "ai_cache_hit_tokens": result.get("cache_hit_tokens"),
                         "ai_evaluated_at": utc_now(),
                     },
                 )

@@ -19,6 +19,9 @@ const state = {
   jobDetailPageForceContact: false,
   jobDetailPagePayload: null,
   jobs: [],
+  jobsTotal: 0,
+  jobsPage: 1,
+  jobsLimit: 100,
   workers: [],
   chatHistorySourceFriendId: null,
   chatHistoryPage: 1,
@@ -486,14 +489,17 @@ function buildAiMatchingPanel(job) {
     ? '<span class="status-badge status-ok">匹配</span>'
     : '<span class="status-badge status-error">不匹配</span>';
 
+  const hitRate = buildCacheHitRate(job);
   return `
     <div class="detail-panel">
       <h4>AI 匹配评估 ${matchBadge}</h4>
       <div class="detail-list">
         <div><strong>评分</strong><span>${job.ai_score ?? "-"} / 100</span></div>
         <div><strong>评估时间</strong><span>${escapeHtml(formatDate(job.ai_evaluated_at))}</span></div>
+        ${job.ai_prompt_tokens != null ? `<div><strong>Token 用量</strong><span>入 ${formatTokenCount(job.ai_prompt_tokens)} / 出 ${formatTokenCount(job.ai_completion_tokens)}${hitRate ? ` | 缓存命中 ${escapeHtml(hitRate)}` : ""}</span></div>` : ""}
       </div>
       ${job.ai_reasoning ? `<div style="margin-top:0.5rem"><strong>评估理由</strong><p style="margin-top:0.25rem;white-space:pre-wrap">${escapeHtml(job.ai_reasoning)}</p></div>` : ""}
+      ${job.ai_reasoning_content ? `<details style="margin-top:0.5rem"><summary>思考过程</summary><p style="margin-top:0.25rem;white-space:pre-wrap">${escapeHtml(job.ai_reasoning_content)}</p></details>` : ""}
     </div>`;
 }
 
@@ -763,15 +769,60 @@ function renderDashboardTasks(items) {
   );
 }
 
+function readJobsPageParams() {
+  const params = new URLSearchParams(window.location.search);
+  const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
+  const limitValues = [20, 50, 100, 200, 500, 1000];
+  const rawLimit = parseInt(params.get("limit") || "100", 10) || 100;
+  const limit = limitValues.includes(rawLimit) ? rawLimit : 100;
+  return { page, limit };
+}
+
+function updateJobsPageParams(page, limit) {
+  const params = new URLSearchParams(window.location.search);
+  params.set("page", String(page));
+  params.set("limit", String(limit));
+  const newUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState(null, "", newUrl);
+  state.jobsPage = page;
+  state.jobsLimit = limit;
+}
+
 async function loadJobs() {
-  state.jobs = await fetchJson("/boss/jobs");
+  const { page, limit } = readJobsPageParams();
+  state.jobsPage = page;
+  state.jobsLimit = limit;
+
+  const matchStatus = document.getElementById("jobsMatchStatusFilter")?.value || "";
+  const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (matchStatus) params.set("match_status", matchStatus);
+  if (greeted === "true") params.set("greeted", "true");
+  else if (greeted === "false") params.set("greeted", "false");
+
+  const result = await fetchJson(`/boss/jobs?${params.toString()}`);
+  state.jobs = result.items || [];
+  state.jobsTotal = result.total || 0;
   renderJobsTable();
   return state.jobs;
 }
 
+async function goToJobsPage(page) {
+  page = Math.max(1, Math.min(page, Math.ceil(state.jobsTotal / state.jobsLimit)));
+  updateJobsPageParams(page, state.jobsLimit);
+  await loadJobs();
+}
+
+async function changeJobsLimit(limit) {
+  limit = parseInt(limit, 10) || 100;
+  updateJobsPageParams(1, limit);
+  await loadJobs();
+}
+
 function renderJobsTable() {
   const items = getSortedFilteredJobs();
-  document.getElementById("jobsCount").textContent = `共 ${items.length} 条（全部 ${state.jobs.length} 条）`;
+  const totalPages = Math.max(1, Math.ceil(state.jobsTotal / state.jobsLimit));
+  document.getElementById("jobsCount").textContent = `共 ${items.length} 条（全部 ${state.jobsTotal} 条，第 ${state.jobsPage}/${totalPages} 页）`;
   renderTable(
     "jobsTable",
     [
@@ -801,6 +852,27 @@ function renderJobsTable() {
     ],
     items,
   );
+
+  renderJobsPagination();
+}
+
+function renderJobsPagination() {
+  const paginationBar = document.getElementById("jobsPagination");
+  if (!paginationBar) return;
+  paginationBar.hidden = false;
+
+  const totalPages = Math.max(1, Math.ceil(state.jobsTotal / state.jobsLimit));
+  const page = state.jobsPage;
+
+  document.getElementById("jobsPageInfo").textContent =
+    `共 ${state.jobsTotal} 条职位，第 ${page}/${totalPages} 页`;
+
+  document.getElementById("jobsLimitSelect").value = String(state.jobsLimit);
+  document.getElementById("jobsCurrentPage").textContent = `第 ${page} 页`;
+  document.getElementById("jobsPrevPageButton").disabled = page <= 1;
+  document.getElementById("jobsPrevPageButton").classList.toggle("button-disabled", page <= 1);
+  document.getElementById("jobsNextPageButton").disabled = page >= totalPages;
+  document.getElementById("jobsNextPageButton").classList.toggle("button-disabled", page >= totalPages);
 }
 
 function getSortedFilteredJobs() {
@@ -896,6 +968,19 @@ function renderAiMatchBadge(row) {
     return '<span class="status-badge status-error">不匹配</span>';
   }
   return '<span class="status-badge status-info">未评</span>';
+}
+
+function formatTokenCount(n) {
+  if (n == null) return "-";
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "m";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return String(n);
+}
+
+function buildCacheHitRate(job) {
+  if (job.ai_prompt_tokens == null || job.ai_cache_hit_tokens == null) return null;
+  if (job.ai_prompt_tokens === 0) return null;
+  return (job.ai_cache_hit_tokens / job.ai_prompt_tokens * 100).toFixed(1) + "%";
 }
 
 function renderJobActions(row) {
@@ -1041,6 +1126,31 @@ function renderWorkers() {
       `<strong>今日执行</strong> ${stateLines || "无记录"}`,
     ]);
   }
+
+  renderAiMatchingWorker();
+}
+
+function renderAiMatchingWorker() {
+  const worker = getWorker("ai_matching");
+  const releaseButton = document.getElementById("releaseAiMatchingWorkerButton");
+  if (!worker) {
+    if (document.getElementById("aiMatchingWorkerMeta")) {
+      renderWorkerMeta("aiMatchingWorkerMeta", null, []);
+    }
+    return;
+  }
+  document.getElementById("aiMatchingWorkerIntervalInput").value = String(worker.interval_seconds || 3600);
+  document.getElementById("aiMatchingWorkerBatchSizeInput").value = String(worker.batch_size || 10);
+  if (releaseButton) {
+    releaseButton.disabled = !(worker.enabled && worker.status === "error");
+    releaseButton.classList.toggle("button-disabled", releaseButton.disabled);
+  }
+  renderWorkerMeta("aiMatchingWorkerMeta", worker, [
+    `<strong>状态</strong> ${renderStatusBadge(worker.enabled ? worker.status : "idle")} ${worker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
+    `<strong>下一次执行</strong> ${escapeHtml(formatDate(worker.next_run_at))}`,
+    `<strong>最近错误</strong> ${escapeHtml(worker.last_error || "-")}`,
+    `<strong>最近结果</strong> ${escapeHtml(JSON.stringify(worker.last_result_summary || {}))}`,
+  ]);
 }
 
 async function loadWorkers() {
@@ -1659,6 +1769,13 @@ function collectScrollAndCollectWorkerPayload() {
   };
 }
 
+function collectAiMatchingWorkerPayload() {
+  return {
+    interval_seconds: Math.max(1, Number(document.getElementById("aiMatchingWorkerIntervalInput").value || 3600)),
+    batch_size: Math.max(1, Number(document.getElementById("aiMatchingWorkerBatchSizeInput").value || 10)),
+  };
+}
+
 async function saveSearchWorkerConfig() {
   clearError();
   setButtonBusy("saveSearchWorkerButton", true, "保存中");
@@ -1821,6 +1938,61 @@ async function releaseScrollAndCollectWorker() {
     showNotice("滚动采集 worker 已解除限制", 3000);
   } finally {
     setButtonBusy("releaseScrollAndCollectWorkerButton", false);
+  }
+}
+
+async function saveAiMatchingWorkerConfig() {
+  clearError();
+  setButtonBusy("saveAiMatchingWorkerButton", true, "保存中");
+  try {
+    await fetchJson("/boss/workers/ai_matching", {
+      method: "PUT",
+      body: JSON.stringify(collectAiMatchingWorkerPayload()),
+    });
+    await loadWorkers();
+    showNotice("AI匹配 worker 配置已保存", 3000);
+  } finally {
+    setButtonBusy("saveAiMatchingWorkerButton", false);
+  }
+}
+
+async function startAiMatchingWorker() {
+  clearError();
+  setButtonBusy("startAiMatchingWorkerButton", true, "启动中");
+  try {
+    await fetchJson("/boss/workers/ai_matching", {
+      method: "PUT",
+      body: JSON.stringify(collectAiMatchingWorkerPayload()),
+    });
+    await fetchJson("/boss/workers/ai_matching/start", { method: "POST" });
+    await loadWorkers();
+    showNotice("AI匹配 worker 已启动", 3000);
+  } finally {
+    setButtonBusy("startAiMatchingWorkerButton", false);
+  }
+}
+
+async function stopAiMatchingWorker() {
+  clearError();
+  setButtonBusy("stopAiMatchingWorkerButton", true, "停止中");
+  try {
+    await fetchJson("/boss/workers/ai_matching/stop", { method: "POST" });
+    await loadWorkers();
+    showNotice("AI匹配 worker 已停止", 3000);
+  } finally {
+    setButtonBusy("stopAiMatchingWorkerButton", false);
+  }
+}
+
+async function releaseAiMatchingWorker() {
+  clearError();
+  setButtonBusy("releaseAiMatchingWorkerButton", true, "解除中");
+  try {
+    await fetchJson("/boss/workers/ai_matching/release", { method: "POST" });
+    await loadWorkers();
+    showNotice("AI匹配 worker 已解除限制", 3000);
+  } finally {
+    setButtonBusy("releaseAiMatchingWorkerButton", false);
   }
 }
 
@@ -2056,7 +2228,7 @@ async function loadView(viewId, params = {}) {
       await Promise.all([loadSearchOptions(), loadCurrentSearchResults(), loadWorkers()]);
       break;
     case "jobs":
-      await loadJobs();
+      await Promise.all([loadJobs(), loadWorkers()]);
       break;
     case "tasks":
       await loadTasks();
@@ -2237,11 +2409,39 @@ function bindEvents() {
     .getElementById("releaseScrollAndCollectWorkerButton")
     .addEventListener("click", () => releaseScrollAndCollectWorker().catch((error) => showError(error.message)));
   document
+    .getElementById("saveAiMatchingWorkerButton")
+    .addEventListener("click", () => saveAiMatchingWorkerConfig().catch((error) => showError(error.message)));
+  document
+    .getElementById("startAiMatchingWorkerButton")
+    .addEventListener("click", () => startAiMatchingWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("stopAiMatchingWorkerButton")
+    .addEventListener("click", () => stopAiMatchingWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("releaseAiMatchingWorkerButton")
+    .addEventListener("click", () => releaseAiMatchingWorker().catch((error) => showError(error.message)));
+  document
     .getElementById("refreshJobsButton")
     .addEventListener("click", () => loadJobs().catch((error) => showError(error.message)));
 
-  ["jobsSortSelect", "jobsMatchStatusFilter", "jobsGreetedFilter", "jobsAiMatchFilter"].forEach((id) => {
+  document
+    .getElementById("jobsPrevPageButton")
+    .addEventListener("click", () => goToJobsPage(state.jobsPage - 1).catch((error) => showError(error.message)));
+  document
+    .getElementById("jobsNextPageButton")
+    .addEventListener("click", () => goToJobsPage(state.jobsPage + 1).catch((error) => showError(error.message)));
+  document
+    .getElementById("jobsLimitSelect")
+    .addEventListener("change", (event) => changeJobsLimit(event.target.value).catch((error) => showError(error.message)));
+
+  ["jobsSortSelect", "jobsAiMatchFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", renderJobsTable);
+  });
+  ["jobsMatchStatusFilter", "jobsGreetedFilter"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      updateJobsPageParams(1, state.jobsLimit);
+      loadJobs().catch((error) => showError(error.message));
+    });
   });
   ["jobsCityFilter", "jobsKeywordFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", renderJobsTable);

@@ -47,11 +47,22 @@ class JobLeadRead(TimestampedSchema):
     ai_score: int | None = None
     ai_match: bool | None = None
     ai_reasoning: str | None = None
+    ai_reasoning_content: str | None = None
+    ai_prompt_tokens: int | None = None
+    ai_completion_tokens: int | None = None
+    ai_cache_hit_tokens: int | None = None
     ai_evaluated_at: datetime | None = None
 
 
 class JobLeadDetailRead(JobLeadRead):
     pass
+
+
+class JobListResponse(BaseModel):
+    items: list[JobLeadRead]
+    total: int
+    page: int
+    limit: int
 
 
 class JobDetailResponse(BaseModel):
