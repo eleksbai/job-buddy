@@ -44,6 +44,7 @@ from job_buddy.models import (
     JobCollectionRecord,
     JobCollectionTrace,
     JobLead,
+    AI_MATCHING_TIMEOUT,
     SCROLL_AND_COLLECT_TIMEOUT,
     TASK_TIMEOUT,
     TaskStatus,
@@ -414,6 +415,8 @@ class JobCollectionService:
                     job_active_time=detail_result.job_active_time or None,
                     title=detail_result.job.title or source_job_id,
                     company=detail_result.company.name or "",
+                    scale=detail_result.company.scale or None,
+                    industry=detail_result.company.industry or None,
                     city=detail_result.job.city or None,
                     salary=detail_result.job.salary or None,
                     experience=detail_result.job.experience or None,
@@ -456,6 +459,8 @@ class JobCollectionService:
             {
                 "title": detail_result.job.title or job.title,
                 "company": detail_result.company.name or job.company,
+                "scale": detail_result.company.scale or job.scale,
+                "industry": detail_result.company.industry or job.industry,
                 "city": detail_result.job.city or job.city,
                 "salary": detail_result.job.salary or job.salary,
                 "experience": detail_result.job.experience or job.experience,
@@ -929,6 +934,8 @@ class JobCollectionService:
                     job_active_time=detail.job_active_time or None,
                     title=detail.job.title or detail.job_id,
                     company=detail.company.name or "",
+                    scale=detail.company.scale or None,
+                    industry=detail.company.industry or None,
                     city=detail.job.city or None,
                     salary=detail.job.salary or None,
                     experience=detail.job.experience or None,
@@ -957,6 +964,8 @@ class JobCollectionService:
                     "job_active_time": detail.job_active_time if detail.job_active_time is not None else existing.job_active_time,
                     "title": detail.job.title or existing.title,
                     "company": detail.company.name or existing.company,
+                    "scale": detail.company.scale or existing.scale,
+                    "industry": detail.company.industry or existing.industry,
                     "city": detail.job.city or existing.city,
                     "salary": detail.job.salary or existing.salary,
                     "experience": detail.job.experience or existing.experience,
@@ -2194,7 +2203,7 @@ class AIMatchingService:
         try:
             await asyncio.wait_for(
                 self._do_evaluate_batch(task, limit),
-                timeout=TASK_TIMEOUT,
+                timeout=AI_MATCHING_TIMEOUT,
             )
         except asyncio.TimeoutError:
             current = await _get_model(self.tasks, GreetingTask, task.id)
@@ -2207,7 +2216,7 @@ class AIMatchingService:
                 task.id,
                 {
                     "status": TaskStatus.FAILED,
-                    "error_message": f"任务超时（{TASK_TIMEOUT}s），卡在步骤: {step}",
+                    "error_message": f"任务超时（{AI_MATCHING_TIMEOUT}s），卡在步骤: {step}",
                     "finished_at": utc_now(),
                 },
             )
@@ -2216,6 +2225,7 @@ class AIMatchingService:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return updated
         except Exception as exc:
+            logger.exception("AI matching batch failed")
             await _update_model(
                 self.tasks,
                 GreetingTask,
@@ -2237,7 +2247,7 @@ class AIMatchingService:
         return updated
 
     async def _do_evaluate_batch(self, task: GreetingTask, limit: int) -> None:
-        cursor = self.jobs.find({"ai_match": None}).limit(limit)
+        cursor = self.jobs.find({"ai_match": None, "detail_fetched_at": {"$ne": None}}).sort("updated_at", -1).limit(limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
         resume_text, criteria_text = self._load_resume_and_criteria()

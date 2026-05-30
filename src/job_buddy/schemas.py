@@ -28,6 +28,8 @@ class JobLeadRead(TimestampedSchema):
     job_active_time: int | None = None
     title: str
     company: str
+    scale: str | None = None
+    industry: str | None = None
     city: str | None = None
     salary: str | None = None
     experience: str | None = None

@@ -41,6 +41,7 @@ class DocumentModel(BaseModel):
 
 TASK_TIMEOUT = 300
 SCROLL_AND_COLLECT_TIMEOUT = 1800  # 30 minutes
+AI_MATCHING_TIMEOUT = 1800  # 30 minutes
 
 
 class TaskStatus(StrEnum):
@@ -62,6 +63,8 @@ class JobLead(DocumentModel):
     job_active_time: int | None = None
     title: str
     company: str
+    scale: str | None = None
+    industry: str | None = None
     city: str | None = None
     salary: str | None = None
     experience: str | None = None

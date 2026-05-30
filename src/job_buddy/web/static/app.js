@@ -229,7 +229,7 @@ function renderJobDetailAction(row) {
   if (!sourceJobId) {
     return "-";
   }
-  return `<button type="button" class="button-link" data-job-detail="${escapeHtml(sourceJobId)}">查看详情</button>`;
+  return `<a href="#job-detail/${encodeURIComponent(sourceJobId)}" target="_blank" rel="noopener noreferrer" class="button-link">查看详情</a>`;
 }
 
 function renderDetailStateBadge(fetchedAt) {
@@ -240,6 +240,10 @@ function renderDetailStateBadge(fetchedAt) {
 
 function formatJson(value) {
   return escapeHtml(JSON.stringify(value ?? {}, null, 2));
+}
+
+function getCompanyScale(row) {
+  return row.scale || null;
 }
 
 function setActiveView(viewId) {
@@ -828,12 +832,11 @@ function renderJobsTable() {
     [
       { label: "职位", render: (row) => escapeHtml(row.title) },
       { label: "公司", render: (row) => escapeHtml(row.company) },
-      { label: "城市", render: (row) => escapeHtml(row.city || "-") },
+      { label: "规模", render: (row) => escapeHtml(getCompanyScale(row) || "-") },
+      { label: "行业", render: (row) => escapeHtml(row.industry || "-") },
       { label: "薪资", render: (row) => escapeHtml(row.salary || "-") },
       { label: "经验", render: (row) => escapeHtml(row.experience || "-") },
-      { label: "在线状态", render: (row) => escapeHtml(row.boss_online === true ? "在线" : row.boss_online === false ? "离线" : "-") },
       { label: "活跃情况", render: (row) => escapeHtml(row.boss_active_text || "-") },
-      { label: "岗位活跃时间", render: (row) => escapeHtml(row.job_active_time ? formatDate(row.job_active_time) : "-") },
       { label: "搜索次数", render: (row) => escapeHtml(String(row.search_count ?? 0)) },
       { label: "最近搜索", render: (row) => escapeHtml(formatDate(row.last_searched_at || row.last_seen_at)) },
       { label: "详情状态", render: (row) => renderDetailStateBadge(row.detail_fetched_at) },
@@ -848,7 +851,6 @@ function renderJobsTable() {
       },
       { label: "AI评分", render: (row) => renderAiScore(row) },
       { label: "AI匹配", render: (row) => renderAiMatchBadge(row) },
-      { label: "操作", render: (row) => renderJobActions(row) },
     ],
     items,
   );
@@ -2265,17 +2267,6 @@ function bindEvents() {
   });
 
   document.addEventListener("click", (event) => {
-    const detailButton = event.target.closest("[data-job-detail]");
-    if (detailButton) {
-      event.preventDefault();
-      state.jobDetailPageName = "";
-      state.jobDetailPageSourceFriendId = "";
-      state.jobDetailPageSecurityId = "";
-      state.jobDetailPageForceContact = false;
-      navigateTo("job-detail", { sourceJobId: detailButton.dataset.jobDetail });
-      return;
-    }
-
     const copyButton = event.target.closest("[data-copy-link]");
     if (copyButton) {
       event.preventDefault();
