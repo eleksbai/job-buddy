@@ -1108,24 +1108,23 @@ function renderWorkers() {
       scrollAndCollectReleaseButton.disabled = !(scrollAndCollectWorker.enabled && scrollAndCollectWorker.status === "error");
       scrollAndCollectReleaseButton.classList.toggle("button-disabled", scrollAndCollectReleaseButton.disabled);
     }
-    const daily = scrollAndCollectWorker.last_result_summary?.daily_executions || {};
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const todayState = daily[todayStr] || {};
-    const stateLines = (scrollAndCollectWorker.query?.schedule_times || [])
-      .map((t) => {
-        const s = todayState[t];
-        const label = s === "executed" ? "已执行" : s === "skipped" ? "已放弃" : s === "failed" ? "失败" : "待执行";
-        return `${t}: ${label}`;
-      })
-      .join(" | ");
+    const summary = scrollAndCollectWorker.last_result_summary || {};
+    const statsLine = [
+      summary.scroll_collected ? `列表 ${summary.scroll_collected}` : null,
+      summary.detail_collected != null ? `详情 ${summary.detail_collected}` : null,
+      summary.detail_created != null ? `新建 ${summary.detail_created}` : null,
+      summary.detail_updated != null ? `更新 ${summary.detail_updated}` : null,
+      summary.detail_skipped != null ? `跳过 ${summary.detail_skipped}` : null,
+    ].filter(Boolean).join(" / ") || "无记录";
     renderWorkerMeta("scrollAndCollectWorkerMeta", scrollAndCollectWorker, [
       `<strong>状态</strong> ${renderStatusBadge(scrollAndCollectWorker.enabled ? scrollAndCollectWorker.status : "idle")} ${scrollAndCollectWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
       `<strong>最大采集数</strong> ${escapeHtml(scrollAndCollectWorker.batch_size || 100)}`,
       `<strong>时间点</strong> ${escapeHtml((scrollAndCollectWorker.query?.schedule_times || []).join(", "))}`,
       `<strong>随机偏移</strong> ±${escapeHtml(scrollAndCollectWorker.query?.schedule_jitter_minutes ?? 30)} 分钟`,
       `<strong>下次执行</strong> ${escapeHtml(formatDate(scrollAndCollectWorker.next_run_at))}`,
+      `<strong>最近完成</strong> ${escapeHtml(formatDate(scrollAndCollectWorker.last_finished_at))}`,
+      `<strong>最近统计</strong> ${statsLine}`,
       `<strong>最近错误</strong> ${escapeHtml(scrollAndCollectWorker.last_error || "-")}`,
-      `<strong>今日执行</strong> ${stateLines || "无记录"}`,
     ]);
   }
 

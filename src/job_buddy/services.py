@@ -1529,18 +1529,56 @@ class ScrollAndCollectWorker(BaseWorker):
         offset_minutes = rng.randint(-jitter_minutes, jitter_minutes)
         return datetime.combine(date_val, base_time, tzinfo=_CST) + timedelta(minutes=offset_minutes)
 
-    def _daily_state(self, worker: WorkerConfig, date_str: str) -> dict[str, str]:
-        return worker.last_result_summary.get("daily_executions", {}).get(date_str, {})
+    def _calculate_next_run(self, worker: WorkerConfig) -> datetime:
+        """根据调度时间节点和最近完成时间计算下次执行时间。
 
-    async def _mark_today(self, time_str: str, state: str) -> None:
+        策略：
+        1. 遍历 schedule_times，对每个节点计算窗口下界 = 节点时间 - jitter_minutes
+        2. 若当前时间已过窗口下界且 last_finished_at < 窗口下界 → 立即执行
+        3. 若 last_finished_at >= 窗口下界 → 该节点已执行，跳过
+        4. 当前时间未到窗口下界 → 返回该节点的随机偏移时间
+        5. 所有节点已执行 → 返回明天第一个节点的随机偏移时间
+        """
+        now = datetime.now(tz=_CST)
+        schedule_times: list[str] = worker.query.get("schedule_times", ["09:00", "14:00", "18:00"])
+        jitter_minutes = max(0, int(worker.query.get("schedule_jitter_minutes", 60)))
+        last_finished = worker.last_finished_at
+        today = now.date()
+
+        for time_str in schedule_times:
+            base = datetime.strptime(time_str, "%H:%M").time()
+            base_dt = datetime.combine(today, base, tzinfo=_CST)
+            window_start = base_dt - timedelta(minutes=jitter_minutes)
+
+            if now >= window_start:
+                if last_finished is not None:
+                    last_finished_cst = last_finished.replace(tzinfo=timezone.utc).astimezone(_CST)
+                    if last_finished_cst >= window_start:
+                        continue
+                return now
+            else:
+                return self._actual_time(time_str, today, jitter_minutes)
+
+        tomorrow = today + timedelta(days=1)
+        return self._actual_time(schedule_times[0], tomorrow, jitter_minutes)
+
+    async def start_worker(self) -> WorkerConfig:
+        current = await self.get_worker()
+        self.validate_before_start(current)
+        return await self._update_worker_model({
+            "enabled": True, "status": "idle",
+            "next_run_at": self._calculate_next_run(current),
+            "last_error": None,
+        })
+
+    async def release_worker(self) -> WorkerConfig:
         worker = await self.get_worker()
-        date_str = datetime.now(tz=_CST).date().isoformat()
-        daily_executions = dict(worker.last_result_summary.get("daily_executions", {}))
-        day_state = dict(daily_executions.get(date_str, {}))
-        day_state[time_str] = state
-        daily_executions[date_str] = day_state
-        await self._update_worker_model({
-            "last_result_summary": {**dict(worker.last_result_summary), "daily_executions": daily_executions}
+        if not worker.enabled:
+            raise HTTPException(status_code=400, detail="未启动的 worker 无需解除限制")
+        return await self._update_worker_model({
+            "status": "idle",
+            "next_run_at": self._calculate_next_run(worker),
+            "last_error": None,
         })
 
     async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
@@ -1558,74 +1596,32 @@ class ScrollAndCollectWorker(BaseWorker):
             try:
                 worker = await self.get_worker()
                 if not worker.enabled:
-                    try:
-                        await asyncio.wait_for(self._stopped.wait(), timeout=10)
-                    except asyncio.TimeoutError:
-                        pass
+                    await asyncio.wait_for(self._stopped.wait(), timeout=10)
                     continue
 
+                next_run = self._calculate_next_run(worker)
                 now = datetime.now(tz=_CST)
-                schedule_times = worker.query.get("schedule_times", ["09:00", "14:00", "18:00"])
-                jitter_minutes = max(0, worker.query.get("schedule_jitter_minutes", 30))
-                today_str = now.date().isoformat()
-                daily_state = self._daily_state(worker, today_str)
-
-                handled = False
-                for time_str in schedule_times:
-                    if daily_state.get(time_str):
-                        continue
-                    actual = self._actual_time(time_str, now.date(), jitter_minutes)
-                    if now >= actual:
-                        running = await self.tasks.count_documents(
-                            {"status": TaskStatus.RUNNING, "task_type": "scroll_and_detail"}
-                        ) > 0
-                        if running:
-                            logger.warning(
-                                "worker %s skip %s, another scroll_and_detail task running",
-                                self.worker_name,
-                                time_str,
-                            )
-                            await self._mark_today(time_str, "skipped")
-                        else:
-                            try:
-                                await self.execute()
-                                await self._mark_today(time_str, "executed")
-                            except Exception:
-                                logger.exception("worker %s run failed", self.worker_name)
-                                await self._mark_today(time_str, "failed")
-                        handled = True
-                        break
-
-                if handled:
-                    await asyncio.sleep(5)
-                    continue
-
-                next_wake = None
-                for time_str in schedule_times:
-                    if daily_state.get(time_str):
-                        continue
-                    actual = self._actual_time(time_str, now.date(), jitter_minutes)
-                    if next_wake is None or actual < next_wake:
-                        next_wake = actual
-
-                if next_wake is None:
-                    tomorrow = now.date() + timedelta(days=1)
-                    first_time = schedule_times[0]
-                    next_wake = self._actual_time(first_time, tomorrow, jitter_minutes)
-
-                await self._update_worker_model({"next_run_at": next_wake})
-
-                wait_seconds = max(5, (next_wake - now).total_seconds())
-                logger.info(
-                    "worker %s next wake in %.0fs at %s",
-                    self.worker_name,
-                    wait_seconds,
-                    next_wake.isoformat(),
-                )
-                try:
-                    await asyncio.wait_for(self._stopped.wait(), timeout=wait_seconds)
-                except asyncio.TimeoutError:
-                    pass
+                if now >= next_run:
+                    try:
+                        await self.execute()
+                    except Exception:
+                        logger.exception("worker %s run failed", self.worker_name)
+                    # complete_execution 覆盖了 next_run_at，用同方法重新计算写入
+                    worker = await self.get_worker()
+                    await self._update_worker_model({
+                        "next_run_at": self._calculate_next_run(worker),
+                    })
+                else:
+                    wait = max(5, (next_run - now).total_seconds())
+                    logger.info(
+                        "worker %s next wake in %.0fs at %s",
+                        self.worker_name,
+                        wait,
+                        next_run.isoformat(),
+                    )
+                    await asyncio.wait_for(self._stopped.wait(), timeout=wait)
+            except asyncio.TimeoutError:
+                pass
             except Exception:
                 logger.exception("worker loop failed: worker=%s", self.worker_name)
                 await asyncio.sleep(60)
