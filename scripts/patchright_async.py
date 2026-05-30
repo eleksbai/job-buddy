@@ -53,6 +53,13 @@ async def add_listener(page):
     page.on("response", on_response)
 
 
+async def save_page(page, filename: str = "patchright_async.html") -> None:
+    output = Path("data") / filename
+    content = await  page.content()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content, encoding="utf-8")
+
+
 async def main() -> None:
     profile_dir = PROFILE_DIR.resolve()
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -97,5 +104,5 @@ async def main() -> None:
     # await asyncio.Event().wait()
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# if __name__ == "__main__":
+#     asyncio.run(main())

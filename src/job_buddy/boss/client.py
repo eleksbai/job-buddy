@@ -3,7 +3,7 @@ from patchright.async_api import Response
 import asyncio
 import traceback
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 import os
 from pathlib import Path
@@ -911,9 +911,7 @@ class BossClient:
         logger.info("BossClient scroll_and_collect_details start")
         await self.check_page_health()
 
-        raw_list_items: list[dict[str, Any]] = []
         seen_list_job_ids: set[str] = set()
-        seen_detail_job_ids: set[str] = set()
         pending_list_responses: set[asyncio.Task[None]] = set()
         pending_detail_responses: set[asyncio.Task[None]] = set()
 
@@ -943,7 +941,6 @@ class BossClient:
                             if not job_id or job_id in seen_list_job_ids:
                                 continue
                             seen_list_job_ids.add(job_id)
-                            raw_list_items.append(raw_item)
                             normalized = self._normalize_raw_job(raw_item)
                             search_item = self._search_item_from_payload(normalized)
                             await repository.save_scroll_record(task_id, search_item)
@@ -1008,9 +1005,6 @@ class BossClient:
             await self.goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
             await asyncio.sleep(5)
-            # 跳转前对旧数据清空
-            raw_list_items.clear()
-            await asyncio.sleep(5)
             if tab_index == 0:
                 await self.page.locator("div.c-expect-select > a.synthesis").click()
             else:
@@ -1033,40 +1027,38 @@ class BossClient:
 
             for _ in range(30):
                 titles = self.page.locator("div.job-info > div.job-title")
+                # detail_links = self.page.locator('a[href*="job_detail"]')
+
                 count = await titles.count()
-                total_items = len(raw_list_items)
                 logger.info(
-                    "scroll_and_collect_details round start, titles=%d total_items=%d cursor=%d",
+                    "scroll_and_collect_details round start, titles=%d cursor=%d",
                     count,
-                    total_items,
                     cursor,
                 )
 
-                # Build skip-set from cursor onwards using source_job_id from list data
-                clickable_count = min(total_items, count)
-                if count> total_items:
-                    logger.warning("maybe loss raw item data! count=%d >  total_items=%d", count, total_items)
-                if cursor < clickable_count:
-                    pending_ids = [
-                        str(raw_list_items[i].get("encryptJobId") or "").strip()
-                        for i in range(cursor, clickable_count)
-                    ]
-                    assert len(pending_ids)  == clickable_count-cursor
-                    pending_ids = [jid for jid in pending_ids if jid]
-                    skip_ids = await repository.get_source_job_ids_with_recent_details(
-                        pending_ids
-                    )
-                else:
-                    skip_ids: set[str] = set()
 
-                # Click non-skipped jobs from cursor position
+
                 new_clicked = 0
-                while cursor < clickable_count and cursor < max_jobs:
-                    item = raw_list_items[cursor]
-                    job_id = str(item.get("encryptJobId") or "").strip()
-                    if not job_id or job_id in skip_ids:
+                while cursor < count and cursor < max_jobs:
+                    detail_link = titles.nth(cursor).locator('a[href*="job_detail"]')
+                    href = await detail_link.get_attribute("href") or ""
+                    match = re.search(r'/job_detail/([^./]+)\.html', href)
+                    job_id = match.group(1) if match else ""
+
+                    should_skip = not job_id
+                    if not should_skip:
+                        since = datetime.now(tz=UTC) - timedelta(hours=24)
+                        existing = await repository.jobs.find_one({
+                            "source_job_id": job_id,
+                            "detail_fetched_at": {"$gte": since},
+                        })
+                        if existing:
+                            should_skip = True
+
+                    if should_skip:
                         cursor += 1
                         continue
+
                     try:
                         await titles.nth(cursor).click()
                         new_clicked += 1

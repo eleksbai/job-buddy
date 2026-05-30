@@ -106,6 +106,14 @@ class FakeNthLocator:
     async def click(self) -> None:
         return None
 
+    def locator(self, _selector: str):
+        return self
+
+    async def get_attribute(self, name: str) -> str | None:
+        if "job_detail" in self._selector:
+            return f"https://www.zhipin.com/job_detail/job-{self._index}.html?securityId=test"
+        return None
+
     async def evaluate(self, script: str, *args):
         _ = script, args
         if "closest" in script:
