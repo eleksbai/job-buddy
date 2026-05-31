@@ -1277,15 +1277,13 @@ class BaseWorker(ABC):
         raise NotImplementedError
 
     async def sync_default_on_startup(self) -> WorkerConfig:
-        await self.ensure_default()
-        return await self._update_worker_model(
-            {
-                "enabled": False,
-                "status": "idle",
-                "next_run_at": None,
-                "last_error": None,
-            }
-        )
+        current = await self.ensure_default()
+        updates: dict[str, Any] = {"status": "idle", "last_error": None}
+        if current.enabled:
+            updates["next_run_at"] = utc_now()
+        else:
+            updates["next_run_at"] = None
+        return await self._update_worker_model(updates)
 
     async def ensure_default(self) -> WorkerConfig:
         payload = await self.worker_configs.find_one({"worker_name": self.worker_name})
