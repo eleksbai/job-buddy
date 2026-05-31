@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ai_model: str = Field(default="gpt-3.5-turbo", alias="AI_MODEL")
     ai_resume_path: str = Field(default="data/resume.md", alias="AI_RESUME_PATH")
     ai_criteria_path: str = Field(default="data/matching_criteria.md", alias="AI_CRITERIA_PATH")
+    ai_conversation_style_path: str = Field(default="data/conversation_style.md", alias="AI_CONVERSATION_STYLE_PATH")
     ai_request_delay_seconds: float = Field(default=1.0, alias="AI_REQUEST_DELAY_SECONDS")
     ai_temperature: float = Field(default=0.1, alias="AI_TEMPERATURE")
 

@@ -2084,12 +2084,15 @@ class AIMatchingService:
     def __init__(self, database: AsyncIOMotorDatabase, settings: Settings) -> None:
         self.jobs = database["job_leads"]
         self.tasks = database["greeting_tasks"]
+        self.friends = database["friend_records"]
         self.settings = settings
         self._client = None
         self._resume_mtime: float | None = None
         self._resume_cache: str | None = None
         self._criteria_mtime: float | None = None
         self._criteria_cache: str | None = None
+        self._conversation_style_mtime: float | None = None
+        self._conversation_style_cache: str | None = None
 
     @property
     def client(self):
@@ -2125,6 +2128,18 @@ class AIMatchingService:
             self._criteria_mtime = criteria_mtime
 
         return self._resume_cache, self._criteria_cache
+
+    def _load_conversation_style(self) -> str:
+        style_path = self._resolve_path(self.settings.ai_conversation_style_path)
+        style_mtime = style_path.stat().st_mtime if style_path.exists() else 0
+
+        if self._conversation_style_cache is None or self._conversation_style_mtime != style_mtime:
+            from job_buddy.ai.job_evaluation import _load_markdown
+
+            self._conversation_style_cache = _load_markdown(style_path)
+            self._conversation_style_mtime = style_mtime
+
+        return self._conversation_style_cache
 
     async def evaluate_single_job(self, source_job_id: str) -> dict:
         """Evaluate a single job and persist the result to the database."""
@@ -2182,6 +2197,35 @@ class AIMatchingService:
             },
         )
         return result.modified_count
+
+    async def generate_message(self, source_job_id: str, context: str | None = None) -> dict:
+        """Generate an AI-crafted chat message for the given job's BOSS."""
+        payload = await self.jobs.find_one({"source_job_id": source_job_id})
+        if payload is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="岗位不存在")
+
+        job = JobLead.from_mongo(payload)
+
+        if not job.detail_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="岗位暂无详情数据，请先采集职位详情",
+            )
+
+        resume_text, criteria_text = self._load_resume_and_criteria()
+        conversation_style_text = self._load_conversation_style()
+
+        chat_history: list[dict[str, Any]] = []
+        if job.source_friend_id:
+            friend = await self.friends.find_one({"source_friend_id": job.source_friend_id})
+            if friend:
+                chat_history = friend.get("messages") or []
+
+        from job_buddy.ai.job_evaluation import build_message_prompt
+
+        prompt = build_message_prompt(job, resume_text, criteria_text, conversation_style_text, chat_history, context)
+        result = await self.client.generate_message(prompt)
+        return result
 
     async def run_evaluation_task(self, limit: int = 50) -> GreetingTask:
         """Create a GreetingTask and evaluate unevaluated jobs one by one."""

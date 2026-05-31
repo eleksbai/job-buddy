@@ -13,6 +13,8 @@ from job_buddy.deps import (
     get_system_service,
 )
 from job_buddy.schemas import (
+    AIMessageRequest,
+    AIMessageResponse,
     AuthStatusResponse,
     DoctorResponse,
     FriendMessagesResponse,
@@ -143,6 +145,17 @@ async def clear_ai_marks(
     """Clear all AI evaluation marks and scores."""
     count = await service.clear_all_marks()
     return {"cleared_count": count}
+
+
+@router.post("/jobs/{source_job_id}/ai/message", response_model=AIMessageResponse, tags=["jobs"], operation_id="generate_ai_message")
+async def generate_ai_message(
+    source_job_id: str,
+    payload: AIMessageRequest,
+    service: AIMatchingService = Depends(get_ai_matching_service),
+) -> AIMessageResponse:
+    """Generate an AI-crafted chat message for the job's BOSS."""
+    result = await service.generate_message(source_job_id, context=payload.context)
+    return AIMessageResponse(**result)
 
 
 @router.post("/tasks/search", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_search_task")

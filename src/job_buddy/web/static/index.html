@@ -474,9 +474,11 @@
             <textarea id="jobDetailMessageInput" rows="3" placeholder="输入要发送的消息"></textarea>
             <div class="chat-compose-actions">
               <span id="jobDetailSendHint" class="hint-text">发送普通聊天消息，需要已存在会话记录。</span>
+              <button id="jobDetailAiMessageButton" class="button-secondary" type="button" onclick="if(typeof generateAiMessageForJobDetail!=='function'){alert('JS缓存未更新，请强制刷新页面 Ctrl+Shift+R');return;}generateAiMessageForJobDetail().catch(function(e){showError(e.message||'AI 消息生成失败')});return false;">AI 消息</button>
               <button id="jobDetailSendMessageButton">发送消息</button>
             </div>
           </div>
+          <div id="jobDetailAiMessageInfo" class="ai-message-info" hidden></div>
 
           <div class="panel-card" id="jobDetailAiPanelCard">
             <div id="jobDetailAiPanel"></div>

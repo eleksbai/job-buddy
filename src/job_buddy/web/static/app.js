@@ -1485,6 +1485,8 @@ function renderJobDetailPageDetail(payload) {
   document.getElementById("jobDetailSyncChatButton").hidden = contact !== true;
   document.getElementById("jobDetailMessageInput").hidden = contact !== true;
   document.getElementById("jobDetailSendMessageButton").hidden = contact !== true;
+  document.getElementById("jobDetailAiMessageButton").hidden = contact !== true;
+  clearAiMessageInfo();
   if (contact !== true) {
     renderJobDetailChatUnavailable();
   }
@@ -1525,6 +1527,74 @@ async function syncJobDetailPageDetail() {
     showNotice("职位详情已同步", 3000);
   } finally {
     setButtonBusy("jobDetailSyncDetailButton", false);
+  }
+}
+
+async function generateAiMessageForJobDetail() {
+  if (!canLoadJobDetailChat()) {
+    showError("当前未建立沟通，无法生成 AI 消息");
+    return;
+  }
+  const sourceJobId = state.jobDetailPageSourceJobId;
+  const sourceFriendId = getCurrentJobDetailSourceFriendId();
+  if (!sourceJobId) {
+    showError("缺少职位主键");
+    return;
+  }
+
+  clearError();
+  showNotice("正在同步聊天记录并生成 AI 消息…", 8000);
+  setButtonBusy("jobDetailAiMessageButton", true, "生成中");
+  try {
+    try {
+      await fetchJson("/boss/friends/sync", { method: "POST" });
+      const chatPayload = await fetchJson(
+        `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=1&count=100`
+      );
+      renderJobDetailPageChat(chatPayload);
+    } catch (syncError) {
+      console.warn("Chat sync failed, continuing with cached messages:", syncError);
+    }
+
+    const input = document.getElementById("jobDetailMessageInput");
+    const result = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/ai/message`, {
+      method: "POST",
+      body: JSON.stringify({ context: input.value || null }),
+    });
+    if (result.message) {
+      input.value = result.message;
+    }
+    renderAiMessageInfo(result);
+    showNotice("AI 消息已生成，可修改后发送", 5000);
+  } catch (error) {
+    showError(error.message || "AI 消息生成失败");
+    clearAiMessageInfo();
+  } finally {
+    setButtonBusy("jobDetailAiMessageButton", false);
+  }
+}
+
+function renderAiMessageInfo(result) {
+  const container = document.getElementById("jobDetailAiMessageInfo");
+  if (!container) return;
+  const hitRate = result.prompt_tokens != null && result.cache_hit_tokens != null && result.prompt_tokens > 0
+    ? ` | 缓存命中 ${(result.cache_hit_tokens / result.prompt_tokens * 100).toFixed(1)}%`
+    : "";
+  container.innerHTML = [
+    result.reasoning ? `<div><span class="label">生成理由</span><p style="margin-top:0.25rem;white-space:pre-wrap">${escapeHtml(result.reasoning)}</p></div>` : "",
+    result.reasoning_content ? `<details style="margin-top:0.5rem"><summary>思考过程</summary><p style="margin-top:0.25rem;white-space:pre-wrap">${escapeHtml(result.reasoning_content)}</p></details>` : "",
+    result.prompt_tokens != null
+      ? `<hr class="divider"><div><span class="label">Token 用量</span> 入 ${escapeHtml(formatTokenCount(result.prompt_tokens))} / 出 ${escapeHtml(formatTokenCount(result.completion_tokens))}${hitRate}</div>`
+      : "",
+  ].filter(Boolean).join("\n");
+  container.hidden = !(result.reasoning || result.reasoning_content || result.prompt_tokens != null);
+}
+
+function clearAiMessageInfo() {
+  const container = document.getElementById("jobDetailAiMessageInfo");
+  if (container) {
+    container.innerHTML = "";
+    container.hidden = true;
   }
 }
 
@@ -1579,6 +1649,7 @@ async function sendMessageForJobDetail() {
       body: JSON.stringify({ content }),
     });
     input.value = "";
+    clearAiMessageInfo();
     const payload = await fetchJson(
       `/boss/friends/${encodeURIComponent(sourceFriendId)}/messages?page=1&count=100`
     );
@@ -2467,6 +2538,9 @@ function bindEvents() {
     .getElementById("jobDetailSendMessageButton")
     .addEventListener("click", () => sendMessageForJobDetail().catch((error) => showError(error.message)));
   document
+    .getElementById("jobDetailAiMessageButton")
+    .addEventListener("click", () => generateAiMessageForJobDetail().catch((error) => showError(error.message)));
+  document
     .getElementById("jobDetailDrawerEvalButton")
     .addEventListener("click", () => evaluateJobDetail("jobDetailDrawerEvalButton").catch((error) => showError(error.message)));
   document
@@ -2476,6 +2550,9 @@ function bindEvents() {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       sendMessageForJobDetail().catch((error) => showError(error.message));
     }
+  });
+  document.getElementById("jobDetailMessageInput").addEventListener("input", () => {
+    clearAiMessageInfo();
   });
   document.getElementById("jobDetailDrawer").addEventListener("click", (event) => {
     if (event.target?.dataset?.close === "true") {

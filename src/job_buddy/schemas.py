@@ -224,6 +224,19 @@ class SendMessageResponse(BaseModel):
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AIMessageRequest(BaseModel):
+    context: str | None = None
+
+
+class AIMessageResponse(BaseModel):
+    message: str
+    reasoning: str | None = None
+    reasoning_content: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cache_hit_tokens: int | None = None
+
+
 class FriendSyncResponse(BaseModel):
     count: int
 
