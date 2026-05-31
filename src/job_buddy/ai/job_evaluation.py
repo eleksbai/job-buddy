@@ -113,8 +113,6 @@ def build_message_prompt(
 ## 候选人简历
 {resume_text}
 
-## 沟通策略参考
-{criteria_text}
 
 ## 目标岗位信息
 {job_info}
