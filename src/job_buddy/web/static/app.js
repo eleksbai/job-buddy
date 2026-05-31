@@ -1060,44 +1060,8 @@ function renderWorkerMeta(containerId, worker, lines) {
 }
 
 function renderWorkers() {
-  const searchWorker = getWorker("search");
-  const detailWorker = getWorker("detail");
   const scrollAndCollectWorker = getWorker("scroll_and_collect");
-  const searchReleaseButton = document.getElementById("releaseSearchWorkerButton");
-  const detailReleaseButton = document.getElementById("releaseDetailWorkerButton");
   const scrollAndCollectReleaseButton = document.getElementById("releaseScrollAndCollectWorkerButton");
-
-  if (searchWorker) {
-    document.getElementById("searchWorkerIntervalInput").value = String(searchWorker.interval_seconds || 60);
-    document.getElementById("searchWorkerPageMaxInput").value = String(searchWorker.page_max || 5);
-    if (searchReleaseButton) {
-      searchReleaseButton.disabled = !(searchWorker.enabled && searchWorker.status === "error");
-      searchReleaseButton.classList.toggle("button-disabled", searchReleaseButton.disabled);
-    }
-    renderWorkerMeta("searchWorkerMeta", searchWorker, [
-      `<strong>状态</strong> ${renderStatusBadge(searchWorker.enabled ? searchWorker.status : "idle")} ${searchWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
-      `<strong>当前页</strong> ${escapeHtml(searchWorker.page || 1)}`,
-      `<strong>下一次执行</strong> ${escapeHtml(formatDate(searchWorker.next_run_at))}`,
-      `<strong>最近错误</strong> ${escapeHtml(searchWorker.last_error || "-")}`,
-      `<strong>搜索参数</strong> ${escapeHtml((searchWorker.query?.keywords || []).join(", ") || "未配置")}`,
-    ]);
-  }
-
-  if (detailWorker) {
-    document.getElementById("detailWorkerIntervalInput").value = String(detailWorker.interval_seconds || 30);
-    document.getElementById("detailWorkerBatchSizeInput").value = String(detailWorker.batch_size || 1);
-    if (detailReleaseButton) {
-      detailReleaseButton.disabled = !(detailWorker.enabled && detailWorker.status === "error");
-      detailReleaseButton.classList.toggle("button-disabled", detailReleaseButton.disabled);
-    }
-    renderWorkerMeta("detailWorkerMeta", detailWorker, [
-      `<strong>状态</strong> ${renderStatusBadge(detailWorker.enabled ? detailWorker.status : "idle")} ${detailWorker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
-      `<strong>每轮条数</strong> ${escapeHtml(detailWorker.batch_size || 1)}`,
-      `<strong>下一次执行</strong> ${escapeHtml(formatDate(detailWorker.next_run_at))}`,
-      `<strong>最近错误</strong> ${escapeHtml(detailWorker.last_error || "-")}`,
-      `<strong>最近结果</strong> ${escapeHtml(JSON.stringify(detailWorker.last_result_summary || {}))}`,
-    ]);
-  }
 
   if (scrollAndCollectWorker) {
     document.getElementById("scrollAndCollectWorkerBatchSizeInput").value = String(scrollAndCollectWorker.batch_size || 100);
@@ -1811,21 +1775,6 @@ function collectScrollSearchPayload() {
   );
 }
 
-function collectSearchWorkerPayload() {
-  return {
-    interval_seconds: Math.max(1, Number(document.getElementById("searchWorkerIntervalInput").value || 60)),
-    page_max: Math.max(1, Number(document.getElementById("searchWorkerPageMaxInput").value || 5)),
-    query: collectSearchFormPayload(),
-  };
-}
-
-function collectDetailWorkerPayload() {
-  return {
-    interval_seconds: Math.max(1, Number(document.getElementById("detailWorkerIntervalInput").value || 30)),
-    batch_size: Math.max(1, Number(document.getElementById("detailWorkerBatchSizeInput").value || 1)),
-  };
-}
-
 function collectScrollAndCollectWorkerPayload() {
   const raw = document.getElementById("scrollAndCollectWorkerScheduleInput").value || "";
   const scheduleTimes = raw
@@ -1846,116 +1795,6 @@ function collectAiMatchingWorkerPayload() {
     interval_seconds: Math.max(1, Number(document.getElementById("aiMatchingWorkerIntervalInput").value || 3600)),
     batch_size: Math.max(1, Number(document.getElementById("aiMatchingWorkerBatchSizeInput").value || 10)),
   };
-}
-
-async function saveSearchWorkerConfig() {
-  clearError();
-  setButtonBusy("saveSearchWorkerButton", true, "保存中");
-  try {
-    await fetchJson("/boss/workers/search", {
-      method: "PUT",
-      body: JSON.stringify(collectSearchWorkerPayload()),
-    });
-    await loadWorkers();
-    showNotice("搜索 worker 配置已保存", 3000);
-  } finally {
-    setButtonBusy("saveSearchWorkerButton", false);
-  }
-}
-
-async function startSearchWorker() {
-  clearError();
-  setButtonBusy("startSearchWorkerButton", true, "启动中");
-  try {
-    await fetchJson("/boss/workers/search", {
-      method: "PUT",
-      body: JSON.stringify(collectSearchWorkerPayload()),
-    });
-    await fetchJson("/boss/workers/search/start", { method: "POST" });
-    await loadWorkers();
-    showNotice("搜索 worker 已启动", 3000);
-  } finally {
-    setButtonBusy("startSearchWorkerButton", false);
-  }
-}
-
-async function stopSearchWorker() {
-  clearError();
-  setButtonBusy("stopSearchWorkerButton", true, "停止中");
-  try {
-    await fetchJson("/boss/workers/search/stop", { method: "POST" });
-    await loadWorkers();
-    showNotice("搜索 worker 已停止", 3000);
-  } finally {
-    setButtonBusy("stopSearchWorkerButton", false);
-  }
-}
-
-async function releaseSearchWorker() {
-  clearError();
-  setButtonBusy("releaseSearchWorkerButton", true, "解除中");
-  try {
-    await fetchJson("/boss/workers/search/release", { method: "POST" });
-    await loadWorkers();
-    showNotice("搜索 worker 已解除限制", 3000);
-  } finally {
-    setButtonBusy("releaseSearchWorkerButton", false);
-  }
-}
-
-async function saveDetailWorkerConfig() {
-  clearError();
-  setButtonBusy("saveDetailWorkerButton", true, "保存中");
-  try {
-    await fetchJson("/boss/workers/detail", {
-      method: "PUT",
-      body: JSON.stringify(collectDetailWorkerPayload()),
-    });
-    await loadWorkers();
-    showNotice("详情 worker 配置已保存", 3000);
-  } finally {
-    setButtonBusy("saveDetailWorkerButton", false);
-  }
-}
-
-async function startDetailWorker() {
-  clearError();
-  setButtonBusy("startDetailWorkerButton", true, "启动中");
-  try {
-    await fetchJson("/boss/workers/detail", {
-      method: "PUT",
-      body: JSON.stringify(collectDetailWorkerPayload()),
-    });
-    await fetchJson("/boss/workers/detail/start", { method: "POST" });
-    await loadWorkers();
-    showNotice("详情 worker 已启动", 3000);
-  } finally {
-    setButtonBusy("startDetailWorkerButton", false);
-  }
-}
-
-async function stopDetailWorker() {
-  clearError();
-  setButtonBusy("stopDetailWorkerButton", true, "停止中");
-  try {
-    await fetchJson("/boss/workers/detail/stop", { method: "POST" });
-    await loadWorkers();
-    showNotice("详情 worker 已停止", 3000);
-  } finally {
-    setButtonBusy("stopDetailWorkerButton", false);
-  }
-}
-
-async function releaseDetailWorker() {
-  clearError();
-  setButtonBusy("releaseDetailWorkerButton", true, "解除中");
-  try {
-    await fetchJson("/boss/workers/detail/release", { method: "POST" });
-    await loadWorkers();
-    showNotice("详情 worker 已解除限制", 3000);
-  } finally {
-    setButtonBusy("releaseDetailWorkerButton", false);
-  }
 }
 
 async function saveScrollAndCollectWorkerConfig() {
@@ -2433,30 +2272,6 @@ function bindEvents() {
   document
     .getElementById("refreshSearchButton")
     .addEventListener("click", () => loadCurrentSearchResults().catch((error) => showError(error.message)));
-  document
-    .getElementById("saveSearchWorkerButton")
-    .addEventListener("click", () => saveSearchWorkerConfig().catch((error) => showError(error.message)));
-  document
-    .getElementById("startSearchWorkerButton")
-    .addEventListener("click", () => startSearchWorker().catch((error) => showError(error.message)));
-  document
-    .getElementById("stopSearchWorkerButton")
-    .addEventListener("click", () => stopSearchWorker().catch((error) => showError(error.message)));
-  document
-    .getElementById("releaseSearchWorkerButton")
-    .addEventListener("click", () => releaseSearchWorker().catch((error) => showError(error.message)));
-  document
-    .getElementById("saveDetailWorkerButton")
-    .addEventListener("click", () => saveDetailWorkerConfig().catch((error) => showError(error.message)));
-  document
-    .getElementById("startDetailWorkerButton")
-    .addEventListener("click", () => startDetailWorker().catch((error) => showError(error.message)));
-  document
-    .getElementById("stopDetailWorkerButton")
-    .addEventListener("click", () => stopDetailWorker().catch((error) => showError(error.message)));
-  document
-    .getElementById("releaseDetailWorkerButton")
-    .addEventListener("click", () => releaseDetailWorker().catch((error) => showError(error.message)));
   document
     .getElementById("saveScrollAndCollectWorkerButton")
     .addEventListener("click", () => saveScrollAndCollectWorkerConfig().catch((error) => showError(error.message)));
