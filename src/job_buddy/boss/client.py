@@ -423,17 +423,20 @@ class BossClient:
         self._profile_dir.mkdir(parents=True, exist_ok=True)
         playwright = await async_playwright().start()
         try:
-            context = await playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self._profile_dir),
-                channel="chrome",
-                headless=False,
-                slow_mo=300,
-                no_viewport=True,
-                args=[
+            context_kwargs: dict[str, Any] = {
+                "user_data_dir": str(self._profile_dir),
+                "channel": "chrome",
+                "headless": False,
+                "slow_mo": 300,
+                "no_viewport": True,
+                "args": [
                     "--disable-blink-features=AutomationControlled",
                     "--start-maximized",
                 ],
-            )
+            }
+            if self.settings.boss_proxy:
+                context_kwargs["proxy"] = {"server": self.settings.boss_proxy}
+            context = await playwright.chromium.launch_persistent_context(**context_kwargs)
         except Exception as exc:
             await self._safe_stop_playwright(playwright)
             profile_hint = f"BossClient 启动浏览器失败（profile={self._profile_dir}）"

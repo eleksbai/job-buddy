@@ -33,7 +33,7 @@ from job_buddy.boss.config import (
 )
 from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobDetailIn, JobDetailOut, LoginIn, LoginOut, SearchIn, \
     SendMessageIn, SearchOut
-from job_buddy.config import Settings
+from job_buddy.config import Settings, MESSAGE_STATUS_REVERSE
 from job_buddy.models import (
     AuthState,
     DocumentModel,
@@ -202,6 +202,7 @@ def _normalize_friend_messages(messages: list[dict[str, Any]]) -> list[FriendMes
             from_name=message.get("from_name"),
             content=str(message.get("content") or ""),
             msg_type=message.get("type"),
+            msg_status=message.get("status"),
             sent_at=message.get("created_at"),
             raw_payload=dict(message.get("raw_payload") or message),
         )
@@ -226,6 +227,7 @@ def _merge_friend_messages(
                     "from_name": message.from_name,
                     "content": message.content,
                     "type": message.msg_type,
+                    "status": message.msg_status,
                     "created_at": message.sent_at,
                     "raw_payload": message.raw_payload,
                 }
@@ -238,6 +240,7 @@ def _merge_friend_messages(
                     "from_name": message.get("from_name"),
                     "content": message.get("content"),
                     "type": message.get("msg_type", message.get("type")),
+                    "status": message.get("msg_status", message.get("status")),
                     "created_at": message.get("sent_at", message.get("created_at")),
                     "raw_payload": message.get("raw_payload", message),
                 }
@@ -1683,6 +1686,8 @@ class FriendService:
                     "from_name": message.get("from_name"),
                     "content": message.get("content", ""),
                     "type": message.get("msg_type"),
+                    "status": message.get("msg_status"),
+                    "status_label": MESSAGE_STATUS_REVERSE.get(message.get("msg_status")),
                     "created_at": message.get("sent_at"),
                     "raw_payload": message.get("raw_payload", message),
                 }
@@ -1717,6 +1722,8 @@ class FriendService:
             raise map_boss_operation_error(exc) from exc
 
         messages = [message.model_dump() for message in result.messages]
+        for msg in messages:
+            msg["status_label"] = MESSAGE_STATUS_REVERSE.get(msg.get("status"))
         boss_uid = str(friend.get("boss_uid") or "")
         backfilled_self_id = _extract_self_id_from_messages(boss_uid, messages)
         refreshed_messages = _normalize_friend_messages(messages)

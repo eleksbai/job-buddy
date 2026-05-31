@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from job_buddy.config import MESSAGE_STATUS_REVERSE
 
 
 class TimestampedSchema(BaseModel):
@@ -174,8 +176,16 @@ class FriendMessageRead(BaseModel):
     from_name: str | None = None
     content: str
     msg_type: int | None = None
+    msg_status: int | None = None
+    msg_status_label: str | None = None
     sent_at: int | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _set_labels(self) -> "FriendMessageRead":
+        if self.msg_status is not None and self.msg_status_label is None:
+            self.msg_status_label = MESSAGE_STATUS_REVERSE.get(self.msg_status)
+        return self
 
 
 class FriendRecordRead(TimestampedSchema):
@@ -185,6 +195,7 @@ class FriendRecordRead(TimestampedSchema):
     friend_source: int | None = None
     relation_type: int | None = None
     read_status: int | None = None
+    read_status_label: str | None = None
     security_id: str | None = None
     self_id: str | None = None
     source_job_id: str | None = None
@@ -199,6 +210,12 @@ class FriendRecordRead(TimestampedSchema):
     last_message_ts: float | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     messages: list[FriendMessageRead] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _set_labels(self) -> "FriendRecordRead":
+        if self.read_status is not None and self.read_status_label is None:
+            self.read_status_label = MESSAGE_STATUS_REVERSE.get(self.read_status)
+        return self
 
 
 class FriendMessagesResponse(BaseModel):

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
         alias="BOSS_DEFAULT_GREETING",
     )
     boss_profile_dir: str = Field(default="data/chrome_profile", alias="JOB_BUDDY_PROFILE_DIR")
+    boss_proxy: str = Field(default="", alias="BOSS_PROXY")
 
     # AI Matching
     ai_api_base_url: str = Field(default="https://api.openai.com/v1", alias="AI_API_BASE_URL")
@@ -93,3 +94,13 @@ def configure_logging(settings: Settings) -> None:
 
     root_logger.addHandler(stream_handler)
     root_logger.addHandler(file_handler)
+
+
+# historyMsg -> zpData.messages[].status
+# getGeekFriendList.json -> zpData.result[].lastMessageInfo.status
+MESSAGE_STATUS = {
+    "送达": 1,
+    "已读": 2,
+}
+
+MESSAGE_STATUS_REVERSE: dict[int, str] = {v: k for k, v in MESSAGE_STATUS.items()}

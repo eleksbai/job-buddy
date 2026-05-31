@@ -164,6 +164,7 @@ class FriendMessage(BaseModel):
     from_name: str | None = None
     content: str = ""
     msg_type: int | None = None
+    msg_status: int | None = None
     sent_at: int | None = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 

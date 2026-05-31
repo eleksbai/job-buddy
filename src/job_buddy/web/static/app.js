@@ -1635,7 +1635,7 @@ async function loadFriends() {
       { label: "公司", render: (row) => escapeHtml(row.company || "-") },
       { label: "发起方", render: (row) => renderRelationType(row.relation_type) },
       { label: "未读", render: (row) => renderUnreadBadge(row.unread_count) },
-      { label: "状态", render: (row) => renderReadStatus(row.read_status) },
+      { label: "状态", render: (row) => renderReadStatus(row.read_status_label || row.read_status) },
       { label: "最近消息", render: (row) => escapeHtml(row.last_message || "-") },
       { label: "最近时间", render: (row) => escapeHtml(row.last_message_at || "-") },
       { label: "聊天", render: (row) => renderChatHistoryAction(row) },
@@ -1659,10 +1659,11 @@ function renderUnreadBadge(count) {
   return `<span class="status-badge status-ok">0</span>`;
 }
 
-function renderReadStatus(status) {
-  if (status === 2) return '<span class="status-badge status-warn">未读</span>';
-  if (status === 1) return '<span class="status-badge status-ok">已读</span>';
-  return "-";
+function renderReadStatus(value) {
+  if (value == null) return "-";
+  if (String(value) === "1") return "送达";
+  if (String(value) === "2") return "已读";
+  return String(value);
 }
 
 function renderChatHistoryAction(row) {

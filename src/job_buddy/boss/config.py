@@ -133,3 +133,11 @@ JOB_TYPE_CODES = {
     "兼职": "1903",
     "实习": "1903",
 }
+
+# historyMsg -> zpData.messages[].status
+# getGeekFriendList.json -> zpData.result[].lastMessageInfo.
+MESSAGE_STATUS = {
+    '其他': 0,
+    '送达': 1,
+    '已读': 2
+}
