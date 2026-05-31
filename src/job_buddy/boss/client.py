@@ -396,7 +396,24 @@ class BossClient:
         self._connection_mode = DEFAULT_CONNECTION_MODE
         self._profile_dir = self._resolve_profile_dir()
         self._init_lock = asyncio.Lock()
+        self._execution_lock = asyncio.Lock()
         self.running = False
+
+
+    @staticmethod
+    def _locked(method):
+        async def wrapper(self, *args, **kwargs):
+            async with self._execution_lock:
+                await self.check_page_health()
+                return await method(self, *args, **kwargs)
+        return wrapper
+
+    @staticmethod
+    def _locked_simple(method):
+        async def wrapper(self, *args, **kwargs):
+            async with self._execution_lock:
+                return await method(self, *args, **kwargs)
+        return wrapper
 
     @property
     def profile_dir(self) -> Path:
@@ -496,15 +513,23 @@ class BossClient:
             ip=str(page_payload.get("clientIP") or ""),
         )
 
+    @_locked_simple
     async def goto_home(self):
+        await self._goto_home()
+
+    @_locked_simple
+    async def goto_job(self):
+        await self._goto_job()
+
+    async def _goto_home(self):
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
 
-    async def goto_job(self):
+    async def _goto_job(self):
         await self.page.goto(JOB_URL, wait_until="domcontentloaded")
 
+    @_locked
     async def login(self, request: LoginIn) -> LoginOut:
         timeout = max(1, int(request.timeout))
-        await self.check_page_health()
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("domcontentloaded")
 
@@ -567,8 +592,8 @@ class BossClient:
             status_code=501,
         )
 
+    @_locked
     async def search(self, request: SearchIn) -> SearchOut:
-        await self.check_page_health()
 
         trace = self._build_search_trace(request.query)
         payload = await self._search_jobs_payload(trace["request_url"])
@@ -609,9 +634,9 @@ class BossClient:
         trace["result_count"] = len(items)
         return SearchOut(items=items, trace=trace)
 
+    @_locked
     async def job_list_by_scroll(self, query: dict[str, Any] | None = None, tab_index: int = 1) -> SearchOut:
         logger.info("BossClient job_list_by_scroll start")
-        await self.check_page_health()
         trace = {
             "engine": self.name,
             "browser": "Patchright Chromium",
@@ -651,7 +676,7 @@ class BossClient:
 
         self.page.on("response", on_response)
         try:
-            await self.goto_job()
+            await self._goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
             if tab_index == 0:
                 await self.page.locator("div.c-expect-select > a.synthesis").click()
@@ -779,9 +804,9 @@ class BossClient:
                                                                                   dict) else {},
         )
 
+    @_locked
     async def job_detail_by_click(self, tab_index: int = 1) -> list[JobDetailOut]:
         logger.info("BossClient job_detail_by_click start")
-        await self.check_page_health()
         trace = {
             "engine": self.name,
             "browser": "Patchright Chromium",
@@ -823,7 +848,7 @@ class BossClient:
 
         self.page.on("response", on_response)
         try:
-            await self.goto_job()
+            await self._goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
             if tab_index == 0:
                 await self.page.locator("div.c-expect-select > a.synthesis").click()
@@ -893,6 +918,7 @@ class BossClient:
         logger.info("job_detail_by_click finished, collected %d details", len(deduped))
         return list(deduped.values())
 
+    @_locked
     async def scroll_and_collect_details(
             self,
             repository: "JobCollectionRepository",
@@ -909,7 +935,6 @@ class BossClient:
         ``detail_updated``, ``detail_skipped``.
         """
         logger.info("BossClient scroll_and_collect_details start")
-        await self.check_page_health()
 
         seen_list_job_ids: set[str] = set()
         pending_list_responses: set[asyncio.Task[None]] = set()
@@ -1002,7 +1027,7 @@ class BossClient:
 
         self.page.on("response", on_response)
         try:
-            await self.goto_job()
+            await self._goto_job()
             await self.page.wait_for_load_state("domcontentloaded")
             await asyncio.sleep(5)
             if tab_index == 0:
@@ -1109,6 +1134,7 @@ class BossClient:
         logger.info("scroll_and_collect_details finished: %s", stats)
         return stats
 
+    @_locked
     async def detail(self, request: JobDetailIn) -> JobDetailOut:
         await self.check_page_health()
         logger.info('get job detail %s', request.title)
@@ -1160,6 +1186,7 @@ class BossClient:
             response_received_at=response_received_at,
         )
 
+    @_locked
     async def friend_list(self, request: FriendListIn) -> list[FriendListItemOut]:
         await self.check_page_health()
 
@@ -1234,6 +1261,7 @@ class BossClient:
             reverse=True,
         )
 
+    @_locked
     async def greet(self, request: GreetJobIn) -> GreetJobOut:
         await self.check_page_health()
 
@@ -1288,6 +1316,7 @@ class BossClient:
             raw_payload=payload,
         )
 
+    @_locked
     async def chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
         await self.check_page_health()
 
@@ -1354,8 +1383,8 @@ class BossClient:
             raw_payload=payload,
         )
 
+    @_locked
     async def send_message(self, request: SendMessageIn) -> SendMessageOut:
-        await self.check_page_health()
 
         content = request.content.strip()
         if not content:
@@ -1656,7 +1685,16 @@ class BossClient:
 
     async def healthcheck(self) -> HealthcheckOut:
         try:
-            await self.check_page_health()
+            async with self._execution_lock:
+                await self.check_page_health()
+                auth = await self.get_auth_status()
+                return HealthcheckOut(
+                    status="ok" if auth.logged_in else "auth_required",
+                    provider=self.name,
+                    logged_in=auth.logged_in,
+                    message=auth.message,
+                    last_error="",
+                )
         except BossOperationError as exc:
             return HealthcheckOut(
                 status="unavailable",
@@ -1665,15 +1703,6 @@ class BossClient:
                 message=exc.message,
                 last_error=exc.message,
             )
-
-        auth = await self.get_auth_status()
-        return HealthcheckOut(
-            status="ok" if auth.logged_in else "auth_required",
-            provider=self.name,
-            logged_in=auth.logged_in,
-            message=auth.message,
-            last_error="",
-        )
 
     async def close(self) -> None:
         context = self.context
