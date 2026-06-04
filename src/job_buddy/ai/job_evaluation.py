@@ -139,11 +139,11 @@ class AIMatchingClient:
 
     def __init__(self, settings: Settings) -> None:
         self._client = AsyncOpenAI(
-            base_url=settings.ai_api_base_url,
-            api_key=settings.ai_api_key,
+            base_url=settings.ai.provider.url,
+            api_key=settings.ai.provider.api_key,
         )
-        self._model = settings.ai_model
-        self._temperature = settings.ai_temperature
+        self._model = settings.ai.provider.model
+        self._temperature = settings.ai.temperature
 
     async def evaluate(self, prompt: str) -> dict[str, Any]:
         """Send prompt to LLM, return parsed result dict.

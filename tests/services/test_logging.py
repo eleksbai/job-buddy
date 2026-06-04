@@ -2,16 +2,18 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from job_buddy.config import Settings, configure_logging
+from job_buddy.config import Settings, AppConfig, LogConfig, configure_logging
 
 
 def test_configure_logging_creates_stream_and_file_handlers(tmp_path: Path):
     settings = Settings(
-        APP_LOG_LEVEL="DEBUG",
-        APP_LOG_DIR=str(tmp_path / "logs"),
-        APP_LOG_FILE="app.log",
-        APP_LOG_MAX_BYTES="2048",
-        APP_LOG_BACKUP_COUNT="3",
+        log=LogConfig(
+            level="DEBUG",
+            dir=str(tmp_path / "logs"),
+            file="app.log",
+            max_bytes=2048,
+            backup_count=3,
+        ),
     )
 
     configure_logging(settings)
@@ -29,7 +31,7 @@ def test_configure_logging_creates_stream_and_file_handlers(tmp_path: Path):
 
 
 def test_configure_logging_is_idempotent(tmp_path: Path):
-    settings = Settings(APP_LOG_DIR=str(tmp_path / "logs"))
+    settings = Settings(log=LogConfig(dir=str(tmp_path / "logs")))
 
     configure_logging(settings)
     configure_logging(settings)
@@ -39,7 +41,7 @@ def test_configure_logging_is_idempotent(tmp_path: Path):
 
 
 def test_configure_logging_writes_timestamped_log_file(tmp_path: Path):
-    settings = Settings(APP_LOG_DIR=str(tmp_path / "logs"), APP_LOG_FILE="runtime.log")
+    settings = Settings(log=LogConfig(dir=str(tmp_path / "logs"), file="runtime.log"))
 
     configure_logging(settings)
     logger = logging.getLogger("job_buddy.tests.logging")

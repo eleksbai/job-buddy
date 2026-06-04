@@ -1,6 +1,6 @@
 import pytest
 
-from job_buddy.config import Settings
+from job_buddy.config import Settings, MongoConfig
 from job_buddy.db import MongoManager
 
 
@@ -27,7 +27,7 @@ async def test_mongo_manager_connect_enables_tz_aware(monkeypatch):
         return client
 
     monkeypatch.setattr("job_buddy.db.AsyncIOMotorClient", build_client)
-    manager = MongoManager(Settings(MONGODB_URI="mongodb://example:27017", MONGODB_DB="job_buddy_test"))
+    manager = MongoManager(Settings(mongo=MongoConfig(uri="mongodb://example:27017", db="job_buddy_test")))
 
     database = await manager.connect()
 

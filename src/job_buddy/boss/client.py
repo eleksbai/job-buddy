@@ -330,7 +330,7 @@ class BossDoctorRunner:
 
     async def run(self) -> BossDoctorResult:
         data_dir = (self.settings.project_root / "data").resolve()
-        profile_dir = Path(self.settings.boss_profile_dir).expanduser()
+        profile_dir = Path(self.settings.boss.profile_dir).expanduser()
         if not profile_dir.is_absolute():
             profile_dir = (self.settings.project_root / profile_dir).resolve()
         checks = [
@@ -434,8 +434,8 @@ class BossClient:
                     "--start-maximized",
                 ],
             }
-            if self.settings.boss_proxy:
-                context_kwargs["proxy"] = {"server": self.settings.boss_proxy}
+            if self.settings.boss.proxy:
+                context_kwargs["proxy"] = {"server": self.settings.boss.proxy}
             context = await playwright.chromium.launch_persistent_context(**context_kwargs)
         except Exception as exc:
             await self._safe_stop_playwright(playwright)
@@ -1913,7 +1913,7 @@ class BossClient:
 
     def _resolve_profile_dir(self) -> Path:
         raw = os.environ.get("JOB_BUDDY_PROFILE_DIR") or self.params.get(
-            "profile_dir") or self.settings.boss_profile_dir or DEFAULT_PROFILE_DIR
+            "profile_dir") or self.settings.boss.profile_dir or DEFAULT_PROFILE_DIR
         path = Path(str(raw)).expanduser()
         if not path.is_absolute():
             path = self.settings.project_root / path

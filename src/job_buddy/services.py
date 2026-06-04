@@ -2021,7 +2021,7 @@ class SystemService:
         )
 
     async def get_logs(self, limit: int = 200) -> LogsResponse:
-        log_file = Path(self.settings.app_log_dir).expanduser() / self.settings.app_log_file
+        log_file = Path(self.settings.log.dir).expanduser() / self.settings.log.file
         lines: deque[str] = deque(maxlen=limit)
         truncated = False
         if log_file.exists():
@@ -2114,8 +2114,8 @@ class AIMatchingService:
         return path
 
     def _load_resume_and_criteria(self) -> tuple[str, str]:
-        resume_path = self._resolve_path(self.settings.ai_resume_path)
-        criteria_path = self._resolve_path(self.settings.ai_criteria_path)
+        resume_path = self._resolve_path(self.settings.ai.resume_path)
+        criteria_path = self._resolve_path(self.settings.ai.criteria_path)
 
         resume_mtime = resume_path.stat().st_mtime if resume_path.exists() else 0
         criteria_mtime = criteria_path.stat().st_mtime if criteria_path.exists() else 0
@@ -2135,7 +2135,7 @@ class AIMatchingService:
         return self._resume_cache, self._criteria_cache
 
     def _load_conversation_style(self) -> str:
-        style_path = self._resolve_path(self.settings.ai_conversation_style_path)
+        style_path = self._resolve_path(self.settings.ai.conversation_style_path)
         style_mtime = style_path.stat().st_mtime if style_path.exists() else 0
 
         if self._conversation_style_cache is None or self._conversation_style_mtime != style_mtime:
@@ -2331,7 +2331,7 @@ class AIMatchingService:
                 failed_count += 1
 
             if idx < len(jobs) - 1:
-                await asyncio.sleep(self.settings.ai_request_delay_seconds)
+                await asyncio.sleep(self.settings.ai.request_delay_seconds)
 
         final_status = TaskStatus.SUCCEEDED
         if failed_count and success_count:

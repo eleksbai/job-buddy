@@ -19,10 +19,10 @@ class MongoManager:
 
     @property
     def database(self) -> AsyncIOMotorDatabase:
-        return self.client[self._settings.mongodb_db]
+        return self.client[self._settings.mongo.db]
 
     async def connect(self) -> AsyncIOMotorDatabase:
-        self._client = AsyncIOMotorClient(self._settings.mongodb_uri, tz_aware=True)
+        self._client = AsyncIOMotorClient(self._settings.mongo.uri, tz_aware=True)
         return self.database
 
     async def disconnect(self) -> None:

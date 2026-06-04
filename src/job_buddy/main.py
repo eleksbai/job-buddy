@@ -84,7 +84,7 @@ def create_app() -> FastAPI:
                 await search_worker.stop()
                 await boss_client.close()
 
-    app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    app = FastAPI(title=settings.app.name, lifespan=lifespan)
     register_exception_handlers(app)
     app.include_router(build_api_router())
     register_web(app)

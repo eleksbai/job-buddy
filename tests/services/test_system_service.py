@@ -6,7 +6,7 @@ from bson import ObjectId
 from job_buddy.boss.client import BossDoctorResult
 from job_buddy.boss.exceptions import BossOperationError
 from job_buddy.boss.schemas import LoginOut
-from job_buddy.config import Settings
+from job_buddy.config import Settings, AppConfig, LogConfig
 from job_buddy.models import AuthState, GreetingTask, TaskStatus
 from job_buddy.services import SystemService, fail_abandoned_running_tasks
 
@@ -233,7 +233,7 @@ def test_get_logs_reads_latest_lines(tmp_path: Path):
 
     service = SystemService(
         FakeDoctorRunner(),
-        Settings(APP_LOG_DIR=str(log_dir)),
+        Settings(log=LogConfig(dir=str(log_dir))),
         FakeRuntime(),
         FakeDatabase(),
     )

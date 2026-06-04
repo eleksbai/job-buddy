@@ -3,49 +3,101 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+class AppConfig(BaseModel):
+    name: str = "Job Buddy"
+    env: str = "local"
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+
+class LogConfig(BaseModel):
+    level: str = "INFO"
+    dir: str = "logs"
+    file: str = "job-buddy.log"
+    max_bytes: int = 10 * 1024 * 1024
+    backup_count: int = 5
+
+
+class MongoConfig(BaseModel):
+    uri: str = "mongodb://localhost:27017"
+    db: str = "job_buddy"
+
+
+class BossConfig(BaseModel):
+    default_greeting: str = "您好，我对该岗位很感兴趣，希望能和您聊一聊。"
+    profile_dir: str = "data/chrome_profile"
+    proxy: str = ""
+
+
+class AIProviderConfig(BaseModel):
+    name: str
+    url: str
+    model: str
+    api_key: str = ""
+
+
+class AIConfig(BaseModel):
+    providers: list[AIProviderConfig] = Field(
+        default_factory=lambda: [
+            AIProviderConfig(name="openai", url="https://api.openai.com/v1", model="gpt-3.5-turbo")
+        ]
+    )
+    default_provider: str | None = None
+    resume_path: str = "data/resume.md"
+    criteria_path: str = "data/matching_criteria.md"
+    conversation_style_path: str = "data/conversation_style.md"
+    request_delay_seconds: float = 1.0
+    temperature: float = 0.1
+
+    @property
+    def provider(self) -> AIProviderConfig:
+        """Return the provider matching default_provider, or the first one."""
+        if self.default_provider:
+            for p in self.providers:
+                if p.name == self.default_provider:
+                    return p
+        if self.providers:
+            return self.providers[0]
+        return AIProviderConfig(name="openai", url="https://api.openai.com/v1", model="gpt-3.5-turbo")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=f"{_PROJECT_ROOT}/.env",
-        env_file_encoding="utf-8",
+        yaml_file=f"{_PROJECT_ROOT}/config.yaml",
+        yaml_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        env_nested_delimiter="__",
+        env_prefix="JOB_BUDDY_",
     )
 
-    app_name: str = Field(default="Job Buddy", alias="APP_NAME")
-    app_env: str = Field(default="local", alias="APP_ENV")
-    app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
-    app_port: int = Field(default=8000, alias="APP_PORT")
-    app_log_level: str = Field(default="INFO", alias="APP_LOG_LEVEL")
-    app_log_dir: str = Field(default="logs", alias="APP_LOG_DIR")
-    app_log_file: str = Field(default="job-buddy.log", alias="APP_LOG_FILE")
-    app_log_max_bytes: int = Field(default=10 * 1024 * 1024, alias="APP_LOG_MAX_BYTES")
-    app_log_backup_count: int = Field(default=5, alias="APP_LOG_BACKUP_COUNT")
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            YamlConfigSettingsSource(settings_cls),
+        )
 
-    mongodb_uri: str = Field(default="mongodb://localhost:27017", alias="MONGODB_URI")
-    mongodb_db: str = Field(default="job_buddy", alias="MONGODB_DB")
-
-    boss_default_greeting: str = Field(
-        default="您好，我对该岗位很感兴趣，希望能和您聊一聊。",
-        alias="BOSS_DEFAULT_GREETING",
-    )
-    boss_profile_dir: str = Field(default="data/chrome_profile", alias="JOB_BUDDY_PROFILE_DIR")
-    boss_proxy: str = Field(default="", alias="BOSS_PROXY")
-
-    # AI Matching
-    ai_api_base_url: str = Field(default="https://api.openai.com/v1", alias="AI_API_BASE_URL")
-    ai_api_key: str = Field(default="", alias="AI_API_KEY")
-    ai_model: str = Field(default="gpt-3.5-turbo", alias="AI_MODEL")
-    ai_resume_path: str = Field(default="data/resume.md", alias="AI_RESUME_PATH")
-    ai_criteria_path: str = Field(default="data/matching_criteria.md", alias="AI_CRITERIA_PATH")
-    ai_conversation_style_path: str = Field(default="data/conversation_style.md", alias="AI_CONVERSATION_STYLE_PATH")
-    ai_request_delay_seconds: float = Field(default=1.0, alias="AI_REQUEST_DELAY_SECONDS")
-    ai_temperature: float = Field(default=0.1, alias="AI_TEMPERATURE")
+    app: AppConfig = Field(default_factory=AppConfig)
+    log: LogConfig = Field(default_factory=LogConfig)
+    mongo: MongoConfig = Field(default_factory=MongoConfig)
+    boss: BossConfig = Field(default_factory=BossConfig)
+    ai: AIConfig = Field(default_factory=AIConfig)
 
     @property
     def project_root(self) -> Path:
@@ -58,12 +110,12 @@ def get_settings() -> Settings:
 
 
 def configure_logging(settings: Settings) -> None:
-    level = getattr(logging, settings.app_log_level.upper(), logging.INFO)
-    log_dir = Path(settings.app_log_dir).expanduser()
+    level = getattr(logging, settings.log.level.upper(), logging.INFO)
+    log_dir = Path(settings.log.dir).expanduser()
     if not log_dir.is_absolute():
         log_dir = settings.project_root / log_dir
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / settings.app_log_file
+    log_file = log_dir / settings.log.file
 
     formatter = logging.Formatter(
         fmt="%(asctime)s %(levelname)s [%(filename)s:%(lineno)s] %(message)s",
@@ -85,8 +137,8 @@ def configure_logging(settings: Settings) -> None:
 
     file_handler = RotatingFileHandler(
         log_file,
-        maxBytes=settings.app_log_max_bytes,
-        backupCount=settings.app_log_backup_count,
+        maxBytes=settings.log.max_bytes,
+        backupCount=settings.log.backup_count,
         encoding="utf-8",
     )
     file_handler.setLevel(level)
