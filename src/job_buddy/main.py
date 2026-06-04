@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
@@ -5,9 +7,19 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+
+def _preimport_lark_oapi() -> None:
+    import lark_oapi.channel  # noqa: F401  # force ws/client.py module-level init in clean thread
+
+
+_t = threading.Thread(target=_preimport_lark_oapi, daemon=True)
+_t.start()
+_t.join()
+
 from job_buddy.boss import BossClient, BossOperationError
 from job_buddy.config import configure_logging, get_settings
 from job_buddy.db import MongoManager, database_lifespan
+from job_buddy.messaging.feishu import FeishuChannelManager, set_manager
 from job_buddy.routers import build_api_router
 from job_buddy.worker import AIMatchingWorker
 from job_buddy.services import DetailWorker, ScrollAndCollectWorker, SearchWorker, fail_abandoned_running_tasks
@@ -56,6 +68,7 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with database_lifespan(mongo_manager) as database:
             boss_client = BossClient(settings)
+            feishu_manager = FeishuChannelManager(database)
             search_worker = SearchWorker(database, boss_client)
             detail_worker = DetailWorker(database, boss_client)
             scroll_and_collect_worker = ScrollAndCollectWorker(database, boss_client)
@@ -71,6 +84,9 @@ def create_app() -> FastAPI:
             app.state.scroll_and_collect_worker = scroll_and_collect_worker
             app.state.ai_matching_worker = ai_matching_worker
 
+            set_manager(feishu_manager)
+            await feishu_manager.start()
+
             try:
                 await search_worker.start()
                 await detail_worker.start()
@@ -83,6 +99,7 @@ def create_app() -> FastAPI:
                 await detail_worker.stop()
                 await search_worker.stop()
                 await boss_client.close()
+                await feishu_manager.stop()
 
     app = FastAPI(title=settings.app.name, lifespan=lifespan)
     register_exception_handlers(app)

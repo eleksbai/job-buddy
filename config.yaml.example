@@ -20,6 +20,9 @@ boss:
   profile_dir: data/chrome_profile
   proxy: ""
 
+feishu:
+  enabled: true
+
 ai:
   providers:
     - name: openai

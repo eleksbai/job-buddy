@@ -43,6 +43,10 @@ class AIProviderConfig(BaseModel):
     api_key: str = ""
 
 
+class FeishuConfig(BaseModel):
+    enabled: bool = True
+
+
 class AIConfig(BaseModel):
     providers: list[AIProviderConfig] = Field(
         default_factory=lambda: [
@@ -97,6 +101,7 @@ class Settings(BaseSettings):
     log: LogConfig = Field(default_factory=LogConfig)
     mongo: MongoConfig = Field(default_factory=MongoConfig)
     boss: BossConfig = Field(default_factory=BossConfig)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
 
     @property

@@ -192,6 +192,12 @@ class FriendRecord(DocumentModel):
     messages: list[FriendMessage] = Field(default_factory=list)
 
 
+class FeishuCredential(DocumentModel):
+    app_id: str
+    app_secret: str
+    chat_id: str = ""
+
+
 class AuthState(DocumentModel):
     provider: str = "zhipin"
     logged_in: bool = False
