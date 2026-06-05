@@ -173,7 +173,7 @@ class AgentWorker(BaseWorker):
         return await self._update_worker_model({
             "status": "idle",
             "last_finished_at": utc_now(),
-            "next_run_at": self._calculate_next_run(worker),
+            "next_run_at   ": self._calculate_next_run(worker),
         })
 
     async def execute_now(self) -> WorkerConfig:
@@ -253,115 +253,154 @@ class AgentWorker(BaseWorker):
             await send_feishu("今日无新增AI匹配职位需要打招呼")
             return
 
-        await self._emit("step_start", {
-            "step": "greet",
-            "text": f"开始打招呼: {len(jobs)} 个职位",
-        })
-
         greet_service = GreetingService(self.database, self.boss_client)
-        source_job_ids = [j.source_job_id for j in jobs]
-        task = await greet_service.run_greetings(
-            source_job_ids=source_job_ids,
-            greeting_message=None,
-            limit=len(jobs),
-        )
-
-        await self._emit("step_end", {
-            "step": "greet",
-            "succeeded": task.result_summary.get("succeeded", 0),
-            "failed": task.result_summary.get("failed", 0),
-            "text": f"打招呼完成: {task.result_summary.get('succeeded', 0)} 成功 / {task.result_summary.get('failed', 0)} 失败",
-        })
-
         ai_service = AIMatchingService(self.database, self.settings)
         friend_service = FriendService(self.database, self.boss_client)
 
+        greeted_count = 0
         sent_count = 0
-        for job in jobs:
+        for idx, job in enumerate(jobs):
+            if idx > 0:
+                delay = random.uniform(5, 15)
+                await self._emit("reasoning", {
+                    "text": f"等待 {delay:.0f} 秒后处理下一个职位...",
+                })
+                await asyncio.sleep(delay)
+
+            await self._emit("step_start", {
+                "step": "job",
+                "job_title": job.title,
+                "company": job.company or "-",
+                "text": f"#{idx + 1}/{len(jobs)} {job.title} @ {job.company}",
+            })
+
+            # Greet
+            await self._emit("tool_call", {
+                "step": "job",
+                "tool": "greet",
+                "input": job.source_job_id,
+                "output": "...",
+            })
             try:
-                await self._emit("step_start", {
-                    "step": "message",
-                    "job_title": job.title,
-                    "company": job.company or "-",
-                    "text": f"处理: {job.title} @ {job.company}",
-                })
-
-                await self._emit("tool_call", {
-                    "step": "message",
-                    "tool": "generate_message",
-                    "input": job.source_job_id,
-                    "output": "...",
-                })
-
-                result = await ai_service.generate_message(job.source_job_id)
-                message = result.get("message", "")
-
-                await self._emit("tool_call", {
-                    "step": "message",
-                    "tool": "generate_message",
-                    "input": job.source_job_id,
-                    "output": message[:200] + ("..." if len(message) > 200 else ""),
-                })
-
-                if result.get("reasoning"):
-                    await self._emit("reasoning", {
-                        "step": "message",
-                        "text": result["reasoning"],
+                greet_task = await greet_service.run_greetings(
+                    source_job_ids=[job.source_job_id],
+                    greeting_message=None,
+                    limit=1,
+                )
+                if greet_task.result_summary.get("succeeded", 0) > 0:
+                    greeted_count += 1
+                    await self._emit("tool_call", {
+                        "step": "job",
+                        "tool": "greet",
+                        "input": job.source_job_id,
+                        "output": "success",
                     })
-
-                if not message:
+                else:
+                    await self._emit("tool_call", {
+                        "step": "job",
+                        "tool": "greet",
+                        "input": job.source_job_id,
+                        "output": "failed: " + str(greet_task.result_summary),
+                    })
                     await self._emit("step_end", {
-                        "step": "message",
+                        "step": "job",
                         "job_title": job.title,
-                        "text": "AI 消息为空，跳过",
+                        "text": "打招呼失败，跳过",
                     })
                     continue
+            except Exception as exc:
+                await self._emit("error", {
+                    "step": "job",
+                    "text": f"打招呼异常: {exc}",
+                })
+                await self._emit("step_end", {
+                    "step": "job",
+                    "job_title": job.title,
+                    "text": f"打招呼异常，跳过",
+                })
+                continue
 
-                source_friend_id = job.source_friend_id
-                if not source_friend_id:
-                    refreshed = await self.database["job_leads"].find_one(
-                        {"source_job_id": job.source_job_id},
-                    )
-                    if refreshed:
-                        source_friend_id = refreshed.get("source_friend_id")
+            # Generate message
+            await self._emit("tool_call", {
+                "step": "job",
+                "tool": "generate_message",
+                "input": job.source_job_id,
+                "output": "...",
+            })
+            try:
+                result = await ai_service.generate_message(job.source_job_id)
+                message = result.get("message", "")
+            except Exception as exc:
+                await self._emit("error", {
+                    "step": "job",
+                    "text": f"生成消息异常: {exc}",
+                })
+                message = ""
 
-                if source_friend_id:
+            await self._emit("tool_call", {
+                "step": "job",
+                "tool": "generate_message",
+                "input": job.source_job_id,
+                "output": message[:200] + ("..." if len(message) > 200 else ""),
+            })
+
+            if result.get("reasoning"):
+                await self._emit("reasoning", {
+                    "step": "job",
+                    "text": result["reasoning"],
+                })
+
+            if not message:
+                await self._emit("step_end", {
+                    "step": "job",
+                    "job_title": job.title,
+                    "text": "AI 消息为空，跳过发送",
+                })
+                continue
+
+            # Send message
+            source_friend_id = job.source_friend_id
+            if not source_friend_id:
+                refreshed = await self.database["job_leads"].find_one(
+                    {"source_job_id": job.source_job_id},
+                )
+                if refreshed:
+                    source_friend_id = refreshed.get("source_friend_id")
+
+            if source_friend_id:
+                await self._emit("tool_call", {
+                    "step": "job",
+                    "tool": "send_message",
+                    "input": source_friend_id,
+                    "output": "...",
+                })
+                try:
+                    await friend_service.send_friend_message(source_friend_id, message)
+                    sent_count += 1
                     await self._emit("tool_call", {
-                        "step": "message",
+                        "step": "job",
                         "tool": "send_message",
                         "input": source_friend_id,
-                        "output": "...",
+                        "output": "sent",
                     })
-                    try:
-                        await friend_service.send_friend_message(source_friend_id, message)
-                        sent_count += 1
-                        await self._emit("tool_call", {
-                            "step": "message",
-                            "tool": "send_message",
-                            "input": source_friend_id,
-                            "output": "sent",
-                        })
-                    except Exception as exc:
-                        await self._emit("error", {
-                            "step": "message",
-                            "text": f"发送失败: {exc}",
-                        })
-                else:
+                except Exception as exc:
                     await self._emit("error", {
-                        "step": "message",
-                        "text": "缺少 source_friend_id，无法发送",
+                        "step": "job",
+                        "text": f"发送失败: {exc}",
                     })
-
-                await self._emit("step_end", {
-                    "step": "message",
-                    "job_title": job.title,
-                    "text": "完成",
+            else:
+                await self._emit("error", {
+                    "step": "job",
+                    "text": "缺少 source_friend_id，无法发送",
                 })
-            except Exception as exc:
-                logger.exception("agent workflow: failed processing job %s", job.title)
-                await self._emit("error", {"step": "message", "text": str(exc)})
 
-        summary = f"今日自动打招呼完成\n找到: {len(jobs)} | 打招呼: {task.result_summary.get('succeeded', 0)} | 发送消息: {sent_count}"
+            await self._emit("step_end", {
+                "step": "job",
+                "job_title": job.title,
+                "text": "完成",
+            })
+
+        summary = f"今日自动打招呼完成\n找到: {len(jobs)} | 打招呼: {greeted_count} | 发送消息: {sent_count}"
         await self._emit("chat", {"source": "agent", "text": summary})
         await send_feishu(summary)
 
@@ -462,26 +501,36 @@ class AgentWorker(BaseWorker):
         if not jobs:
             return "没有找到需要打招呼的职位"
 
-        await self._emit("step_start", {
-            "step": "cmd_greet_exec",
-            "text": f"开始打招呼 {len(jobs)} 个职位",
-        })
-
         greet_service = GreetingService(self.database, self.boss_client)
-        source_job_ids = [j.source_job_id for j in jobs]
-        task = await greet_service.run_greetings(
-            source_job_ids=source_job_ids,
-            greeting_message=None,
-            limit=len(jobs),
-        )
+        succeeded = 0
+        failed = 0
+        for idx, job in enumerate(jobs):
+            if idx > 0:
+                delay = random.uniform(5, 15)
+                await asyncio.sleep(delay)
 
-        await self._emit("step_end", {
-            "step": "cmd_greet_exec",
-            "succeeded": task.result_summary.get("succeeded", 0),
-            "failed": task.result_summary.get("failed", 0),
-        })
+            await self._emit("step_start", {
+                "step": "cmd_greet_job",
+                "text": f"#{idx + 1}/{len(jobs)} {job.title} @ {job.company}",
+            })
+            try:
+                greet_task = await greet_service.run_greetings(
+                    source_job_ids=[job.source_job_id],
+                    greeting_message=None,
+                    limit=1,
+                )
+                if greet_task.result_summary.get("succeeded", 0) > 0:
+                    succeeded += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+            await self._emit("step_end", {
+                "step": "cmd_greet_job",
+                "text": "完成",
+            })
 
-        return f"打招呼完成: {task.result_summary.get('succeeded', 0)} 成功 / {task.result_summary.get('failed', 0)} 失败"
+        return f"打招呼完成: {succeeded} 成功 / {failed} 失败"
 
     async def _cmd_evaluate(self, args: dict[str, Any]) -> str:
         await self._emit("step_start", {"step": "cmd_evaluate", "text": "触发 AI 评估"})
