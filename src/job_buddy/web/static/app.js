@@ -3,7 +3,7 @@ const AGENT_STEPS_STORAGE_KEY = "job_buddy.agent_steps";
 const AGENT_CHAT_STORAGE_KEY = "job_buddy.agent_chat";
 const MAX_AGENT_STEPS = 50;
 const DEFAULT_LOG_LIMIT = 200;
-const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs", "statistics", "agent"];
+const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs", "statistics", "profiles", "agent"];
 
 const state = {
   activeView: "dashboard",
@@ -2202,6 +2202,111 @@ async function executeStatistics() {
   }
 }
 
+// ── Profiles view ────────────────────────────────────────────────
+
+let profilesData = {};
+let activeProfileName = "resume";
+
+function renderMarkdown(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^## (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^# (.+)$/gm, "<h2>$1</h2>");
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, "<ul>$1</ul>");
+  html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, function(m) {
+    if (m.indexOf("<ul>") === -1) return "<ol>" + m + "</ol>";
+    return m;
+  });
+  html = html.replace(/\n\n/g, "</p><p>");
+  html = html.replace(/\n/g, "<br>");
+  html = "<p>" + html + "</p>";
+  html = html.replace(/<p>\s*<\/p>/g, "");
+  html = html.replace(/<\/p><br>/g, "</p>");
+  html = html.replace(/<br><p>/g, "<p>");
+  return html;
+}
+
+function updateProfilePreview() {
+  const input = document.getElementById("profileEditorInput");
+  const preview = document.getElementById("profilePreview");
+  if (input && preview) {
+    preview.innerHTML = renderMarkdown(input.value);
+  }
+}
+
+function switchProfileTab(name) {
+  activeProfileName = name;
+  document.querySelectorAll(".profile-tab").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.profile === name);
+  });
+  const input = document.getElementById("profileEditorInput");
+  if (input) {
+    input.value = profilesData[name] || "";
+    updateProfilePreview();
+  }
+}
+
+async function loadProfiles() {
+  try {
+    const items = await fetchJson("/web/profiles");
+    profilesData = {};
+    for (const item of items) {
+      profilesData[item.name] = item.content;
+    }
+    switchProfileTab(activeProfileName);
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+async function saveProfile() {
+  clearError();
+  setButtonBusy("saveProfileButton", true, "保存中");
+  try {
+    const content = document.getElementById("profileEditorInput").value;
+    await fetchJson(`/web/profiles/${encodeURIComponent(activeProfileName)}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+    profilesData[activeProfileName] = content;
+    document.getElementById("profileStatus").textContent = "已保存";
+    setTimeout(() => {
+      const el = document.getElementById("profileStatus");
+      if (el) el.textContent = "";
+    }, 3000);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setButtonBusy("saveProfileButton", false);
+  }
+}
+
+async function resetProfile() {
+  if (!confirm("确认重置？将从示例文件重新加载当前档案内容。")) return;
+  clearError();
+  setButtonBusy("resetProfileButton", true, "重置中");
+  try {
+    const result = await fetchJson(`/web/profiles/${encodeURIComponent(activeProfileName)}/reset`, {
+      method: "POST",
+    });
+    profilesData[activeProfileName] = result.content;
+    document.getElementById("profileEditorInput").value = result.content;
+    updateProfilePreview();
+    document.getElementById("profileStatus").textContent = "已重置";
+    setTimeout(() => {
+      const el = document.getElementById("profileStatus");
+      if (el) el.textContent = "";
+    }, 3000);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setButtonBusy("resetProfileButton", false);
+  }
+}
+
 // ── Agent view ──────────────────────────────────────────────────
 
 let agentEventSource = null;
@@ -2532,6 +2637,9 @@ async function loadView(viewId, params = {}) {
       break;
     case "statistics":
       break;
+    case "profiles":
+      await loadProfiles();
+      break;
     case "agent":
       await loadWorkers();
       initAgentView();
@@ -2726,6 +2834,16 @@ function bindEvents() {
   document
     .getElementById("executeStatisticsButton")
     .addEventListener("click", () => executeStatistics().catch((error) => showError(error.message)));
+  document.querySelectorAll(".profile-tab").forEach((btn) => {
+    btn.addEventListener("click", () => switchProfileTab(btn.dataset.profile));
+  });
+  document.getElementById("profileEditorInput").addEventListener("input", updateProfilePreview);
+  document
+    .getElementById("saveProfileButton")
+    .addEventListener("click", () => saveProfile().catch((error) => showError(error.message)));
+  document
+    .getElementById("resetProfileButton")
+    .addEventListener("click", () => resetProfile().catch((error) => showError(error.message)));
   document
     .getElementById("saveAgentWorkerButton")
     .addEventListener("click", () => saveAgentWorkerConfig().catch((error) => showError(error.message)));

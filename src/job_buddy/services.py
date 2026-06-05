@@ -2155,18 +2155,22 @@ class SystemService:
 class AIMatchingService:
     """AI-powered job-candidate matching evaluation."""
 
+    PROFILE_NAMES = ("resume", "criteria", "conversation_style")
+    PROFILE_PATHS: dict[str, str] = {}
+
     def __init__(self, database: AsyncIOMotorDatabase, settings: Settings) -> None:
         self.jobs = database["job_leads"]
         self.tasks = database["greeting_tasks"]
         self.friends = database["friend_records"]
+        self.profiles = database["personal_profiles"]
         self.settings = settings
         self._client = None
-        self._resume_mtime: float | None = None
-        self._resume_cache: str | None = None
-        self._criteria_mtime: float | None = None
-        self._criteria_cache: str | None = None
-        self._conversation_style_mtime: float | None = None
-        self._conversation_style_cache: str | None = None
+        if not self.PROFILE_PATHS:
+            self.PROFILE_PATHS.update({
+                "resume": settings.ai.resume_path,
+                "criteria": settings.ai.criteria_path,
+                "conversation_style": settings.ai.conversation_style_path,
+            })
 
     @property
     def client(self):
@@ -2182,38 +2186,64 @@ class AIMatchingService:
             path = self.settings.project_root / path
         return path
 
-    def _load_resume_and_criteria(self) -> tuple[str, str]:
-        resume_path = self._resolve_path(self.settings.ai.resume_path)
-        criteria_path = self._resolve_path(self.settings.ai.criteria_path)
+    async def _load_profile(self, name: str) -> str:
+        doc = await self.profiles.find_one({"name": name})
+        if doc and doc.get("content"):
+            return doc["content"]
 
-        resume_mtime = resume_path.stat().st_mtime if resume_path.exists() else 0
-        criteria_mtime = criteria_path.stat().st_mtime if criteria_path.exists() else 0
+        file_path = self.PROFILE_PATHS.get(name)
+        if file_path:
+            path = self._resolve_path(file_path)
+            if path.exists():
+                content = path.read_text(encoding="utf-8")
+                await self.profiles.update_one(
+                    {"name": name},
+                    {"$set": {"content": content, "updated_at": utc_now()}},
+                    upsert=True,
+                )
+                return content
 
-        if self._resume_cache is None or self._resume_mtime != resume_mtime:
-            from job_buddy.ai.job_evaluation import _load_markdown
+        return ""
 
-            self._resume_cache = _load_markdown(resume_path)
-            self._resume_mtime = resume_mtime
+    async def _load_resume_and_criteria(self) -> tuple[str, str]:
+        return await self._load_profile("resume"), await self._load_profile("criteria")
 
-        if self._criteria_cache is None or self._criteria_mtime != criteria_mtime:
-            from job_buddy.ai.job_evaluation import _load_markdown
+    async def _load_conversation_style(self) -> str:
+        return await self._load_profile("conversation_style")
 
-            self._criteria_cache = _load_markdown(criteria_path)
-            self._criteria_mtime = criteria_mtime
+    async def get_all_profiles(self) -> list[dict[str, str]]:
+        result = []
+        for name in self.PROFILE_NAMES:
+            content = await self._load_profile(name)
+            result.append({"name": name, "content": content})
+        return result
 
-        return self._resume_cache, self._criteria_cache
+    async def save_profile(self, name: str, content: str) -> str:
+        if name not in self.PROFILE_NAMES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"未知档案名称: {name}")
+        await self.profiles.update_one(
+            {"name": name},
+            {"$set": {"content": content, "updated_at": utc_now()}},
+            upsert=True,
+        )
+        return content
 
-    def _load_conversation_style(self) -> str:
-        style_path = self._resolve_path(self.settings.ai.conversation_style_path)
-        style_mtime = style_path.stat().st_mtime if style_path.exists() else 0
-
-        if self._conversation_style_cache is None or self._conversation_style_mtime != style_mtime:
-            from job_buddy.ai.job_evaluation import _load_markdown
-
-            self._conversation_style_cache = _load_markdown(style_path)
-            self._conversation_style_mtime = style_mtime
-
-        return self._conversation_style_cache
+    async def reset_profile(self, name: str) -> str:
+        if name not in self.PROFILE_NAMES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"未知档案名称: {name}")
+        file_path = self.PROFILE_PATHS.get(name)
+        if not file_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"未配置 {name} 文件路径")
+        path = self._resolve_path(file_path)
+        if not path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"示例文件不存在: {path}")
+        content = path.read_text(encoding="utf-8")
+        await self.profiles.update_one(
+            {"name": name},
+            {"$set": {"content": content, "updated_at": utc_now()}},
+            upsert=True,
+        )
+        return content
 
     async def evaluate_single_job(self, source_job_id: str) -> dict:
         """Evaluate a single job and persist the result to the database."""
@@ -2229,7 +2259,7 @@ class AIMatchingService:
                 detail="岗位暂无详情数据，请先采集职位详情后再进行AI评估",
             )
 
-        resume_text, criteria_text = self._load_resume_and_criteria()
+        resume_text, criteria_text = await self._load_resume_and_criteria()
 
         from job_buddy.ai.job_evaluation import build_evaluation_prompt
 
@@ -2286,8 +2316,8 @@ class AIMatchingService:
                 detail="岗位暂无详情数据，请先采集职位详情",
             )
 
-        resume_text, criteria_text = self._load_resume_and_criteria()
-        conversation_style_text = self._load_conversation_style()
+        resume_text, criteria_text = await self._load_resume_and_criteria()
+        conversation_style_text = await self._load_conversation_style()
 
         chat_history: list[dict[str, Any]] = []
         if job.source_friend_id:
@@ -2364,7 +2394,7 @@ class AIMatchingService:
         cursor = self.jobs.find({"ai_match": None, "detail_fetched_at": {"$ne": None}}).sort("updated_at", -1).limit(limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
-        resume_text, criteria_text = self._load_resume_and_criteria()
+        resume_text, criteria_text = await self._load_resume_and_criteria()
         from job_buddy.ai.job_evaluation import build_evaluation_prompt
 
         success_count = 0

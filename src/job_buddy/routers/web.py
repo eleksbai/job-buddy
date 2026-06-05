@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import StreamingResponse
 
 from job_buddy.boss import BossClient
-from job_buddy.deps import get_agent_worker, get_boss_client, get_dashboard_service, get_statistics_service, get_system_service
+from job_buddy.deps import get_agent_worker, get_ai_matching_service, get_boss_client, get_dashboard_service, get_statistics_service, get_system_service
 from job_buddy.schemas import (
     DataClearResponse,
     HealthResponse,
     LogsResponse,
     SearchOptionsResponse,
 )
-from job_buddy.services import DashboardService, StatisticsService, SystemService
+from job_buddy.services import AIMatchingService, DashboardService, StatisticsService, SystemService
 from job_buddy.messaging import send_feishu
 
 router = APIRouter(prefix="/web")
@@ -94,3 +94,18 @@ async def agent_chat(payload: dict, agent_worker=Depends(get_agent_worker)) -> d
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="消息不能为空")
     asyncio.create_task(agent_worker.handle_chat(text))
     return {"status": "ok"}
+
+
+@router.get("/profiles", tags=["profiles"], operation_id="list_profiles")
+async def list_profiles(service: AIMatchingService = Depends(get_ai_matching_service)) -> list[dict]:
+    return await service.get_all_profiles()
+
+
+@router.put("/profiles/{name}", tags=["profiles"], operation_id="save_profile")
+async def save_profile(name: str, payload: dict, service: AIMatchingService = Depends(get_ai_matching_service)) -> dict:
+    return {"name": name, "content": await service.save_profile(name, payload.get("content", ""))}
+
+
+@router.post("/profiles/{name}/reset", tags=["profiles"], operation_id="reset_profile")
+async def reset_profile(name: str, service: AIMatchingService = Depends(get_ai_matching_service)) -> dict:
+    return {"name": name, "content": await service.reset_profile(name)}

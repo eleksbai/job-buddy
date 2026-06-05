@@ -206,3 +206,8 @@ class AuthState(DocumentModel):
     ip: str | None = None
     uid: str | None = None
     last_error: str | None = None
+
+
+class PersonalProfile(DocumentModel):
+    name: str
+    content: str = ""

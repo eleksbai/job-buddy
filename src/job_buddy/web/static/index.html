@@ -23,6 +23,7 @@
           <button class="nav-link" data-view-target="doctor">诊断</button>
           <button class="nav-link" data-view-target="logs">日志</button>
           <button class="nav-link" data-view-target="statistics">统计</button>
+          <button class="nav-link" data-view-target="profiles">档案</button>
           <button class="nav-link" data-view-target="agent">AI Agent</button>
         </nav>
         <div class="auth-strip">
@@ -442,6 +443,34 @@
                 <h3>今日新增职位</h3>
               </div>
               <div id="statsCreatedToday" class="stack-list compact-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="profilesView" class="view-panel" data-view="profiles" hidden>
+          <div class="panel-header">
+            <div>
+              <h2>个人档案</h2>
+              <p>编辑个人简历、匹配标准、沟通风格，保存后 AI 评估即时生效。</p>
+            </div>
+          </div>
+
+          <div class="profile-tabs">
+            <button class="profile-tab is-active" data-profile="resume">个人简历</button>
+            <button class="profile-tab" data-profile="criteria">匹配标准</button>
+            <button class="profile-tab" data-profile="conversation_style">沟通风格</button>
+          </div>
+
+          <div class="profile-editor">
+            <textarea id="profileEditorInput" placeholder="加载中..."></textarea>
+            <div id="profilePreview" class="profile-preview panel-card"></div>
+          </div>
+
+          <div class="profile-actions">
+            <span id="profileStatus" class="hint-text"></span>
+            <div class="panel-actions">
+              <button id="saveProfileButton">保存</button>
+              <button id="resetProfileButton" class="button-secondary">重置</button>
             </div>
           </div>
         </section>
