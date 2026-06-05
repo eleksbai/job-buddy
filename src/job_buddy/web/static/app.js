@@ -797,12 +797,14 @@ async function loadJobs() {
   state.jobsPage = page;
   state.jobsLimit = limit;
 
-  const matchStatus = document.getElementById("jobsMatchStatusFilter")?.value || "";
   const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
+  const createdToday = document.getElementById("jobsCreatedTodayFilter")?.value || "";
+  const updatedToday = document.getElementById("jobsUpdatedTodayFilter")?.value || "";
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-  if (matchStatus) params.set("match_status", matchStatus);
   if (greeted === "true") params.set("greeted", "true");
   else if (greeted === "false") params.set("greeted", "false");
+  if (createdToday === "true") params.set("created_today", "true");
+  if (updatedToday === "true") params.set("updated_today", "true");
 
   const result = await fetchJson(`/boss/jobs?${params.toString()}`);
   state.jobs = result.items || [];
@@ -881,10 +883,6 @@ function getSortedFilteredJobs() {
   let items = [...state.jobs];
 
   // filter
-  const matchStatus = document.getElementById("jobsMatchStatusFilter")?.value || "";
-  if (matchStatus) {
-    items = items.filter((row) => row.match_status === matchStatus);
-  }
   const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
   if (greeted === "true") {
     items = items.filter((row) => row.greeted);
@@ -2360,7 +2358,7 @@ function bindEvents() {
   ["jobsSortSelect", "jobsAiMatchFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", renderJobsTable);
   });
-  ["jobsMatchStatusFilter", "jobsGreetedFilter"].forEach((id) => {
+  ["jobsGreetedFilter", "jobsCreatedTodayFilter", "jobsUpdatedTodayFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", () => {
       updateJobsPageParams(1, state.jobsLimit);
       loadJobs().catch((error) => showError(error.message));

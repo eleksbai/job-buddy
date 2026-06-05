@@ -356,10 +356,14 @@ class JobCollectionService:
             self._auth_service = auth_service
         return auth_service
 
-    async def list_jobs(self, match_status: str | None, greeted: bool | None, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
+    async def list_jobs(self, greeted: bool | None, created_today: bool = False, updated_today: bool = False, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
         filters: dict[str, Any] = {}
-        if match_status:
-            filters["match_status"] = match_status
+        if created_today or updated_today:
+            today_start = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        if created_today:
+            filters["created_at"] = {"$gte": today_start}
+        if updated_today:
+            filters["updated_at"] = {"$gte": today_start}
         if greeted is not None:
             filters["greeted"] = greeted
         total = await self.jobs.count_documents(filters)

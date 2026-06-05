@@ -55,14 +55,15 @@ router = APIRouter(prefix="/boss")
 
 @router.get("/jobs", response_model=JobListResponse, tags=["jobs"], operation_id="list_jobs")
 async def list_jobs(
-    match_status: str | None = None,
     greeted: bool | None = None,
+    created_today: bool = False,
+    updated_today: bool = False,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=1000),
     service: JobCollectionService = Depends(get_job_service),
 ) -> JobListResponse:
     skip = (page - 1) * limit
-    jobs, total = await service.list_jobs(match_status=match_status, greeted=greeted, skip=skip, limit=limit)
+    jobs, total = await service.list_jobs(greeted=greeted, created_today=created_today, updated_today=updated_today, skip=skip, limit=limit)
     return JobListResponse(
         items=[JobLeadRead(**item.model_dump()) for item in jobs],
         total=total,
