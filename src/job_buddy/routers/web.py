@@ -1,7 +1,11 @@
-from fastapi import APIRouter, Depends, Query, Response, status
+import asyncio
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from job_buddy.boss import BossClient
-from job_buddy.deps import get_boss_client, get_dashboard_service, get_statistics_service, get_system_service
+from job_buddy.deps import get_agent_worker, get_boss_client, get_dashboard_service, get_statistics_service, get_system_service
 from job_buddy.schemas import (
     DataClearResponse,
     HealthResponse,
@@ -61,3 +65,32 @@ async def send_today_statistics(service: StatisticsService = Depends(get_statist
     )
 
     return stats
+
+
+@router.get("/agent/events", tags=["agent"], operation_id="agent_events")
+async def agent_events(request: Request, agent_worker=Depends(get_agent_worker)):
+    async def event_generator():
+        async for event in agent_worker.subscribe():
+            if await request.is_disconnected():
+                break
+            data_str = json.dumps(event["data"], ensure_ascii=False, default=str)
+            yield f"event: {event['type']}\ndata: {data_str}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/agent/chat", tags=["agent"], operation_id="agent_chat")
+async def agent_chat(payload: dict, agent_worker=Depends(get_agent_worker)) -> dict:
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="消息不能为空")
+    asyncio.create_task(agent_worker.handle_chat(text))
+    return {"status": "ok"}

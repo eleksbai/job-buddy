@@ -12,6 +12,9 @@ from job_buddy.models import FeishuCredential
 logger = logging.getLogger(__name__)
 
 
+from typing import Callable, Awaitable
+
+
 class FeishuChannelManager:
     def __init__(self, database: AsyncIOMotorDatabase) -> None:
         self._database = database
@@ -19,6 +22,11 @@ class FeishuChannelManager:
         self._chat_id: str | None = None
         self._task: asyncio.Task[None] | None = None
         self._enabled = False
+        self._cmd_handler: Callable[[str, str], Awaitable[None]] | None = None
+
+    def set_command_handler(self, handler: Callable[[str, str], Awaitable[None]]) -> None:
+        """Register an async callback(chat_id, text) for incoming Feishu messages."""
+        self._cmd_handler = handler
 
     async def start(self) -> None:
         settings = get_settings()
@@ -54,6 +62,13 @@ class FeishuChannelManager:
             )
             logger.info("Feishu chat_id saved: %s", chat_id)
         await self._channel.send(self._chat_id, {"text": "收到"})
+
+        text = getattr(msg, "text", "") or ""
+        if text and self._cmd_handler:
+            try:
+                await self._cmd_handler(chat_id, text)
+            except Exception:
+                logger.exception("Feishu command handler failed")
 
     async def send(self, text: str) -> bool:
         if not self._enabled or not self._channel or not self._chat_id:

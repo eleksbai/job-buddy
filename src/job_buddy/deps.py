@@ -89,3 +89,7 @@ async def get_ai_matching_worker(request: Request):
     from job_buddy.worker import AIMatchingWorker
 
     return request.app.state.ai_matching_worker
+
+
+async def get_agent_worker(request: Request):
+    return request.app.state.agent_worker

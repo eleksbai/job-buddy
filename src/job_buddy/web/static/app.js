@@ -1,6 +1,9 @@
 const SEARCH_FORM_STORAGE_KEY = "job_buddy.search_form";
+const AGENT_STEPS_STORAGE_KEY = "job_buddy.agent_steps";
+const AGENT_CHAT_STORAGE_KEY = "job_buddy.agent_chat";
+const MAX_AGENT_STEPS = 50;
 const DEFAULT_LOG_LIMIT = 200;
-const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs", "statistics"];
+const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs", "statistics", "agent"];
 
 const state = {
   activeView: "dashboard",
@@ -247,6 +250,10 @@ function getCompanyScale(row) {
 }
 
 function setActiveView(viewId) {
+  if (state.activeView === "agent" && viewId !== "agent" && agentEventSource) {
+    agentEventSource.close();
+    agentEventSource = null;
+  }
   state.activeView = (VIEW_IDS.includes(viewId) || viewId === "job-detail") ? viewId : "dashboard";
   VIEW_IDS.forEach((view) => {
     const section = document.querySelector(`[data-view="${view}"]`);
@@ -1091,6 +1098,33 @@ function renderWorkers() {
   }
 
   renderAiMatchingWorker();
+  renderAgentWorker();
+}
+
+function renderAgentWorker() {
+  const worker = getWorker("agent");
+  const releaseButton = document.getElementById("releaseAgentWorkerButton");
+  const meta = document.getElementById("agentWorkerMeta");
+  if (!worker) {
+    if (meta) meta.innerHTML = "";
+    return;
+  }
+  document.getElementById("agentScheduleTimes").value = (worker.query.schedule_times || ["09:00", "14:00", "18:00"]).join(", ");
+  document.getElementById("agentScheduleJitterMinutes").value = String(worker.query.schedule_jitter_minutes ?? 60);
+  document.getElementById("agentGreetLimit").value = String(worker.query.greet_limit ?? 10);
+  if (releaseButton) {
+    releaseButton.disabled = !(worker.enabled && worker.status === "error");
+    releaseButton.classList.toggle("button-disabled", releaseButton.disabled);
+  }
+  if (meta) {
+    const parts = [
+      `<span>${renderStatusBadge(worker.enabled ? worker.status : "idle")}${worker.enabled ? "" : " <span class='hint-text'>未启动</span>"}</span>`,
+      worker.next_run_at ? `<span>下次: ${escapeHtml(formatDate(worker.next_run_at))}</span>` : null,
+      worker.last_finished_at ? `<span>上次: ${escapeHtml(formatDate(worker.last_finished_at))}</span>` : null,
+      worker.last_error ? `<span class="hint-text">错误: ${escapeHtml(worker.last_error)}</span>` : null,
+    ].filter(Boolean);
+    meta.innerHTML = parts.join(" · ");
+  }
 }
 
 function renderAiMatchingWorker() {
@@ -2168,6 +2202,309 @@ async function executeStatistics() {
   }
 }
 
+// ── Agent view ──────────────────────────────────────────────────
+
+let agentEventSource = null;
+let agentSteps = [];
+let agentChats = [];
+
+function saveAgentHistory() {
+  try {
+    const storage = getSafeStorage();
+    if (!storage) return;
+    storage.setItem(AGENT_STEPS_STORAGE_KEY, JSON.stringify(agentSteps.slice(-MAX_AGENT_STEPS)));
+    storage.setItem(AGENT_CHAT_STORAGE_KEY, JSON.stringify(agentChats.slice(-200)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function loadAgentHistory() {
+  try {
+    const storage = getSafeStorage();
+    if (!storage) return { steps: [], chats: [] };
+    const stepsRaw = storage.getItem(AGENT_STEPS_STORAGE_KEY);
+    const chatsRaw = storage.getItem(AGENT_CHAT_STORAGE_KEY);
+    return {
+      steps: stepsRaw ? JSON.parse(stepsRaw) : [],
+      chats: chatsRaw ? JSON.parse(chatsRaw) : [],
+    };
+  } catch {
+    return { steps: [], chats: [] };
+  }
+}
+
+function initAgentView() {
+  if (agentEventSource) {
+    agentEventSource.close();
+    agentEventSource = null;
+  }
+  const history = loadAgentHistory();
+  agentSteps = history.steps;
+  agentChats = history.chats;
+  renderAgentTimeline();
+  agentEventSource = new EventSource("/web/agent/events");
+
+  agentEventSource.addEventListener("step_start", (e) => {
+    const data = JSON.parse(e.data);
+    const stepId = data.step + "_" + Date.now();
+    const step = {
+      id: stepId,
+      step: data.step,
+      title: data.text || data.step,
+      status: "active",
+      events: [],
+      startTime: new Date(),
+    };
+    agentSteps.push(step);
+    renderAgentTimeline();
+    saveAgentHistory();
+  });
+
+  agentEventSource.addEventListener("step_end", (e) => {
+    const data = JSON.parse(e.data);
+    const active = agentSteps.filter((s) => s.step === data.step && s.status === "active");
+    if (active.length > 0) {
+      active[active.length - 1].status = "done";
+      active[active.length - 1].title = data.text || active[active.length - 1].title;
+      renderAgentTimeline();
+      saveAgentHistory();
+      setTimeout(() => collapseCompletedSteps(), 3000);
+    }
+  });
+
+  agentEventSource.addEventListener("tool_call", (e) => {
+    const data = JSON.parse(e.data);
+    appendToActiveStep(data.step || "", {
+      icon: "🛠",
+      text: `${data.tool}\n输入: ${data.input}\n输出: ${data.output}`,
+    });
+  });
+
+  agentEventSource.addEventListener("reasoning", (e) => {
+    const data = JSON.parse(e.data);
+    appendToActiveStep(data.step || "", {
+      icon: "💭",
+      text: data.text,
+      reasoning: true,
+    });
+  });
+
+  agentEventSource.addEventListener("chat", (e) => {
+    const data = JSON.parse(e.data);
+    appendChatMessage(data.source, data.text);
+  });
+
+  agentEventSource.addEventListener("error", (e) => {
+    const data = JSON.parse(e.data);
+    appendToActiveStep(data.step || "", {
+      icon: "❌",
+      text: data.text,
+      error: true,
+    });
+  });
+
+  agentEventSource.addEventListener("error", () => {
+    setTimeout(() => {
+      if (agentEventSource && agentEventSource.readyState === EventSource.CLOSED) {
+        initAgentView();
+      }
+    }, 3000);
+  });
+}
+
+function appendToActiveStep(stepName, eventData) {
+  const candidates = agentSteps.filter((s) => s.step === stepName && s.status === "active");
+  const target = candidates.length > 0 ? candidates[candidates.length - 1] : agentSteps[agentSteps.length - 1];
+  if (!target) return;
+  target.events.push(eventData);
+  renderAgentTimeline();
+  saveAgentHistory();
+}
+
+function appendChatMessage(source, text) {
+  agentChats.push({ source, text });
+  if (agentChats.length > 200) agentChats.shift();
+  saveAgentHistory();
+  renderAgentTimeline();
+}
+
+function renderAgentTimeline() {
+  renderAgentSteps();
+  renderAgentChats();
+}
+
+function renderAgentSteps() {
+  const container = document.getElementById("agentStepsContent");
+  if (!container) return;
+  container.innerHTML = "";
+
+  for (const step of agentSteps) {
+    const el = document.createElement("div");
+    el.className = "agent-step";
+    el.dataset.stepId = step.id;
+
+    const isActive = step.status === "active";
+    const isError = step.status === "error";
+    const statusClass = isActive ? "active" : isError ? "error" : "done";
+    const statusText = isActive ? "执行中" : isError ? "失败" : "完成";
+    const toggleIcon = isActive ? "▼" : "▶";
+
+    el.innerHTML = `<div class="agent-step-header" onclick="toggleAgentStep(this)">
+      <span class="agent-step-toggle">${toggleIcon}</span>
+      <span class="agent-step-title">${escapeHtml(step.title)}</span>
+      <span class="agent-step-status ${statusClass}">${statusText}</span>
+    </div>
+    <div class="agent-step-body" ${isActive ? "" : "hidden"}>${
+      step.events.map((ev) =>
+        `<div class="agent-event-row${ev.reasoning ? " agent-reasoning" : ""}">
+          <span class="agent-event-icon">${ev.icon || ""}</span>
+          <span class="agent-event-text">${escapeHtml(ev.text)}</span>
+        </div>`
+      ).join("")
+    }</div>`;
+
+    container.appendChild(el);
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderAgentChats() {
+  const container = document.getElementById("agentChatsContent");
+  if (!container) return;
+
+  container.innerHTML = "";
+  for (const chat of agentChats) {
+    const source = chat.source === "user" ? "user" : chat.source === "agent" ? "agent" : "feishu";
+    const bubble = document.createElement("div");
+    bubble.className = `agent-chat-bubble ${source}`;
+    const label = source === "user" ? "你" : source === "agent" ? "Agent" : "飞书";
+    bubble.innerHTML = `<div class="bubble-content">${source !== "user" ? `<div class="bubble-label">${escapeHtml(label)}</div>` : ""}${escapeHtml(chat.text)}</div>`;
+    container.appendChild(bubble);
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+function toggleAgentStep(header) {
+  const body = header.nextElementSibling;
+  const toggle = header.querySelector(".agent-step-toggle");
+  if (body) {
+    body.hidden = !body.hidden;
+    toggle.textContent = body.hidden ? "▶" : "▼";
+  }
+}
+
+function collapseCompletedSteps() {
+  for (const step of agentSteps) {
+    if (step.status === "done") {
+      const el = document.querySelector(`.agent-step[data-step-id="${step.id}"] .agent-step-body`);
+      const toggle = document.querySelector(`.agent-step[data-step-id="${step.id}"] .agent-step-toggle`);
+      if (el && !el.hidden) {
+        el.hidden = true;
+        if (toggle) toggle.textContent = "▶";
+      }
+    }
+  }
+}
+
+function collectAgentWorkerPayload() {
+  return {
+    query: {
+      schedule_times: (document.getElementById("agentScheduleTimes")?.value || "09:00, 14:00, 18:00")
+        .split(",").map((s) => s.trim()).filter(Boolean),
+      schedule_jitter_minutes: parseInt(document.getElementById("agentScheduleJitterMinutes")?.value || "60", 10) || 60,
+      greet_limit: parseInt(document.getElementById("agentGreetLimit")?.value || "10", 10) || 10,
+    },
+  };
+}
+
+async function saveAgentWorkerConfig() {
+  clearError();
+  setButtonBusy("saveAgentWorkerButton", true, "保存中");
+  try {
+    await fetchJson("/boss/workers/agent", {
+      method: "PUT",
+      body: JSON.stringify(collectAgentWorkerPayload()),
+    });
+    await loadWorkers();
+    showNotice("Agent 配置已保存", 3000);
+  } finally {
+    setButtonBusy("saveAgentWorkerButton", false);
+  }
+}
+
+async function startAgentWorker() {
+  clearError();
+  setButtonBusy("startAgentWorkerButton", true, "启动中");
+  try {
+    await fetchJson("/boss/workers/agent", {
+      method: "PUT",
+      body: JSON.stringify(collectAgentWorkerPayload()),
+    });
+    await fetchJson("/boss/workers/agent/start", { method: "POST" });
+    await loadWorkers();
+    showNotice("Agent 已启动", 3000);
+  } finally {
+    setButtonBusy("startAgentWorkerButton", false);
+  }
+}
+
+async function stopAgentWorker() {
+  clearError();
+  setButtonBusy("stopAgentWorkerButton", true, "停止中");
+  try {
+    await fetchJson("/boss/workers/agent/stop", { method: "POST" });
+    await loadWorkers();
+    showNotice("Agent 已停止", 3000);
+  } finally {
+    setButtonBusy("stopAgentWorkerButton", false);
+  }
+}
+
+async function releaseAgentWorker() {
+  clearError();
+  setButtonBusy("releaseAgentWorkerButton", true, "解除中");
+  try {
+    await fetchJson("/boss/workers/agent/release", { method: "POST" });
+    await loadWorkers();
+    showNotice("Agent 已解除限制", 3000);
+  } finally {
+    setButtonBusy("releaseAgentWorkerButton", false);
+  }
+}
+
+async function executeAgentWorker() {
+  clearError();
+  setButtonBusy("executeAgentWorkerButton", true, "执行中");
+  try {
+    await fetchJson("/boss/workers/agent/execute", { method: "POST" });
+    await loadWorkers();
+    showNotice("Agent 工作流执行中", 5000);
+  } finally {
+    setButtonBusy("executeAgentWorkerButton", false);
+  }
+}
+
+async function sendAgentChat() {
+  const input = document.getElementById("agentChatInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  autoResizeAgentInput();
+  try {
+    await fetchJson("/web/agent/chat", { method: "POST", body: JSON.stringify({ text }) });
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function autoResizeAgentInput() {
+  const input = document.getElementById("agentChatInput");
+  if (!input) return;
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + "px";
+}
+
 async function loadView(viewId, params = {}) {
   clearError();
   switch (viewId) {
@@ -2194,6 +2531,10 @@ async function loadView(viewId, params = {}) {
       await loadLogs();
       break;
     case "statistics":
+      break;
+    case "agent":
+      await loadWorkers();
+      initAgentView();
       break;
     case "job-detail":
       await loadJobDetailPage(params.sourceJobId);
@@ -2385,6 +2726,30 @@ function bindEvents() {
   document
     .getElementById("executeStatisticsButton")
     .addEventListener("click", () => executeStatistics().catch((error) => showError(error.message)));
+  document
+    .getElementById("saveAgentWorkerButton")
+    .addEventListener("click", () => saveAgentWorkerConfig().catch((error) => showError(error.message)));
+  document
+    .getElementById("startAgentWorkerButton")
+    .addEventListener("click", () => startAgentWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("stopAgentWorkerButton")
+    .addEventListener("click", () => stopAgentWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("releaseAgentWorkerButton")
+    .addEventListener("click", () => releaseAgentWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("executeAgentWorkerButton")
+    .addEventListener("click", () => executeAgentWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("agentChatSendButton")
+    .addEventListener("click", () => sendAgentChat().catch((error) => showError(error.message)));
+  document.getElementById("agentChatInput").addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      sendAgentChat().catch((error) => showError(error.message));
+    }
+  });
+  document.getElementById("agentChatInput").addEventListener("input", autoResizeAgentInput);
   document
     .getElementById("syncConversationsFromChatButton")
     .addEventListener("click", () => syncFriends().catch((error) => showError(error.message)));
