@@ -52,6 +52,7 @@ from job_buddy.models import (
     utc_now,
 )
 from job_buddy.repositories import JobCollectionRepository
+from job_buddy.messaging import send_feishu
 from job_buddy.schemas import (
     AuthStatusResponse,
     DataClearResponse,
@@ -1076,6 +1077,13 @@ class JobCollectionService:
             logger.warning("BOSS scroll and collect failed: task_id=%s error=%s", task.id, exc)
             raise map_boss_operation_error(exc) from exc
 
+        await send_feishu(
+            f"滚动采集完成\n"
+            f"搜索: {query.get('query', '')}\n"
+            f"列表采集: {stats['scroll_collected']} | 详情采集: {stats['detail_collected']}\n"
+            f"新建: {stats['detail_created']} | 更新: {stats['detail_updated']} | 跳过: {stats['detail_skipped']}"
+        )
+
         await _update_model(
             self.tasks,
             GreetingTask,
@@ -1395,6 +1403,15 @@ class BaseWorker(ABC):
             )
             raise WorkerFailException() from exc
 
+    async def execute_now(self) -> WorkerConfig:
+        worker = await self.get_worker()
+        if not worker.enabled:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker 未启动")
+        async with self._run_lock:
+            if await self.has_running_task():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="已有任务正在执行")
+            return await self.execute()
+
     @abstractmethod
     async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
         raise NotImplementedError
@@ -1591,6 +1608,14 @@ class ScrollAndCollectWorker(BaseWorker):
         task = await job_service.scroll_and_collect_jobs(query=query, max_jobs=worker.batch_size)
         logger.info("executing worker %s %s", self.worker_name, task.status)
         return await self.complete_execution(worker, task)
+
+    async def execute_now(self) -> WorkerConfig:
+        result = await super().execute_now()
+        worker = await self.get_worker()
+        await self._update_worker_model({
+            "next_run_at": self._calculate_next_run(worker),
+        })
+        return result
 
     async def _run(self) -> None:
         while not self._stopped.is_set():

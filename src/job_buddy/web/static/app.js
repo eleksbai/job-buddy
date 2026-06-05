@@ -1853,6 +1853,18 @@ async function releaseScrollAndCollectWorker() {
   }
 }
 
+async function executeScrollAndCollectWorker() {
+  clearError();
+  setButtonBusy("executeScrollAndCollectWorkerButton", true, "执行中");
+  try {
+    await fetchJson("/boss/workers/scroll_and_collect/execute", { method: "POST" });
+    await loadWorkers();
+    showNotice("滚动采集执行中", 5000);
+  } finally {
+    setButtonBusy("executeScrollAndCollectWorkerButton", false);
+  }
+}
+
 async function saveAiMatchingWorkerConfig() {
   clearError();
   setButtonBusy("saveAiMatchingWorkerButton", true, "保存中");
@@ -2285,6 +2297,9 @@ function bindEvents() {
   document
     .getElementById("releaseScrollAndCollectWorkerButton")
     .addEventListener("click", () => releaseScrollAndCollectWorker().catch((error) => showError(error.message)));
+  document
+    .getElementById("executeScrollAndCollectWorkerButton")
+    .addEventListener("click", () => executeScrollAndCollectWorker().catch((error) => showError(error.message)));
   document
     .getElementById("saveAiMatchingWorkerButton")
     .addEventListener("click", () => saveAiMatchingWorkerConfig().catch((error) => showError(error.message)));

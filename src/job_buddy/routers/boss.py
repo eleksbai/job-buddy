@@ -305,6 +305,18 @@ async def release_worker(
     return WorkerConfigRead(**item.model_dump())
 
 
+@router.post("/workers/{worker_name}/execute", response_model=WorkerConfigRead, tags=["workers"], operation_id="execute_worker")
+async def execute_worker(
+    worker_name: str,
+    search_worker: SearchWorker = Depends(get_search_worker),
+    detail_worker: DetailWorker = Depends(get_detail_worker),
+    scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
+    ai_matching_worker = Depends(get_ai_matching_worker),
+) -> WorkerConfigRead:
+    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker).execute_now()
+    return WorkerConfigRead(**item.model_dump())
+
+
 @router.get("/friends", response_model=list[FriendRecordRead], tags=["friends"], operation_id="list_friends")
 async def list_friends(
     service: FriendService = Depends(get_friend_service),
