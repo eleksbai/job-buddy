@@ -12,6 +12,7 @@ from job_buddy.services import (
     JobCollectionService,
     ScrollAndCollectWorker,
     SearchWorker,
+    StatisticsService,
     SystemService,
 )
 
@@ -59,6 +60,10 @@ async def get_system_service(
     boss_client: BossClient = Depends(get_boss_client),
 ) -> SystemService:
     return SystemService(BossDoctorRunner(settings), settings, boss_client, db)
+
+
+async def get_statistics_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> StatisticsService:
+    return StatisticsService(db)
 
 
 async def get_search_worker(request: Request) -> SearchWorker:

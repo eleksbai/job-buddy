@@ -1971,6 +1971,46 @@ class DashboardService:
         }
 
 
+class StatisticsService:
+    def __init__(self, database: AsyncIOMotorDatabase) -> None:
+        self.jobs = database["job_leads"]
+
+    async def get_today_stats(self) -> dict[str, Any]:
+        today_start = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        pipeline = [
+            {"$facet": {
+                "updated_today": [
+                    {"$match": {"updated_at": {"$gte": today_start}}},
+                    {"$group": {"_id": "$ai_match", "count": {"$sum": 1}}},
+                ],
+                "created_today": [
+                    {"$match": {"created_at": {"$gte": today_start}}},
+                    {"$group": {"_id": "$ai_match", "count": {"$sum": 1}}},
+                ],
+            }}
+        ]
+        result = await self.jobs.aggregate(pipeline).to_list(length=1)
+        facets = result[0] if result else {"updated_today": [], "created_today": []}
+
+        def _parse_group(rows: list[dict]) -> dict[str, int]:
+            counts = {"matched": 0, "unmatched": 0, "unanalyzed": 0}
+            for row in rows:
+                key = row["_id"]
+                if key is True:
+                    counts["matched"] = row["count"]
+                elif key is False:
+                    counts["unmatched"] = row["count"]
+                elif key is None:
+                    counts["unanalyzed"] = row["count"]
+            counts["total"] = sum(counts.values())
+            return counts
+
+        return {
+            "updated_today": _parse_group(facets["updated_today"]),
+            "created_today": _parse_group(facets["created_today"]),
+        }
+
+
 class SystemService:
     data_collection_names = (
         "target_profiles",

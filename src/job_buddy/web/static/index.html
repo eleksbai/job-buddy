@@ -22,6 +22,7 @@
           <button class="nav-link" data-view-target="conversations">沟通</button>
           <button class="nav-link" data-view-target="doctor">诊断</button>
           <button class="nav-link" data-view-target="logs">日志</button>
+          <button class="nav-link" data-view-target="statistics">统计</button>
         </nav>
         <div class="auth-strip">
           <div id="authStripSummary" class="auth-strip-summary">
@@ -408,6 +409,33 @@
           <div class="panel-card">
             <div id="logsMeta" class="stack-list compact-list"></div>
             <div id="logsViewer" class="logs-viewer"></div>
+          </div>
+        </section>
+
+        <section id="statisticsView" class="view-panel" data-view="statistics" hidden>
+          <div class="panel-header">
+            <div>
+              <h2>职位统计</h2>
+              <p>统计今日职位变更情况并发送到飞书。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="executeStatisticsButton">统计并发送</button>
+            </div>
+          </div>
+
+          <div class="dashboard-grid">
+            <div class="panel-card panel-card-wide">
+              <div class="panel-card-header">
+                <h3>今日更新职位</h3>
+              </div>
+              <div id="statsUpdatedToday" class="stack-list compact-list"></div>
+            </div>
+            <div class="panel-card panel-card-wide">
+              <div class="panel-card-header">
+                <h3>今日新增职位</h3>
+              </div>
+              <div id="statsCreatedToday" class="stack-list compact-list"></div>
+            </div>
           </div>
         </section>
 

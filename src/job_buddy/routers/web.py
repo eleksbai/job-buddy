@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from job_buddy.boss import BossClient
-from job_buddy.deps import get_boss_client, get_dashboard_service, get_system_service
+from job_buddy.deps import get_boss_client, get_dashboard_service, get_statistics_service, get_system_service
 from job_buddy.schemas import (
     DataClearResponse,
     HealthResponse,
     LogsResponse,
     SearchOptionsResponse,
 )
-from job_buddy.services import DashboardService, SystemService
+from job_buddy.services import DashboardService, StatisticsService, SystemService
+from job_buddy.messaging import send_feishu
 
 router = APIRouter(prefix="/web")
 
@@ -44,3 +45,19 @@ async def get_logs(
 @router.post("/system/data/clear", response_model=DataClearResponse, tags=["system"], operation_id="clear_data")
 async def clear_data(service: SystemService = Depends(get_system_service)) -> DataClearResponse:
     return await service.clear_data()
+
+
+@router.post("/statistics/today/send", tags=["statistics"], operation_id="send_today_statistics")
+async def send_today_statistics(service: StatisticsService = Depends(get_statistics_service)) -> dict:
+    stats = await service.get_today_stats()
+
+    updated = stats["updated_today"]
+    created = stats["created_today"]
+
+    await send_feishu(
+        f"今日职位统计\n\n"
+        f"今日更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
+        f"今日新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
+    )
+
+    return stats

@@ -1,6 +1,6 @@
 const SEARCH_FORM_STORAGE_KEY = "job_buddy.search_form";
 const DEFAULT_LOG_LIMIT = 200;
-const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs"];
+const VIEW_IDS = ["dashboard", "search", "jobs", "tasks", "conversations", "doctor", "logs", "statistics"];
 
 const state = {
   activeView: "dashboard",
@@ -2141,6 +2141,35 @@ async function clearAiMarks() {
   }
 }
 
+function renderStatisticsCounts(containerId, stats) {
+  const container = document.getElementById(containerId);
+  const items = [
+    { label: "AI 匹配", value: stats.matched, className: "status-ok" },
+    { label: "AI 不匹配", value: stats.unmatched, className: "status-error" },
+    { label: "未分析", value: stats.unanalyzed, className: "status-warn" },
+    { label: "合计", value: stats.total, className: "" },
+  ];
+  container.innerHTML = items
+    .map(
+      (item) =>
+        `<div><span>${escapeHtml(item.label)}</span> <span class="${item.className ? `status-badge ${item.className}` : ""}">${item.value}</span></div>`
+    )
+    .join("");
+}
+
+async function executeStatistics() {
+  clearError();
+  setButtonBusy("executeStatisticsButton", true, "统计中");
+  try {
+    const stats = await fetchJson("/web/statistics/today/send", { method: "POST" });
+    renderStatisticsCounts("statsUpdatedToday", stats.updated_today);
+    renderStatisticsCounts("statsCreatedToday", stats.created_today);
+    showNotice("统计已发送到飞书", 5000);
+  } finally {
+    setButtonBusy("executeStatisticsButton", false);
+  }
+}
+
 async function loadView(viewId, params = {}) {
   clearError();
   switch (viewId) {
@@ -2165,6 +2194,8 @@ async function loadView(viewId, params = {}) {
       break;
     case "logs":
       await loadLogs();
+      break;
+    case "statistics":
       break;
     case "job-detail":
       await loadJobDetailPage(params.sourceJobId);
@@ -2353,6 +2384,9 @@ function bindEvents() {
   document
     .getElementById("refreshLogsButton")
     .addEventListener("click", () => loadLogs().catch((error) => showError(error.message)));
+  document
+    .getElementById("executeStatisticsButton")
+    .addEventListener("click", () => executeStatistics().catch((error) => showError(error.message)));
   document
     .getElementById("syncConversationsFromChatButton")
     .addEventListener("click", () => syncFriends().catch((error) => showError(error.message)));
