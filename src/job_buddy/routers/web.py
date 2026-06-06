@@ -59,9 +59,9 @@ async def send_today_statistics(service: StatisticsService = Depends(get_statist
     created = stats["created_today"]
 
     await send_feishu(
-        f"今日职位统计\n\n"
-        f"今日更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
-        f"今日新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
+        f"24小时内职位统计\n\n"
+        f"24小时内更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
+        f"24小时内新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
     )
 
     return stats

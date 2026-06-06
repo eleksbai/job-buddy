@@ -257,19 +257,19 @@
                   <option value="title_desc">职位名 Z-A</option>
                   <option value="search_count_desc">搜索次数 高-低</option>
                   <option value="search_count_asc">搜索次数 低-高</option>
-                  <option value="ai_score_desc">AI评分 高-低</option>
+                  <option value="ai_score_desc" selected>AI评分 高-低</option>
                   <option value="ai_score_asc">AI评分 低-高</option>
                 </select>
               </label>
               <label>
-                今日新增
+                24小时内新增
                 <select id="jobsCreatedTodayFilter">
                   <option value="">全部</option>
-                  <option value="true">是</option>
+                  <option value="true" selected>是</option>
                 </select>
               </label>
               <label>
-                今日更新
+                24小时内更新
                 <select id="jobsUpdatedTodayFilter">
                   <option value="">全部</option>
                   <option value="true">是</option>
@@ -287,7 +287,7 @@
                 AI匹配
                 <select id="jobsAiMatchFilter">
                   <option value="">全部</option>
-                  <option value="true">已匹配</option>
+                  <option value="true" selected>已匹配</option>
                   <option value="false">未匹配</option>
                   <option value="null">未评估</option>
                 </select>
@@ -424,7 +424,7 @@
           <div class="panel-header">
             <div>
               <h2>职位统计</h2>
-              <p>统计今日职位变更情况并发送到飞书。</p>
+              <p>统计24小时内职位变更情况并发送到飞书。</p>
             </div>
             <div class="panel-actions">
               <button id="executeStatisticsButton">统计并发送</button>
@@ -434,13 +434,13 @@
           <div class="dashboard-grid">
             <div class="panel-card panel-card-wide">
               <div class="panel-card-header">
-                <h3>今日更新职位</h3>
+                <h3>24小时内更新职位</h3>
               </div>
               <div id="statsUpdatedToday" class="stack-list compact-list"></div>
             </div>
             <div class="panel-card panel-card-wide">
               <div class="panel-card-header">
-                <h3>今日新增职位</h3>
+                <h3>24小时内新增职位</h3>
               </div>
               <div id="statsCreatedToday" class="stack-list compact-list"></div>
             </div>
@@ -453,6 +453,11 @@
               <h2>个人档案</h2>
               <p>编辑个人简历、匹配标准、沟通风格，保存后 AI 评估即时生效。</p>
             </div>
+            <div class="panel-actions">
+              <span id="profileStatus" class="hint-text"></span>
+              <button id="saveProfileButton">保存</button>
+              <button id="resetProfileButton" class="button-secondary">重置</button>
+            </div>
           </div>
 
           <div class="profile-tabs">
@@ -464,14 +469,6 @@
           <div class="profile-editor">
             <textarea id="profileEditorInput" placeholder="加载中..."></textarea>
             <div id="profilePreview" class="profile-preview panel-card"></div>
-          </div>
-
-          <div class="profile-actions">
-            <span id="profileStatus" class="hint-text"></span>
-            <div class="panel-actions">
-              <button id="saveProfileButton">保存</button>
-              <button id="resetProfileButton" class="button-secondary">重置</button>
-            </div>
           </div>
         </section>
 

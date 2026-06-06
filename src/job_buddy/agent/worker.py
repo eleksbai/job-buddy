@@ -169,11 +169,18 @@ class AgentWorker(BaseWorker):
         })
 
     async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
-        await self._execute_workflow()
+        try:
+            await self._execute_workflow()
+        except Exception as exc:
+            logger.exception("agent workflow failed")
+            return await self._update_worker_model({
+                "status": "error",
+                "last_error": str(exc),
+            })
         return await self._update_worker_model({
             "status": "idle",
             "last_finished_at": utc_now(),
-            "next_run_at   ": self._calculate_next_run(worker),
+            "next_run_at": self._calculate_next_run(worker),
         })
 
     async def execute_now(self) -> WorkerConfig:
@@ -200,9 +207,14 @@ class AgentWorker(BaseWorker):
                     except Exception:
                         logger.exception("worker %s run failed", self.worker_name)
                     worker = await self.get_worker()
-                    await self._update_worker_model({
-                        "next_run_at": self._calculate_next_run(worker),
-                    })
+                    if worker.status == "error":
+                        await self._update_worker_model({
+                            "next_run_at": utc_now() + timedelta(minutes=5),
+                        })
+                    else:
+                        await self._update_worker_model({
+                            "next_run_at": self._calculate_next_run(worker),
+                        })
                 else:
                     wait = max(5, (next_run - now).total_seconds())
                     logger.info(
@@ -226,14 +238,12 @@ class AgentWorker(BaseWorker):
 
         await self._emit("step_start", {
             "step": "find_jobs",
-            "text": f"查找今日新增且AI匹配的职位（限制 {greet_limit} 个）",
+            "text": f"查找近5天内更新、AI匹配且未打招呼的职位（限制 {greet_limit} 个）",
         })
 
-        today_start = datetime.now(tz=timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-        )
+        since_5d = utc_now() - timedelta(days=5)
         cursor = self.database["job_leads"].find({
-            "created_at": {"$gte": today_start},
+            "updated_at": {"$gte": since_5d},
             "ai_match": True,
             "greeted": False,
         }).sort([("ai_score", -1), ("created_at", -1)]).limit(greet_limit)
@@ -248,9 +258,9 @@ class AgentWorker(BaseWorker):
         if not jobs:
             await self._emit("chat", {
                 "source": "agent",
-                "text": "今日无新增AI匹配职位需要打招呼",
+                "text": "近5天内无符合条件的职位需要打招呼",
             })
-            await send_feishu("今日无新增AI匹配职位需要打招呼")
+            await send_feishu("近5天内无符合条件的职位需要打招呼")
             return
 
         greet_service = GreetingService(self.database, self.boss_client)
@@ -400,7 +410,7 @@ class AgentWorker(BaseWorker):
                 "text": "完成",
             })
 
-        summary = f"今日自动打招呼完成\n找到: {len(jobs)} | 打招呼: {greeted_count} | 发送消息: {sent_count}"
+        summary = f"自动打招呼完成\n找到: {len(jobs)} | 打招呼: {greeted_count} | 发送消息: {sent_count}"
         await self._emit("chat", {"source": "agent", "text": summary})
         await send_feishu(summary)
 
@@ -482,11 +492,9 @@ class AgentWorker(BaseWorker):
             "text": f"查找需打招呼的职位（限制 {limit} 个）",
         })
 
-        today_start = datetime.now(tz=timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-        )
+        since_5d = utc_now() - timedelta(days=5)
         cursor = self.database["job_leads"].find({
-            "created_at": {"$gte": today_start},
+            "updated_at": {"$gte": since_5d},
             "ai_match": True,
             "greeted": False,
         }).sort([("ai_score", -1), ("created_at", -1)]).limit(limit)
@@ -551,21 +559,21 @@ class AgentWorker(BaseWorker):
         return "滚动采集任务已发起"
 
     async def _cmd_stats(self, args: dict[str, Any]) -> str:
-        await self._emit("step_start", {"step": "cmd_stats", "text": "统计今日职位"})
+        await self._emit("step_start", {"step": "cmd_stats", "text": "统计24小时内职位"})
         stats_service = StatisticsService(self.database)
         stats = await stats_service.get_today_stats()
         updated = stats["updated_today"]
         created = stats["created_today"]
 
         result = (
-            f"今日更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
-            f"今日新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
+            f"24小时内更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
+            f"24小时内新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
         )
 
         await send_feishu(
-            f"今日职位统计\n\n"
-            f"今日更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
-            f"今日新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
+            f"24小时内职位统计\n\n"
+            f"24小时内更新: {updated['total']}（匹配: {updated['matched']} | 不匹配: {updated['unmatched']} | 未分析: {updated['unanalyzed']}）\n"
+            f"24小时内新增: {created['total']}（匹配: {created['matched']} | 不匹配: {created['unmatched']} | 未分析: {created['unanalyzed']}）"
         )
 
         await self._emit("step_end", {"step": "cmd_stats", "text": result})
@@ -665,7 +673,7 @@ class AgentWorker(BaseWorker):
             "• 打招呼 [数量] — 对今日AI匹配的新增职位打招呼\n"
             "• 评估 — 触发 AI 职位评估\n"
             "• 采集 — 触发滚动采集\n"
-            "• 统计 — 今日职位统计\n"
+            "• 统计 — 24小时内职位统计\n"
             "• 查询 <关键词> — 按关键词搜索职位\n"
             "• 发消息 <职位ID> — 生成并发送AI消息\n"
             "• 帮助 — 显示此信息"

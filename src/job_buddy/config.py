@@ -54,9 +54,9 @@ class AIConfig(BaseModel):
         ]
     )
     default_provider: str | None = None
-    resume_path: str = "data/resume.md"
-    criteria_path: str = "data/matching_criteria.md"
-    conversation_style_path: str = "data/conversation_style.md"
+    resume_path: str = "templates/resume.md"
+    criteria_path: str = "templates/matching_criteria.md"
+    conversation_style_path: str = "templates/conversation_style.md"
     request_delay_seconds: float = 1.0
     temperature: float = 0.1
 

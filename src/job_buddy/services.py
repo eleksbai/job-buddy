@@ -359,11 +359,11 @@ class JobCollectionService:
     async def list_jobs(self, greeted: bool | None, created_today: bool = False, updated_today: bool = False, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
         filters: dict[str, Any] = {}
         if created_today or updated_today:
-            today_start = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            since_24h = utc_now() - timedelta(hours=24)
         if created_today:
-            filters["created_at"] = {"$gte": today_start}
+            filters["created_at"] = {"$gte": since_24h}
         if updated_today:
-            filters["updated_at"] = {"$gte": today_start}
+            filters["updated_at"] = {"$gte": since_24h}
         if greeted is not None:
             filters["greeted"] = greeted
         total = await self.jobs.count_documents(filters)
@@ -1980,15 +1980,15 @@ class StatisticsService:
         self.jobs = database["job_leads"]
 
     async def get_today_stats(self) -> dict[str, Any]:
-        today_start = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        since_24h = utc_now() - timedelta(hours=24)
         pipeline = [
             {"$facet": {
                 "updated_today": [
-                    {"$match": {"updated_at": {"$gte": today_start}}},
+                    {"$match": {"updated_at": {"$gte": since_24h}}},
                     {"$group": {"_id": "$ai_match", "count": {"$sum": 1}}},
                 ],
                 "created_today": [
-                    {"$match": {"created_at": {"$gte": today_start}}},
+                    {"$match": {"created_at": {"$gte": since_24h}}},
                     {"$group": {"_id": "$ai_match", "count": {"$sum": 1}}},
                 ],
             }}

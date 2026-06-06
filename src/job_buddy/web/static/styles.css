@@ -1024,21 +1024,21 @@ a {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
-  min-height: 50vh;
-  margin-bottom: 0.75rem;
+  max-height: calc(100vh - 18rem);
+  overflow: hidden;
 }
 
 @media (max-width: 900px) {
   .profile-editor {
     grid-template-columns: 1fr;
-    min-height: 60vh;
+    max-height: none;
   }
 }
 
 .profile-editor textarea {
   width: 100%;
   height: 100%;
-  min-height: 50vh;
+  min-height: 40vh;
   padding: 1rem;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1047,6 +1047,7 @@ a {
   line-height: 1.5;
   background: rgba(255, 255, 255, 0.94);
   resize: none;
+  overflow-y: auto;
   color: var(--ink);
 }
 
@@ -1090,10 +1091,4 @@ a {
 
 .profile-preview strong {
   font-weight: 600;
-}
-
-.profile-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
