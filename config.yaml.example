@@ -16,7 +16,6 @@ mongo:
   db: job_buddy
 
 boss:
-  default_greeting: 您好，我对该岗位很感兴趣，希望能和您聊一聊。
   profile_dir: data/chrome_profile
   proxy: ""
 
@@ -30,8 +29,5 @@ ai:
       model: gpt-3.5-turbo
       api_key: ""
   default_provider: openai
-  resume_path: data/resume.md
-  criteria_path: data/matching_criteria.md
-  conversation_style_path: data/conversation_style.md
   request_delay_seconds: 1.0
   temperature: 0.1

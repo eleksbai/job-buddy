@@ -31,7 +31,6 @@ class MongoConfig(BaseModel):
 
 
 class BossConfig(BaseModel):
-    default_greeting: str = "您好，我对该岗位很感兴趣，希望能和您聊一聊。"
     profile_dir: str = "data/chrome_profile"
     proxy: str = ""
 
