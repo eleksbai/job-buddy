@@ -106,6 +106,13 @@ function formatDate(value) {
   return new Date(value).toLocaleString();
 }
 
+function formatTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function renderStatusBadge(status) {
   const normalized = String(status || "info").toLowerCase();
   const mappedStatus = {
@@ -2359,7 +2366,7 @@ function initAgentView() {
       title: data.text || data.step,
       status: "active",
       events: [],
-      startTime: new Date(),
+      startTime: data.ts || new Date().toISOString(),
     };
     agentSteps.push(step);
     renderAgentTimeline();
@@ -2397,7 +2404,7 @@ function initAgentView() {
 
   agentEventSource.addEventListener("chat", (e) => {
     const data = JSON.parse(e.data);
-    appendChatMessage(data.source, data.text);
+    appendChatMessage(data.source, data.text, data.ts);
   });
 
   agentEventSource.addEventListener("error", (e) => {
@@ -2427,8 +2434,8 @@ function appendToActiveStep(stepName, eventData) {
   saveAgentHistory();
 }
 
-function appendChatMessage(source, text) {
-  agentChats.push({ source, text });
+function appendChatMessage(source, text, ts) {
+  agentChats.push({ source, text, ts: ts || new Date().toISOString() });
   if (agentChats.length > 200) agentChats.shift();
   saveAgentHistory();
   renderAgentTimeline();
@@ -2455,10 +2462,13 @@ function renderAgentSteps() {
     const statusText = isActive ? "执行中" : isError ? "失败" : "完成";
     const toggleIcon = isActive ? "▼" : "▶";
 
+    const timeStr = step.startTime ? formatTime(step.startTime) : "";
+
     el.innerHTML = `<div class="agent-step-header" onclick="toggleAgentStep(this)">
       <span class="agent-step-toggle">${toggleIcon}</span>
       <span class="agent-step-title">${escapeHtml(step.title)}</span>
       <span class="agent-step-status ${statusClass}">${statusText}</span>
+      ${timeStr ? `<span class="agent-step-time">${escapeHtml(timeStr)}</span>` : ""}
     </div>
     <div class="agent-step-body" ${isActive ? "" : "hidden"}>${
       step.events.map((ev) =>
@@ -2484,7 +2494,8 @@ function renderAgentChats() {
     const bubble = document.createElement("div");
     bubble.className = `agent-chat-bubble ${source}`;
     const label = source === "user" ? "你" : source === "agent" ? "Agent" : "飞书";
-    bubble.innerHTML = `<div class="bubble-content">${source !== "user" ? `<div class="bubble-label">${escapeHtml(label)}</div>` : ""}${escapeHtml(chat.text)}</div>`;
+    const timeStr = chat.ts ? formatTime(chat.ts) : "";
+    bubble.innerHTML = `<div class="bubble-content">${source !== "user" ? `<div class="bubble-label">${escapeHtml(label)}</div>` : ""}${escapeHtml(chat.text)}</div>${timeStr ? `<div class="bubble-time">${escapeHtml(timeStr)}</div>` : ""}`;
     container.appendChild(bubble);
   }
   container.scrollTop = container.scrollHeight;

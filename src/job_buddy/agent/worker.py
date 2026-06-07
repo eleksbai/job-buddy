@@ -29,12 +29,11 @@ _CST = timezone(timedelta(hours=8))
 CMD_PROMPT = """你是一个求职助手指令解析器。根据用户的自然语言输入，输出 JSON 格式的指令。
 
 可用指令：
-- greet: 打招呼 — 参数: limit(数量, 可选)
+- greet: 打招呼并发送消息 — 参数: limit(数量, 可选)
 - evaluate: 执行 AI 评估 — 无参数
 - collect: 滚动采集职位 — 无参数
-- stats: 今日统计 — 无参数
+- stats: 统计 — 无参数
 - query: 查询职位 — 参数: keyword(关键词)
-- send_message: 发送消息 — 参数: source_job_id(职位ID)
 - help: 帮助 — 无参数
 
 只输出 JSON：
@@ -78,6 +77,7 @@ class AgentWorker(BaseWorker):
     # ── SSE event system ──────────────────────────────────────────
 
     async def _emit(self, event_type: str, data: dict[str, Any]) -> None:
+        data["ts"] = utc_now().isoformat()
         event = {"type": event_type, "data": data}
         dead: list[int] = []
         for i, q in enumerate(self._subscribers):
@@ -319,6 +319,7 @@ class AgentWorker(BaseWorker):
                     })
                     continue
             except Exception as exc:
+                logger.exception("agent greet failed: %s", job.title)
                 await self._emit("error", {
                     "step": "job",
                     "text": f"打招呼异常: {exc}",
@@ -341,6 +342,7 @@ class AgentWorker(BaseWorker):
                 result = await ai_service.generate_message(job.source_job_id)
                 message = result.get("message", "")
             except Exception as exc:
+                logger.exception("agent generate message failed: %s", job.source_job_id)
                 await self._emit("error", {
                     "step": "job",
                     "text": f"生成消息异常: {exc}",
@@ -394,6 +396,7 @@ class AgentWorker(BaseWorker):
                         "output": "sent",
                     })
                 except Exception as exc:
+                    logger.exception("agent send message failed: %s", source_friend_id)
                     await self._emit("error", {
                         "step": "job",
                         "text": f"发送失败: {exc}",
@@ -428,8 +431,10 @@ class AgentWorker(BaseWorker):
             result = await self._execute_intent(intent)
         except Exception as exc:
             result = f"处理失败: {exc}"
+            logger.exception("feishu command processing failed")
             await self._emit("error", {"text": result})
         await self._emit("chat", {"source": "agent", "text": result})
+        await send_feishu(result)
 
     # ── Web chat handler ──────────────────────────────────────────
 
@@ -441,6 +446,7 @@ class AgentWorker(BaseWorker):
             result = await self._execute_intent(intent)
         except Exception as exc:
             result = f"处理失败: {exc}"
+            logger.exception("chat command processing failed")
             await self._emit("error", {"text": result})
         await self._emit("chat", {"source": "agent", "text": result})
 
@@ -477,7 +483,6 @@ class AgentWorker(BaseWorker):
             "collect": self._cmd_collect,
             "stats": self._cmd_stats,
             "query": self._cmd_query,
-            "send_message": self._cmd_send_message,
             "help": self._cmd_help,
         }
 
@@ -510,8 +515,11 @@ class AgentWorker(BaseWorker):
             return "没有找到需要打招呼的职位"
 
         greet_service = GreetingService(self.database, self.boss_client)
-        succeeded = 0
-        failed = 0
+        ai_service = AIMatchingService(self.database, self.settings)
+        friend_service = FriendService(self.database, self.boss_client)
+
+        greeted_count = 0
+        sent_count = 0
         for idx, job in enumerate(jobs):
             if idx > 0:
                 delay = random.uniform(5, 15)
@@ -521,6 +529,8 @@ class AgentWorker(BaseWorker):
                 "step": "cmd_greet_job",
                 "text": f"#{idx + 1}/{len(jobs)} {job.title} @ {job.company}",
             })
+
+            # Greet
             try:
                 greet_task = await greet_service.run_greetings(
                     source_job_ids=[job.source_job_id],
@@ -528,17 +538,65 @@ class AgentWorker(BaseWorker):
                     limit=1,
                 )
                 if greet_task.result_summary.get("succeeded", 0) > 0:
-                    succeeded += 1
+                    greeted_count += 1
                 else:
-                    failed += 1
+                    await self._emit("step_end", {
+                        "step": "cmd_greet_job",
+                        "text": "打招呼失败，跳过",
+                    })
+                    continue
             except Exception:
-                failed += 1
+                logger.exception("agent cmd greet failed: %s", job.title)
+                await self._emit("step_end", {
+                    "step": "cmd_greet_job",
+                    "text": "打招呼异常，跳过",
+                })
+                continue
+
+            # Generate message
+            try:
+                result = await ai_service.generate_message(job.source_job_id)
+                message = result.get("message", "")
+            except Exception:
+                logger.exception("agent cmd generate message failed: %s", job.source_job_id)
+                message = ""
+
+            if result.get("reasoning"):
+                await self._emit("reasoning", {
+                    "step": "cmd_greet_job",
+                    "text": result["reasoning"],
+                })
+
+            if not message:
+                await self._emit("step_end", {
+                    "step": "cmd_greet_job",
+                    "text": "AI 消息为空，跳过发送",
+                })
+                continue
+
+            # Send message
+            source_friend_id = job.source_friend_id
+            if not source_friend_id:
+                refreshed = await self.database["job_leads"].find_one(
+                    {"source_job_id": job.source_job_id},
+                )
+                if refreshed:
+                    source_friend_id = refreshed.get("source_friend_id")
+
+            if source_friend_id:
+                try:
+                    await friend_service.send_friend_message(source_friend_id, message)
+                    sent_count += 1
+                except Exception:
+                    logger.exception("agent cmd send message failed: %s", source_friend_id)
+                    pass
+
             await self._emit("step_end", {
                 "step": "cmd_greet_job",
                 "text": "完成",
             })
 
-        return f"打招呼完成: {succeeded} 成功 / {failed} 失败"
+        return f"打招呼完成: {greeted_count} 成功 / {len(jobs) - greeted_count} 失败 | 发送消息: {sent_count}"
 
     async def _cmd_evaluate(self, args: dict[str, Any]) -> str:
         await self._emit("step_start", {"step": "cmd_evaluate", "text": "触发 AI 评估"})
@@ -612,69 +670,13 @@ class AgentWorker(BaseWorker):
         await self._emit("step_end", {"step": "cmd_query", "text": text})
         return text
 
-    async def _cmd_send_message(self, args: dict[str, Any]) -> str:
-        source_job_id = args.get("source_job_id", "")
-        if not source_job_id:
-            return "请提供 source_job_id"
-
-        await self._emit("step_start", {
-            "step": "cmd_send_message",
-            "text": f"生成并发送消息: {source_job_id}",
-        })
-
-        ai_service = AIMatchingService(self.database, self.settings)
-        result = await ai_service.generate_message(source_job_id)
-        message = result.get("message", "")
-
-        await self._emit("tool_call", {
-            "step": "cmd_send_message",
-            "tool": "generate_message",
-            "input": source_job_id,
-            "output": message[:200] + ("..." if len(message) > 200 else ""),
-        })
-
-        if result.get("reasoning"):
-            await self._emit("reasoning", {
-                "step": "cmd_send_message",
-                "text": result["reasoning"],
-            })
-
-        if not message:
-            await self._emit("step_end", {"step": "cmd_send_message", "text": "AI 消息为空"})
-            return "AI 消息为空"
-
-        payload = await self.database["job_leads"].find_one({"source_job_id": source_job_id})
-        job = JobLead.from_mongo(payload) if payload else None
-        source_friend_id = job.source_friend_id if job else None
-
-        if not source_friend_id:
-            await self._emit("step_end", {"step": "cmd_send_message", "text": "缺少 source_friend_id"})
-            return "该职位缺少 source_friend_id，请先打招呼"
-
-        friend_service = FriendService(self.database, self.boss_client)
-        try:
-            await friend_service.send_friend_message(source_friend_id, message)
-            await self._emit("tool_call", {
-                "step": "cmd_send_message",
-                "tool": "send_message",
-                "input": source_friend_id,
-                "output": "sent",
-            })
-        except Exception as exc:
-            await self._emit("error", {"step": "cmd_send_message", "text": str(exc)})
-            return f"发送失败: {exc}"
-
-        await self._emit("step_end", {"step": "cmd_send_message", "text": "消息已发送"})
-        return "消息已发送"
-
     async def _cmd_help(self, args: dict[str, Any]) -> str:
         return (
             "可用指令:\n"
-            "• 打招呼 [数量] — 对今日AI匹配的新增职位打招呼\n"
+            "• 打招呼 [数量] — 查找并打招呼，自动生成并发送AI消息\n"
             "• 评估 — 触发 AI 职位评估\n"
             "• 采集 — 触发滚动采集\n"
             "• 统计 — 24小时内职位统计\n"
             "• 查询 <关键词> — 按关键词搜索职位\n"
-            "• 发消息 <职位ID> — 生成并发送AI消息\n"
             "• 帮助 — 显示此信息"
         )

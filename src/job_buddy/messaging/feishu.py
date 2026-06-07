@@ -23,6 +23,7 @@ class FeishuChannelManager:
         self._task: asyncio.Task[None] | None = None
         self._enabled = False
         self._cmd_handler: Callable[[str, str], Awaitable[None]] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def set_command_handler(self, handler: Callable[[str, str], Awaitable[None]]) -> None:
         """Register an async callback(chat_id, text) for incoming Feishu messages."""
@@ -42,6 +43,7 @@ class FeishuChannelManager:
         credential = FeishuCredential.from_mongo(doc)
         self._chat_id = credential.chat_id or None
         self._enabled = True
+        self._loop = asyncio.get_running_loop()
 
         self._channel = FeishuChannel(
             app_id=credential.app_id,
@@ -63,12 +65,19 @@ class FeishuChannelManager:
             logger.info("Feishu chat_id saved: %s", chat_id)
         await self._channel.send(self._chat_id, {"text": "收到"})
 
-        text = getattr(msg, "text", "") or ""
+        text = getattr(msg, "content_text", "") or ""
+        logger.info("Feishu message received: chat_id=%s text=%s", chat_id, text[:200])
         if text and self._cmd_handler:
-            try:
-                await self._cmd_handler(chat_id, text)
-            except Exception:
-                logger.exception("Feishu command handler failed")
+            asyncio.run_coroutine_threadsafe(
+                self._handle_command(chat_id, text),
+                self._loop,
+            )
+
+    async def _handle_command(self, chat_id: str, text: str) -> None:
+        try:
+            await self._cmd_handler(chat_id, text)
+        except Exception:
+            logger.exception("Feishu command handler failed")
 
     async def send(self, text: str) -> bool:
         if not self._enabled or not self._channel or not self._chat_id:
