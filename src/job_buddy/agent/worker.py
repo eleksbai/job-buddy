@@ -242,10 +242,18 @@ class AgentWorker(BaseWorker):
         })
 
         since_5d = utc_now() - timedelta(days=5)
+        existing_boss_ids = [
+            doc["source_friend_id"]
+            async for doc in self.database["friend_records"].find(
+                {"source_friend_id": {"$exists": True, "$ne": None, "$ne": ""}},
+                {"source_friend_id": 1},
+            )
+        ]
         cursor = self.database["job_leads"].find({
             "updated_at": {"$gte": since_5d},
             "ai_match": True,
             "greeted": False,
+            "source_friend_id": {"$nin": existing_boss_ids},
         }).sort([("ai_score", -1), ("created_at", -1)]).limit(greet_limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=greet_limit)]
 
