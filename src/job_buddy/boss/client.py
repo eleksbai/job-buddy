@@ -399,13 +399,13 @@ class BossClient:
         self._execution_lock = asyncio.Lock()
         self.running = False
 
-
     @staticmethod
     def _locked(method):
         async def wrapper(self, *args, **kwargs):
             async with self._execution_lock:
                 await self.check_page_health()
                 return await method(self, *args, **kwargs)
+
         return wrapper
 
     @staticmethod
@@ -413,6 +413,7 @@ class BossClient:
         async def wrapper(self, *args, **kwargs):
             async with self._execution_lock:
                 return await method(self, *args, **kwargs)
+
         return wrapper
 
     @property
@@ -1002,8 +1003,8 @@ class BossClient:
                         {"source_job_id": detail_out.job_id}
                     )
                     is_first_detail = (
-                        existing is None
-                        or existing.get("detail_fetched_at") is None
+                            existing is None
+                            or existing.get("detail_fetched_at") is None
                     )
                     await repository.upsert_job_lead(detail_out)
                     await repository.jobs.update_one(
@@ -1048,7 +1049,6 @@ class BossClient:
             await asyncio.sleep(3)
             await asyncio.sleep(random() * 2 + 1)
 
-
             cursor = 0
             last_high = 0
             freeze_count = 0
@@ -1063,8 +1063,6 @@ class BossClient:
                     count,
                     cursor,
                 )
-
-
 
                 new_clicked = 0
                 while cursor < count and cursor < max_jobs:
@@ -1318,6 +1316,22 @@ class BossClient:
             encrypt_boss_id=str(encrypt_boss_id),
             raw_payload=payload,
         )
+
+    @_locked
+    async def check_already_greet(self):
+        # 基于boss页面内容的实现，与现有的流程不匹配。
+        page = self.page
+        modal = page.get_by_text("您与该Boss已沟通过", )
+        try:
+            text = await modal.text_content(timeout=3000)
+            logger.info("already greet: {}".format(text))
+            cancel_btn = page.locator(".boss-dialog__button:has-text('取消')")
+            await cancel_btn.click()
+            await asyncio.sleep(1+random())
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("not found greet")
+            return False
 
     @_locked
     async def chat_history(self, request: ChatHistoryIn) -> ChatHistoryOut:
