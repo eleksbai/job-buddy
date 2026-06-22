@@ -2286,7 +2286,7 @@ class AIMatchingService:
     async def clear_all_marks(self) -> int:
         """Reset AI evaluation fields for all jobs. Returns count of updated documents."""
         result = await self.jobs.update_many(
-            {},
+            {"updated_at": {"$gte": utc_now() - timedelta(weeks=1)}},
             {
                 "$set": {
                     "ai_score": None,
@@ -2391,7 +2391,11 @@ class AIMatchingService:
         return updated
 
     async def _do_evaluate_batch(self, task: GreetingTask, limit: int) -> None:
-        cursor = self.jobs.find({"ai_match": None, "detail_fetched_at": {"$ne": None}}).sort("updated_at", -1).limit(limit)
+        cursor = self.jobs.find({
+            "ai_match": None,
+            "detail_fetched_at": {"$ne": None},
+            "updated_at": {"$gte": utc_now() - timedelta(weeks=1)},
+        }).sort("updated_at", -1).limit(limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
         resume_text, criteria_text = await self._load_resume_and_criteria()
