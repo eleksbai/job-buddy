@@ -1145,12 +1145,19 @@ function renderAiMatchingWorker() {
   }
   document.getElementById("aiMatchingWorkerIntervalInput").value = String(worker.interval_seconds || 3600);
   document.getElementById("aiMatchingWorkerBatchSizeInput").value = String(worker.batch_size || 10);
+  document.getElementById("aiMatchingWorkerQuietHoursInput").value = quietHoursToString(worker.quiet_hours);
   if (releaseButton) {
     releaseButton.disabled = !(worker.enabled && worker.status === "error");
     releaseButton.classList.toggle("button-disabled", releaseButton.disabled);
   }
+  const quietHoursText = quietHoursToString(worker.quiet_hours) || "未设置";
+  const inQuiet = isInQuietHours(worker.quiet_hours);
+  const quietStatusHtml = inQuiet
+    ? '<span class="status-badge status-warn">禁止中</span>'
+    : '<span class="hint-text">允许运行</span>';
   renderWorkerMeta("aiMatchingWorkerMeta", worker, [
     `<strong>状态</strong> ${renderStatusBadge(worker.enabled ? worker.status : "idle")} ${worker.enabled ? "" : '<span class="hint-text">未启动</span>'}`,
+    `<strong>禁止时间段</strong> ${escapeHtml(quietHoursText)} ${quietStatusHtml}`,
     `<strong>下一次执行</strong> ${escapeHtml(formatDate(worker.next_run_at))}`,
     `<strong>最近错误</strong> ${escapeHtml(worker.last_error || "-")}`,
     `<strong>最近结果</strong> ${escapeHtml(JSON.stringify(worker.last_result_summary || {}))}`,
@@ -1830,10 +1837,52 @@ function collectScrollAndCollectWorkerPayload() {
   };
 }
 
+function quietHoursToString(slots) {
+  if (!slots || !Array.isArray(slots) || slots.length === 0) return "";
+  return slots
+    .map((s) => (s.start && s.end ? s.start + "-" + s.end : ""))
+    .filter(Boolean)
+    .join(", ");
+}
+
+function quietHoursFromString(raw) {
+  if (!raw || !raw.trim()) return [];
+  return raw
+    .split(",")
+    .map((pair) => pair.trim())
+    .filter((pair) => /^\d{2}:\d{2}-\d{2}:\d{2}$/.test(pair))
+    .map((pair) => {
+      const [start, end] = pair.split("-");
+      return { start, end };
+    });
+}
+
+function isInQuietHours(slots) {
+  if (!slots || !Array.isArray(slots) || slots.length === 0) return false;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  for (const slot of slots) {
+    if (!slot.start || !slot.end) continue;
+    const startParts = slot.start.split(":").map(Number);
+    const endParts = slot.end.split(":").map(Number);
+    if (startParts.length !== 2 || endParts.length !== 2) continue;
+    if (isNaN(startParts[0]) || isNaN(startParts[1]) || isNaN(endParts[0]) || isNaN(endParts[1])) continue;
+    const start = startParts[0] * 60 + startParts[1];
+    const end = endParts[0] * 60 + endParts[1];
+    if (start <= end) {
+      if (currentMinutes >= start && currentMinutes <= end) return true;
+    } else {
+      if (currentMinutes >= start || currentMinutes <= end) return true;
+    }
+  }
+  return false;
+}
+
 function collectAiMatchingWorkerPayload() {
   return {
     interval_seconds: Math.max(1, Number(document.getElementById("aiMatchingWorkerIntervalInput").value || 3600)),
     batch_size: Math.max(1, Number(document.getElementById("aiMatchingWorkerBatchSizeInput").value || 10)),
+    quiet_hours: quietHoursFromString(document.getElementById("aiMatchingWorkerQuietHoursInput").value),
   };
 }
 

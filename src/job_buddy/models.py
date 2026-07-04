@@ -156,6 +156,7 @@ class WorkerConfig(DocumentModel):
     page: int = 1
     page_max: int = 5
     batch_size: int = 1
+    quiet_hours: list[dict[str, str]] = Field(default_factory=list)
 
 
 class FriendMessage(BaseModel):

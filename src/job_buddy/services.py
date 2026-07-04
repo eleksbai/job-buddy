@@ -1332,6 +1332,27 @@ class BaseWorker(ABC):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page_max 必须大于等于 1")
         if "batch_size" in updates and int(updates["batch_size"]) < 1:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="batch_size 必须大于等于 1")
+        if "quiet_hours" in updates:
+            self._validate_quiet_hours(updates["quiet_hours"])
+    
+    def _validate_quiet_hours(self, quiet_hours: list[dict[str, str]]) -> None:
+        if not isinstance(quiet_hours, list):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="quiet_hours 必须是数组")
+        for i, slot in enumerate(quiet_hours):
+            if not isinstance(slot, dict):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"quiet_hours[{i}] 必须是对象")
+            start = slot.get("start", "")
+            end = slot.get("end", "")
+            if not start or not end:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"quiet_hours[{i}] 缺少 start 或 end")
+            try:
+                datetime.strptime(start, "%H:%M")
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"quiet_hours[{i}].start 格式无效，需为 HH:MM") from None
+            try:
+                datetime.strptime(end, "%H:%M")
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"quiet_hours[{i}].end 格式无效，需为 HH:MM") from None
 
     def validate_updates(self, current: WorkerConfig, updates: dict[str, Any]) -> None:
         _ = current, updates
@@ -1378,10 +1399,33 @@ class BaseWorker(ABC):
             return await self.execute()
 
     def _is_due(self, worker: WorkerConfig) -> bool:
-        # #FIXME: DEBUG
-        # flag = worker.enabled and worker.next_run_at is not None and worker.next_run_at <= utc_now()
-        # logger.critical("is_due %s", flag)
-        return worker.enabled and worker.next_run_at is not None and worker.next_run_at <= utc_now()
+        if not worker.enabled or worker.next_run_at is None or worker.next_run_at > utc_now():
+            return False
+        if self._is_in_quiet_hours(worker):
+            return False
+        return True
+
+    def _is_in_quiet_hours(self, worker: WorkerConfig) -> bool:
+        if not worker.quiet_hours:
+            return False
+        now = datetime.now(tz=_CST).time()
+        for slot in worker.quiet_hours:
+            start_str = slot.get("start", "")
+            end_str = slot.get("end", "")
+            if not start_str or not end_str:
+                continue
+            try:
+                start = datetime.strptime(start_str, "%H:%M").time()
+                end = datetime.strptime(end_str, "%H:%M").time()
+            except ValueError:
+                continue
+            if start <= end:
+                if start <= now <= end:
+                    return True
+            else:
+                if now >= start or now <= end:
+                    return True
+        return False
 
     async def execute(self) -> WorkerConfig:
         worker = await self.get_worker()

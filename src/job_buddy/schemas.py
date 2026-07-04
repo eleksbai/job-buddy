@@ -152,6 +152,7 @@ class WorkerConfigUpdate(BaseModel):
     page: int | None = None
     page_max: int | None = None
     batch_size: int | None = None
+    quiet_hours: list[dict[str, str]] | None = None
 
 
 class WorkerConfigRead(TimestampedSchema):
@@ -168,6 +169,7 @@ class WorkerConfigRead(TimestampedSchema):
     page: int
     page_max: int
     batch_size: int
+    quiet_hours: list[dict[str, str]] = Field(default_factory=list)
 
 
 class FriendMessageRead(BaseModel):
