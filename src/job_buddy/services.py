@@ -91,6 +91,11 @@ async def fail_abandoned_running_tasks(database: AsyncIOMotorDatabase) -> int:
             }
         },
     )
+    if result.modified_count:
+        logging.getLogger(__name__).warning(
+            "Cleaned up %d abandoned running task(s) from previous session",
+            result.modified_count,
+        )
     return int(result.modified_count)
 
 
@@ -1481,6 +1486,7 @@ class BaseWorker(ABC):
         _ = worker
 
     async def start_worker(self) -> WorkerConfig:
+        await fail_abandoned_running_tasks(self.database)
         current = await self.get_worker()
         self.validate_before_start(current)
         return await self._update_worker_model(
@@ -1575,6 +1581,7 @@ class BaseWorker(ABC):
         worker = await self.get_worker()
         if not worker.enabled:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Worker 未启动")
+        await fail_abandoned_running_tasks(self.database)
         async with self._run_lock:
             if await self.has_running_task():
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="已有任务正在执行")
@@ -1726,6 +1733,7 @@ class ScrollAndCollectWorker(BaseWorker):
         return self._actual_time(schedule_times[0], tomorrow, jitter_minutes)
 
     async def start_worker(self) -> WorkerConfig:
+        await fail_abandoned_running_tasks(self.database)
         current = await self.get_worker()
         self.validate_before_start(current)
         return await self._update_worker_model({

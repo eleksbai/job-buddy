@@ -50,6 +50,16 @@ class FakeTaskCollection:
         status = filters.get("status")
         return sum(1 for item in self.payloads if item.get("status") == status)
 
+    async def update_many(self, filters: dict, update: dict) -> object:
+        modified = 0
+        status = filters.get("status")
+        for item in self.payloads:
+            if item.get("status") == status:
+                for key, value in update["$set"].items():
+                    item[key] = value
+                modified += 1
+        return type("Result", (), {"modified_count": modified})()
+
 
 class FakeDatabase:
     def __init__(self) -> None:

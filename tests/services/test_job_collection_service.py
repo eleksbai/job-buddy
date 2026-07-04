@@ -242,6 +242,12 @@ class FakeTaskCollection:
         raw_id = filters.get("_id")
         return self.payloads.get(str(raw_id))
 
+    async def count_documents(self, filters: dict) -> int:
+        return 0
+
+    async def update_many(self, filters: dict, update: dict) -> object:
+        return type("Result", (), {"modified_count": 0})()
+
     async def update_one(self, filters: dict, updates: dict):
         payload = await self.find_one(filters)
         if payload is not None:

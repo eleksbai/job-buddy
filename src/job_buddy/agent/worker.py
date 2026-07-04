@@ -20,6 +20,7 @@ from job_buddy.services import (
     FriendService,
     GreetingService,
     StatisticsService,
+    fail_abandoned_running_tasks,
 )
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ class AgentWorker(BaseWorker):
     # ── Worker lifecycle overrides ────────────────────────────────
 
     async def start_worker(self) -> WorkerConfig:
+        await fail_abandoned_running_tasks(self.database)
         current = await self.get_worker()
         self.validate_before_start(current)
         return await self._update_worker_model({

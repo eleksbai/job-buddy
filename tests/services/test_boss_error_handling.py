@@ -74,6 +74,12 @@ class FakeTaskCollection:
     def __init__(self) -> None:
         self.task: dict | None = None
 
+    async def count_documents(self, filters: dict) -> int:
+        return 0
+
+    async def update_many(self, filters: dict, update: dict) -> object:
+        return type("Result", (), {"modified_count": 0})()
+
     async def insert_one(self, payload: dict):
         payload = dict(payload)
         payload["_id"] = ObjectId()
