@@ -52,12 +52,12 @@ def build_evaluation_prompt(
 {job_info}
 
 ## 评估要求
-请综合考虑候选人的技能、经验与岗位要求的匹配程度，给出客观评估。返回 JSON 格式：
+请按照**匹配标准**进行客观评估。返回 JSON 格式：
 
 ```json
 {{
   "match": true/false,
-  "score": 0-100 的整数,
+  "score": 整数,
   "reasoning": "评估理由（中文，简洁）"
 }}
 ```
