@@ -587,6 +587,19 @@ class JobCollectionService:
             if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return failed
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
         except Exception as exc:
             logger.exception(
                 "search task failed: task_id=%s query=%s",
@@ -642,6 +655,19 @@ class JobCollectionService:
             if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return failed
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
         except Exception as exc:
             logger.exception("detail sync task failed: task_id=%s limit=%s", task.id, limit)
             failed = await _update_model(
@@ -898,6 +924,19 @@ class JobCollectionService:
             if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return failed
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
         except Exception as exc:
             logger.exception("detail click task failed: task_id=%s", task.id)
             failed = await _update_model(
@@ -1083,6 +1122,19 @@ class JobCollectionService:
             if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return failed
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
         except Exception as exc:
             logger.exception("scroll and collect task failed: task_id=%s", task.id)
             failed = await _update_model(
@@ -1197,6 +1249,31 @@ class GreetingService:
             if failed is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return failed
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
+        except Exception as exc:
+            logger.exception("greet task failed: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": str(exc),
+                    "finished_at": utc_now(),
+                },
+            )
 
         updated = await _get_model(self.tasks, GreetingTask, task.id)
         if updated is None:
@@ -2438,6 +2515,19 @@ class AIMatchingService:
             if updated is None:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Task update failed.")
             return updated
+        except asyncio.CancelledError:
+            logger.warning("Task cancelled: task_id=%s", task.id)
+            await _update_model(
+                self.tasks,
+                GreetingTask,
+                task.id,
+                {
+                    "status": TaskStatus.FAILED,
+                    "error_message": "任务已取消",
+                    "finished_at": utc_now(),
+                },
+            )
+            raise
         except Exception as exc:
             logger.exception("AI matching batch failed")
             await _update_model(
