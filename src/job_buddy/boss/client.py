@@ -1085,7 +1085,7 @@ class BossClient:
             await city_option.click()
             await asyncio.sleep(1)
 
-            # 选择薪资待遇下拉框的为第4个选项 
+            # 选择薪资待遇下拉框的为第二个选项 
             salary_trigger = self.page.locator(
                 'div.condition-filter-select:has(span.placeholder-text:text("薪资待遇")) .current-select'
             )

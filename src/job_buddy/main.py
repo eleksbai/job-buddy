@@ -23,7 +23,7 @@ from job_buddy.messaging.feishu import FeishuChannelManager, set_manager
 from job_buddy.routers import build_api_router
 from job_buddy.worker import AIMatchingWorker
 from job_buddy.agent import AgentWorker
-from job_buddy.services import DetailWorker, ScrollAndCollectWorker, SearchWorker, fail_abandoned_running_tasks
+from job_buddy.services import ScrollAndCollectWorker, fail_abandoned_running_tasks
 from job_buddy.web.app import register_web
 
 logger = logging.getLogger(__name__)
@@ -70,8 +70,6 @@ def create_app() -> FastAPI:
         async with database_lifespan(mongo_manager) as database:
             boss_client = BossClient(settings)
             feishu_manager = FeishuChannelManager(database)
-            search_worker = SearchWorker(database, boss_client)
-            detail_worker = DetailWorker(database, boss_client)
             scroll_and_collect_worker = ScrollAndCollectWorker(database, boss_client)
             ai_matching_worker = AIMatchingWorker(database, boss_client, settings=settings)
             agent_worker = AgentWorker(database, boss_client, settings, feishu_manager)
@@ -81,8 +79,6 @@ def create_app() -> FastAPI:
             app.state.settings = settings
             app.state.db = database
             app.state.boss_client = boss_client
-            app.state.search_worker = search_worker
-            app.state.detail_worker = detail_worker
             app.state.scroll_and_collect_worker = scroll_and_collect_worker
             app.state.ai_matching_worker = ai_matching_worker
             app.state.agent_worker = agent_worker
@@ -91,8 +87,6 @@ def create_app() -> FastAPI:
             await feishu_manager.start()
 
             try:
-                await search_worker.start()
-                await detail_worker.start()
                 await scroll_and_collect_worker.start()
                 await ai_matching_worker.start()
                 await agent_worker.start()
@@ -101,8 +95,6 @@ def create_app() -> FastAPI:
                 await agent_worker.stop()
                 await ai_matching_worker.stop()
                 await scroll_and_collect_worker.stop()
-                await detail_worker.stop()
-                await search_worker.stop()
                 await boss_client.close()
                 await feishu_manager.stop()
 

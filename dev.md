@@ -66,7 +66,7 @@ BossClient:
 | `POST` | `/boss/tasks/greet`                              | 触发打招呼任务                                  |
 | `GET`  | `/boss/tasks`                                    | 任务列表                                     |
 | `GET`  | `/boss/tasks/{task_id}`                          | 任务详情和记录                                  |
-| `GET`  | `/boss/workers`                                  | 返回 `search`、`detail` 两个 worker 配置        |
+| `GET`  | `/boss/workers`                                  | 返回 `scroll_and_collect`、`ai_matching`、`agent` 三个 worker 配置 |
 | `GET`  | `/boss/workers/{worker_name}`                    | 获取单个 worker 配置                           |
 | `PUT`  | `/boss/workers/{worker_name}`                    | 更新单个 worker 配置                           |
 | `POST` | `/boss/workers/{worker_name}/start`              | 启动 worker                                |

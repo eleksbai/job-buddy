@@ -1532,51 +1532,6 @@ class BaseWorker(ABC):
         return WorkerConfig.from_mongo(refreshed)
 
 
-class SearchWorker(BaseWorker):
-    worker_name = "search"
-
-    def default_config(self) -> WorkerConfig:
-        return WorkerConfig(worker_name="search", interval_seconds=60, page=1, page_max=5, batch_size=1)
-
-    def validate_updates(self, current: WorkerConfig, updates: dict[str, Any]) -> None:
-        next_query = updates.get("query", current.query)
-        if updates.get("enabled") and not next_query.get("keywords"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="启动搜索 worker 前请先配置关键词")
-
-    def validate_before_start(self, worker: WorkerConfig) -> None:
-        if not worker.query.get("keywords"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="启动搜索 worker 前请先配置关键词")
-
-    async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
-        job_service = JobCollectionService(self.database, self.boss_client)
-        query = dict(worker.query)
-        query["page"] = max(1, int(worker.page))
-        logger.info("executing worker %s start", self.worker_name)
-        task = await job_service.search_jobs(query=query)
-        logger.info("executing worker %s %s", self.worker_name, task.status)
-        next_page = worker.page
-        if task.status != TaskStatus.FAILED:
-            next_page += 1
-            if next_page > max(1, worker.page_max):
-                await self.boss_client.goto_job()
-                next_page = 1
-        return await self.complete_execution(worker, task, extra_updates={"page": next_page})
-
-
-class DetailWorker(BaseWorker):
-    worker_name = "detail"
-
-    def default_config(self) -> WorkerConfig:
-        return WorkerConfig(worker_name="detail", interval_seconds=30, page=1, page_max=5, batch_size=1)
-
-    async def execute_enabled_worker(self, worker: WorkerConfig) -> WorkerConfig:
-        job_service = JobCollectionService(self.database, self.boss_client)
-        logger.info("executing worker %s start", self.worker_name)
-        task = await job_service.run_detail_sync(limit=max(1, worker.batch_size))
-        logger.info("executing worker %s %s", self.worker_name, task.status)
-        return await self.complete_execution(worker, task)
-
-
 class ScrollAndCollectWorker(BaseWorker):
     worker_name = "scroll_and_collect"
 

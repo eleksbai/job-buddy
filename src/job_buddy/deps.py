@@ -6,12 +6,10 @@ from job_buddy.config import Settings
 from job_buddy.services import (
     AIMatchingService,
     DashboardService,
-    DetailWorker,
     FriendService,
     GreetingService,
     JobCollectionService,
     ScrollAndCollectWorker,
-    SearchWorker,
     StatisticsService,
     SystemService,
 )
@@ -64,14 +62,6 @@ async def get_system_service(
 
 async def get_statistics_service(db: AsyncIOMotorDatabase = Depends(get_database)) -> StatisticsService:
     return StatisticsService(db)
-
-
-async def get_search_worker(request: Request) -> SearchWorker:
-    return request.app.state.search_worker
-
-
-async def get_detail_worker(request: Request) -> DetailWorker:
-    return request.app.state.detail_worker
 
 
 async def get_scroll_and_collect_worker(request: Request) -> ScrollAndCollectWorker:

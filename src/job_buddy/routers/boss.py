@@ -5,12 +5,10 @@ from job_buddy.deps import (
     get_agent_worker,
     get_ai_matching_service,
     get_ai_matching_worker,
-    get_detail_worker,
     get_friend_service,
     get_greeting_service,
     get_job_service,
     get_scroll_and_collect_worker,
-    get_search_worker,
     get_system_service,
 )
 from job_buddy.schemas import (
@@ -42,12 +40,10 @@ from job_buddy.schemas import (
 from job_buddy.worker import AIMatchingWorker
 from job_buddy.services import (
     AIMatchingService,
-    DetailWorker,
     FriendService,
     GreetingService,
     JobCollectionService,
     ScrollAndCollectWorker,
-    SearchWorker,
     SystemService,
 )
 
@@ -232,15 +228,11 @@ async def get_task(task_id: str, greeting_service: GreetingService = Depends(get
 
 @router.get("/workers", response_model=list[WorkerConfigRead], tags=["workers"], operation_id="list_workers")
 async def list_workers(
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> list[WorkerConfigRead]:
     items = [
-        await search_worker.get_worker(),
-        await detail_worker.get_worker(),
         await scroll_and_collect_worker.get_worker(),
         await ai_matching_worker.get_worker(),
         await agent_worker.get_worker(),
@@ -251,13 +243,11 @@ async def list_workers(
 @router.get("/workers/{worker_name}", response_model=WorkerConfigRead, tags=["workers"], operation_id="get_worker")
 async def get_worker(
     worker_name: str,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).get_worker()
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).get_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -265,65 +255,55 @@ async def get_worker(
 async def update_worker(
     worker_name: str,
     payload: WorkerConfigUpdate,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).update_worker(payload)
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).update_worker(payload)
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/start", response_model=WorkerConfigRead, tags=["workers"], operation_id="start_worker")
 async def start_worker(
     worker_name: str,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).start_worker()
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).start_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/stop", response_model=WorkerConfigRead, tags=["workers"], operation_id="stop_worker")
 async def stop_worker(
     worker_name: str,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).stop_worker()
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).stop_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/release", response_model=WorkerConfigRead, tags=["workers"], operation_id="release_worker")
 async def release_worker(
     worker_name: str,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).release_worker()
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).release_worker()
     return WorkerConfigRead(**item.model_dump())
 
 
 @router.post("/workers/{worker_name}/execute", response_model=WorkerConfigRead, tags=["workers"], operation_id="execute_worker")
 async def execute_worker(
     worker_name: str,
-    search_worker: SearchWorker = Depends(get_search_worker),
-    detail_worker: DetailWorker = Depends(get_detail_worker),
     scroll_and_collect_worker: ScrollAndCollectWorker = Depends(get_scroll_and_collect_worker),
     ai_matching_worker = Depends(get_ai_matching_worker),
     agent_worker = Depends(get_agent_worker),
 ) -> WorkerConfigRead:
-    item = await _select_worker(worker_name, search_worker, detail_worker, scroll_and_collect_worker, ai_matching_worker, agent_worker).execute_now()
+    item = await _select_worker(worker_name, scroll_and_collect_worker, ai_matching_worker, agent_worker).execute_now()
     return WorkerConfigRead(**item.model_dump())
 
 
@@ -383,16 +363,10 @@ async def logout_auth(service: SystemService = Depends(get_system_service)) -> A
     return await service.logout()
 def _select_worker(
     worker_name: str,
-    search_worker: SearchWorker,
-    detail_worker: DetailWorker,
     scroll_and_collect_worker: ScrollAndCollectWorker,
     ai_matching_worker: "AIMatchingWorker",
     agent_worker,
 ):
-    if worker_name == "search":
-        return search_worker
-    if worker_name == "detail":
-        return detail_worker
     if worker_name == "scroll_and_collect":
         return scroll_and_collect_worker
     if worker_name == "ai_matching":
