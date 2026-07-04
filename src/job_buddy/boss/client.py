@@ -61,15 +61,38 @@ from job_buddy.boss.schemas import (
 )
 from job_buddy.config import Settings
 
+
+from urllib.parse import urlencode, parse_qs, urlsplit, urlunsplit
+
+
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONNECTION_MODE = "launch"
 DEFAULT_PROFILE_DIR = "data/chrome_profile"
 LOGIN_PAGE_URL = "https://www.zhipin.com/web/user/"
 HOME_URL = "https://www.zhipin.com/"
+# 城市固定为深圳，人工硬编码设置
 JOB_URL = "https://www.zhipin.com/web/geek/jobs?ka=header-jobs"
 
 
+def add_query_params(url: str, params: dict) -> str:
+    """安全地给 URL 增加查询参数，保留原有参数"""
+    scheme, netloc, path, query_string, fragment = urlsplit(url)
+    
+    # 解析已有参数
+    query_params = parse_qs(query_string, keep_blank_values=True)
+    
+    # 合并新参数（新参数会覆盖旧参数中同名的键）
+    for key, value in params.items():
+        query_params[key] = [str(value)]
+    
+    # 重新编码
+    new_query_string = urlencode(query_params, doseq=True)
+    
+    return urlunsplit((scheme, netloc, path, new_query_string, fragment))
+
+ 
 def _build_job_url(job_id: str | None, security_id: str | None = None) -> str | None:
     if not job_id:
         return None
@@ -529,6 +552,7 @@ class BossClient:
         await self.page.goto(HOME_URL, wait_until="domcontentloaded")
 
     async def _goto_job(self):
+        logger.info("BossClient goto_job: %s", JOB_URL)
         await self.page.goto(JOB_URL, wait_until="domcontentloaded")
 
     @_locked
@@ -1048,10 +1072,31 @@ class BossClient:
             await self.page.wait_for_load_state("domcontentloaded")
             await asyncio.sleep(3)
             await asyncio.sleep(random() * 2 + 1)
+ 
 
             cursor = 0
             last_high = 0
             freeze_count = 0
+            # 通过下拉框，城市切换到深圳
+            city_trigger = self.page.locator('[ka="switch_city_dialog_open"]')
+            await city_trigger.click()
+            await asyncio.sleep(0.5)
+            city_option = self.page.locator('.city-select-dialog').locator('text=深圳')
+            await city_option.click()
+            await asyncio.sleep(1)
+
+            # 选择薪资待遇下拉框的为第4个选项 
+            salary_trigger = self.page.locator(
+                'div.condition-filter-select:has(span.placeholder-text:text("薪资待遇")) .current-select'
+            )
+            await salary_trigger.click()
+            await asyncio.sleep(0.5)
+            salary_option = self.page.locator(
+                'div.condition-filter-select:has(span.placeholder-text:text("薪资待遇")) .filter-select-dropdown ul li'
+            ).nth(4)
+            await salary_option.click()
+            await asyncio.sleep(2) 
+           
 
             for _ in range(30):
                 titles = self.page.locator("div.job-info > div.job-title")
