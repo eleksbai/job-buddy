@@ -867,6 +867,7 @@ function renderJobsTable() {
       },
       { label: "AI评分", render: (row) => renderAiScore(row) },
       { label: "AI匹配", render: (row) => renderAiMatchBadge(row) },
+      { label: "预检", render: (row) => renderPreCheckBadge(row) },
     ],
     items,
   );
@@ -910,6 +911,14 @@ function getSortedFilteredJobs() {
     items = items.filter((row) => row.ai_match === false);
   } else if (aiMatch === "null") {
     items = items.filter((row) => row.ai_match === null || row.ai_match === undefined);
+  }
+  const preCheck = document.getElementById("jobsPreCheckFilter")?.value || "";
+  if (preCheck === "true") {
+    items = items.filter((row) => row.pre_check === true);
+  } else if (preCheck === "false") {
+    items = items.filter((row) => row.pre_check === false);
+  } else if (preCheck === "null") {
+    items = items.filter((row) => row.pre_check === null || row.pre_check === undefined);
   }
   const cityFilter = (document.getElementById("jobsCityFilter")?.value || "").trim().toLowerCase();
   if (cityFilter) {
@@ -980,6 +989,16 @@ function renderAiMatchBadge(row) {
   }
   if (row.ai_match === false) {
     return '<span class="status-badge status-error">不匹配</span>';
+  }
+  return '<span class="status-badge status-info">未评</span>';
+}
+
+function renderPreCheckBadge(row) {
+  if (row.pre_check === true) {
+    return '<span class="status-badge status-ok">通过</span>';
+  }
+  if (row.pre_check === false) {
+    return '<span class="status-badge status-error">不通过</span>';
   }
   return '<span class="status-badge status-info">未评</span>';
 }
@@ -2229,6 +2248,26 @@ async function clearAiMarks() {
   }
 }
 
+async function triggerPreCheckBatch() {
+  const sourceJobIds = getSortedFilteredJobs().map((row) => row.source_job_id);
+  if (!sourceJobIds.length) {
+    showNotice("当前页没有职位", 3000);
+    return;
+  }
+  clearError();
+  setButtonBusy("preCheckBatchButton", true, "预检中");
+  try {
+    const result = await fetchJson("/boss/jobs/pre-check", {
+      method: "POST",
+      body: JSON.stringify({ source_job_ids: sourceJobIds }),
+    });
+    await loadJobs();
+    showNotice(`预检完成: ${result.count} 条`, 5000);
+  } finally {
+    setButtonBusy("preCheckBatchButton", false);
+  }
+}
+
 function renderStatisticsCounts(containerId, stats) {
   const container = document.getElementById(containerId);
   const items = [
@@ -2864,7 +2903,7 @@ function bindEvents() {
     .getElementById("jobsLimitSelect")
     .addEventListener("change", (event) => changeJobsLimit(event.target.value).catch((error) => showError(error.message)));
 
-  ["jobsSortSelect", "jobsAiMatchFilter"].forEach((id) => {
+  ["jobsSortSelect", "jobsAiMatchFilter", "jobsPreCheckFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", renderJobsTable);
   });
   ["jobsGreetedFilter", "jobsCreatedTodayFilter", "jobsUpdatedTodayFilter"].forEach((id) => {
@@ -2876,6 +2915,9 @@ function bindEvents() {
   ["jobsCityFilter", "jobsKeywordFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", renderJobsTable);
   });
+  document
+    .getElementById("preCheckBatchButton")
+    ?.addEventListener("click", () => triggerPreCheckBatch().catch((error) => showError(error.message)));
   document
     .getElementById("greetButton")
     .addEventListener("click", () => triggerGreeting().catch((error) => showError(error.message)));

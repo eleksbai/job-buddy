@@ -35,6 +35,7 @@ from job_buddy.boss.schemas import ChatHistoryIn, FriendListIn, GreetJobIn, JobD
     SendMessageIn, SearchOut
 from job_buddy.config import Settings, MESSAGE_STATUS_REVERSE
 from job_buddy.models import (
+    ACTIVE_THIS_WEEK,
     AuthState,
     DocumentModel,
     FriendMessage,
@@ -49,6 +50,7 @@ from job_buddy.models import (
     TASK_TIMEOUT,
     TaskStatus,
     WorkerConfig,
+    compute_pre_check,
     utc_now,
 )
 from job_buddy.repositories import JobCollectionRepository
@@ -356,7 +358,7 @@ class JobCollectionService:
             self._auth_service = auth_service
         return auth_service
 
-    async def list_jobs(self, greeted: bool | None, created_today: bool = False, updated_today: bool = False, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
+    async def list_jobs(self, greeted: bool | None, created_today: bool = False, updated_today: bool = False, pre_check: bool | None = None, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
         filters: dict[str, Any] = {}
         if created_today or updated_today:
             since_24h = utc_now() - timedelta(hours=24)
@@ -366,6 +368,8 @@ class JobCollectionService:
             filters["updated_at"] = {"$gte": since_24h}
         if greeted is not None:
             filters["greeted"] = greeted
+        if pre_check is not None:
+            filters["pre_check"] = pre_check
         total = await self.jobs.count_documents(filters)
         cursor = self.jobs.find(filters).sort([("last_searched_at", -1), ("_id", -1)]).skip(skip).limit(limit)
         items = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
@@ -383,6 +387,17 @@ class JobCollectionService:
         if source_job_id:
             filters["source_job_id"] = source_job_id
         return await _list_models(self.records, JobCollectionRecord, filters=filters, limit=limit)
+
+    async def pre_check_jobs(self, source_job_ids: list[str]) -> int:
+        count = 0
+        for source_job_id in source_job_ids:
+            job = await self._get_job_by_source_job_id(source_job_id)
+            if job is None:
+                continue
+            pre_val = compute_pre_check(job.title, job.boss_active_text, job.detail_text)
+            await _update_model(self.jobs, JobLead, job.id, {"pre_check": pre_val})
+            count += 1
+        return count
 
     async def get_job_detail(
             self,
@@ -433,6 +448,11 @@ class JobCollectionService:
                     detail_text=detail_result.detail_text,
                     detail_source_url=detail_result.request_url,
                     detail_fetched_at=utc_now(),
+                    pre_check=compute_pre_check(
+                        detail_result.job.title or source_job_id,
+                        detail_result.boss_active_text or None,
+                        detail_result.detail_text,
+                    ),
                 ),
                 JobLead,
             )
@@ -482,6 +502,11 @@ class JobCollectionService:
                 "detail_text": detail_result.detail_text,
                 "detail_source_url": detail_result.request_url or detail_result.job_url or job.job_url,
                 "detail_fetched_at": utc_now(),
+                "pre_check": compute_pre_check(
+                    detail_result.job.title or job.title,
+                    detail_result.boss_active_text or job.boss_active_text,
+                    detail_result.detail_text or job.detail_text,
+                ),
             },
         )
         if updated is None:
@@ -753,6 +778,10 @@ class JobCollectionService:
                         raw_payload=item.raw_payload,
                         search_count=1,
                         last_searched_at=utc_now(),
+                        pre_check=compute_pre_check(
+                            item.title,
+                            item.boss_active_text,
+                        ),
                     ),
                     JobLead,
                 )
@@ -779,6 +808,10 @@ class JobCollectionService:
                         "last_seen_at": utc_now(),
                         "last_searched_at": utc_now(),
                         "search_count": max(1, existing.search_count) + 1,
+                        "pre_check": compute_pre_check(
+                            item.title,
+                            item.boss_active_text or existing.boss_active_text,
+                        ),
                     },
                 )
                 dedup_updated += 1
@@ -954,6 +987,11 @@ class JobCollectionService:
                     detail_source_url=detail.request_url or detail.job_url or None,
                     detail_fetched_at=utc_now(),
                     raw_payload=detail.detail_raw_payload or {},
+                    pre_check=compute_pre_check(
+                        detail.job.title or detail.job_id,
+                        detail.boss_active_text or None,
+                        detail.detail_text or None,
+                    ),
                 ),
                 JobLead,
             )
@@ -983,6 +1021,11 @@ class JobCollectionService:
                     "detail_source_url": detail.request_url or detail.job_url or existing.detail_source_url,
                     "detail_fetched_at": utc_now(),
                     "last_seen_at": utc_now(),
+                    "pre_check": compute_pre_check(
+                        detail.job.title or existing.title,
+                        detail.boss_active_text or existing.boss_active_text,
+                        detail.detail_text or existing.detail_text,
+                    ),
                 },
             )
             return "updated"
@@ -2392,6 +2435,7 @@ class AIMatchingService:
     async def _do_evaluate_batch(self, task: GreetingTask, limit: int) -> None:
         cursor = self.jobs.find({
             "ai_match": None,
+            "pre_check": True,
             "detail_fetched_at": {"$ne": None},
             "updated_at": {"$gte": utc_now() - timedelta(weeks=1)},
         }).sort("updated_at", -1).limit(limit)

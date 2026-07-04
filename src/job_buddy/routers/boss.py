@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from job_buddy.boss import BossOperationError
 from job_buddy.deps import (
@@ -55,12 +56,13 @@ async def list_jobs(
     greeted: bool | None = None,
     created_today: bool = False,
     updated_today: bool = False,
+    pre_check: bool | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=1000),
     service: JobCollectionService = Depends(get_job_service),
 ) -> JobListResponse:
     skip = (page - 1) * limit
-    jobs, total = await service.list_jobs(greeted=greeted, created_today=created_today, updated_today=updated_today, skip=skip, limit=limit)
+    jobs, total = await service.list_jobs(greeted=greeted, created_today=created_today, updated_today=updated_today, pre_check=pre_check, skip=skip, limit=limit)
     return JobListResponse(
         items=[JobLeadRead(**item.model_dump()) for item in jobs],
         total=total,
@@ -154,6 +156,19 @@ async def generate_ai_message(
     """Generate an AI-crafted chat message for the job's BOSS."""
     result = await service.generate_message(source_job_id, context=payload.context)
     return AIMessageResponse(**result)
+
+
+class PreCheckRequest(BaseModel):
+    source_job_ids: list[str]
+
+
+@router.post("/jobs/pre-check", tags=["jobs"], operation_id="pre_check_jobs_batch")
+async def pre_check_jobs_batch(
+    payload: PreCheckRequest,
+    service: JobCollectionService = Depends(get_job_service),
+) -> dict[str, int]:
+    count = await service.pre_check_jobs(payload.source_job_ids)
+    return {"count": count}
 
 
 @router.post("/tasks/search", response_model=TaskTriggerResponse, tags=["tasks"], operation_id="trigger_search_task")

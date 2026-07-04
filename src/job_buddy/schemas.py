@@ -56,6 +56,7 @@ class JobLeadRead(TimestampedSchema):
     ai_completion_tokens: int | None = None
     ai_cache_hit_tokens: int | None = None
     ai_evaluated_at: datetime | None = None
+    pre_check: bool | None = None
 
 
 class JobLeadDetailRead(JobLeadRead):

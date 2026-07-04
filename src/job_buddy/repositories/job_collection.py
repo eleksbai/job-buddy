@@ -7,7 +7,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 from job_buddy.boss.schemas import JobDetailOut, SearchJobItemOut
-from job_buddy.models import JobCollectionRecord, JobLead, utc_now
+from job_buddy.models import JobCollectionRecord, JobLead, compute_pre_check, utc_now
 
 
 class JobCollectionRepository:
@@ -145,6 +145,11 @@ class JobCollectionRepository:
                 detail_source_url=detail.request_url or detail.job_url or None,
                 detail_fetched_at=utc_now(),
                 raw_payload=detail.detail_raw_payload or {},
+                pre_check=compute_pre_check(
+                    detail.job.title or detail.job_id,
+                    detail.boss_active_text or None,
+                    detail.detail_text or None,
+                ),
             )
             payload = record.to_mongo()
             payload.pop("_id", None)
@@ -176,6 +181,11 @@ class JobCollectionRepository:
             "detail_fetched_at": utc_now(),
             "last_seen_at": utc_now(),
             "updated_at": utc_now(),
+            "pre_check": compute_pre_check(
+                detail.job.title or existing.title,
+                detail.boss_active_text or existing.boss_active_text,
+                detail.detail_text or existing.detail_text,
+            ),
         }
         await self.jobs.update_one({"_id": ObjectId(existing.id)}, {"$set": updates})
         stored = await self.jobs.find_one({"_id": ObjectId(existing.id)})
@@ -209,6 +219,10 @@ class JobCollectionRepository:
                 raw_payload=item.raw_payload,
                 search_count=1,
                 last_searched_at=utc_now(),
+                pre_check=compute_pre_check(
+                    item.title,
+                    item.boss_active_text,
+                ),
             )
             payload = record.to_mongo()
             payload.pop("_id", None)
@@ -237,6 +251,10 @@ class JobCollectionRepository:
             "last_searched_at": utc_now(),
             "search_count": max(1, existing.search_count) + 1,
             "updated_at": utc_now(),
+            "pre_check": compute_pre_check(
+                item.title,
+                item.boss_active_text or existing.boss_active_text,
+            ),
         }
         await self.jobs.update_one({"_id": ObjectId(existing.id)}, {"$set": updates})
         stored = await self.jobs.find_one({"_id": ObjectId(existing.id)})

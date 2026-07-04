@@ -297,6 +297,16 @@
                 </select>
               </label>
               <label>
+                预检
+                <select id="jobsPreCheckFilter">
+                  <option value="">全部</option>
+                  <option value="true">通过</option>
+                  <option value="false">不通过</option>
+                  <option value="null">未评估</option>
+                </select>
+              </label>
+              <button id="preCheckBatchButton" class="button-secondary" style="margin-top:0">预检本页</button>
+              <label>
                 城市
                 <input id="jobsCityFilter" type="text" placeholder="输入城市筛选" />
               </label>

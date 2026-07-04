@@ -12,6 +12,24 @@ def utc_now() -> datetime:
     return datetime.now(tz=UTC)
 
 
+ACTIVE_THIS_WEEK = frozenset({"今日活跃", "本周活跃", "刚刚活跃", "3日内活跃"})
+
+
+def compute_pre_check(
+    title: str,
+    boss_active_text: str | None = None,
+    detail_text: str | None = None,
+) -> bool:
+    text = title
+    if detail_text:
+        text += " " + detail_text
+    if "python" not in text.lower():
+        return False
+    if not boss_active_text or boss_active_text not in ACTIVE_THIS_WEEK:
+        return False
+    return True
+
+
 class PyObjectId(str):
     @classmethod
     def from_value(cls, value: ObjectId | str) -> str:
@@ -89,6 +107,7 @@ class JobLead(DocumentModel):
     ai_completion_tokens: int | None = None
     ai_cache_hit_tokens: int | None = None
     ai_evaluated_at: datetime | None = None
+    pre_check: bool | None = None
 
 
 class JobCollectionRecord(DocumentModel):
