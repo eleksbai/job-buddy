@@ -1185,7 +1185,7 @@ class JobCollectionService:
             f"滚动采集完成\n"
             f"搜索: {query.get('query', '')}\n"
             f"列表采集: {stats['scroll_collected']} | 详情采集: {stats['detail_collected']}\n"
-            f"新建: {stats['detail_created']} | 更新: {stats['detail_updated']} | 跳过: {stats['detail_skipped']}"
+            f"新建: {stats['detail_created']}（预检通过: {stats.get('detail_created_pre_check', 0)}）| 更新: {stats['detail_updated']} | 跳过: {stats['detail_skipped']}"
         )
 
         await _update_model(

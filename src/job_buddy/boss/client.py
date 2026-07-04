@@ -60,6 +60,7 @@ from job_buddy.boss.schemas import (
     SendMessageOut,
 )
 from job_buddy.config import Settings
+from job_buddy.models import compute_pre_check
 
 
 from urllib.parse import urlencode, parse_qs, urlsplit, urlunsplit
@@ -960,7 +961,7 @@ class BossClient:
 
         Returns a stats dict with keys:
         ``scroll_collected``, ``detail_collected``, ``detail_created``,
-        ``detail_updated``, ``detail_skipped``.
+        ``detail_created_pre_check``, ``detail_updated``, ``detail_skipped``.
         """
         logger.info("BossClient scroll_and_collect_details start")
 
@@ -972,6 +973,7 @@ class BossClient:
             "scroll_collected": 0,
             "detail_collected": 0,
             "detail_created": 0,
+            "detail_created_pre_check": 0,
             "detail_updated": 0,
             "detail_skipped": 0,
         }
@@ -1038,6 +1040,12 @@ class BossClient:
                     stats["detail_collected"] += 1
                     if is_first_detail:
                         stats["detail_created"] += 1
+                        if compute_pre_check(
+                            detail_out.job.title or detail_out.job_id,
+                            detail_out.boss_active_text or None,
+                            detail_out.detail_text or None,
+                        ):
+                            stats["detail_created_pre_check"] += 1
                     else:
                         stats["detail_updated"] += 1
             except Exception as exc:
