@@ -1,8 +1,9 @@
 import asyncio
+import logging
+import os
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -27,6 +28,19 @@ from job_buddy.services import ScrollAndCollectWorker, fail_abandoned_running_ta
 from job_buddy.web.app import register_web
 
 logger = logging.getLogger(__name__)
+
+
+def _schedule_force_exit(delay: float = 5.0) -> None:
+    """Arm a daemon timer that force-exits if background threads block shutdown."""
+
+    def _force() -> None:
+        logger.warning("Force exit: processes still alive after %.0fs", delay)
+        os._exit(0)
+
+    timer = threading.Timer(delay, _force)
+    timer.daemon = True
+    timer.start()
+    logger.info("Force-exit guard armed (delay=%.0fs)", delay)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -92,11 +106,22 @@ def create_app() -> FastAPI:
                 await agent_worker.start()
                 yield
             finally:
-                await agent_worker.stop()
-                await ai_matching_worker.stop()
-                await scroll_and_collect_worker.stop()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            agent_worker.stop(),
+                            ai_matching_worker.stop(),
+                            scroll_and_collect_worker.stop(),
+                        ),
+                        timeout=30.0,
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    logger.warning("Workers did not stop gracefully within timeout")
+                except Exception:
+                    logger.exception("Error during worker shutdown")
                 await boss_client.close()
                 await feishu_manager.stop()
+                _schedule_force_exit()
 
     app = FastAPI(title=settings.app.name, lifespan=lifespan)
     register_exception_handlers(app)

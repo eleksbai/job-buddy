@@ -108,10 +108,7 @@ class AgentWorker(BaseWorker):
             self.feishu_manager.set_command_handler(self._on_feishu_message)
 
     async def stop(self) -> None:
-        self._stopped.set()
-        if self._task is not None:
-            await self._task
-            self._task = None
+        await super().stop()
 
     # ── Schedule helpers (from ScrollAndCollectWorker) ────────────
 
@@ -204,6 +201,8 @@ class AgentWorker(BaseWorker):
                 if now >= next_run:
                     try:
                         await self.execute()
+                    except asyncio.CancelledError:
+                        break
                     except Exception:
                         logger.exception("worker %s run failed", self.worker_name)
                     worker = await self.get_worker()
@@ -227,9 +226,14 @@ class AgentWorker(BaseWorker):
                         pass
             except asyncio.TimeoutError:
                 pass
+            except asyncio.CancelledError:
+                break
             except Exception:
                 logger.exception("worker loop failed: worker=%s", self.worker_name)
-                await asyncio.sleep(60)
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=60)
+                except asyncio.TimeoutError:
+                    pass
 
     # ── Fixed workflow ────────────────────────────────────────────
 

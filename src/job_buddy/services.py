@@ -1534,17 +1534,32 @@ class BaseWorker(ABC):
         self._stopped.clear()
         self._task = asyncio.create_task(self._run(), name=f"job-buddy-{self.worker_name}-worker")
 
-    async def stop(self) -> None:
+    async def stop(self, timeout: float = 10.0) -> None:
         self._stopped.set()
         if self._task is not None:
-            await self._task
+            try:
+                await asyncio.wait_for(self._task, timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Worker %s did not stop within %.0fs, cancelling task",
+                    self.worker_name, timeout,
+                )
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
             self._task = None
 
     async def _run(self) -> None:
         fail_count = 0
         debug_count = 0
         while not self._stopped.is_set():
-            await asyncio.sleep(random.random() * 5 + 3)
+            try:
+                await asyncio.wait_for(self._stopped.wait(), timeout=random.random() * 5 + 3)
+                continue
+            except asyncio.TimeoutError:
+                pass
             try:
                 debug_count += 1
                 if debug_count % 5 == 0:
@@ -1553,8 +1568,15 @@ class BaseWorker(ABC):
                 fail_count = 0
             except WorkerFailException:
                 fail_count += 1
+                backoff = 2 ** fail_count * 60 * 60
                 logger.warning("Worker %s failed, delay %sH", self.worker_name, 2 ** fail_count)
-                await asyncio.sleep(2 ** fail_count * 60 * 60)
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=backoff)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            except asyncio.CancelledError:
+                break
             except Exception:
                 logger.exception("worker loop failed: worker=%s", self.worker_name)
             try:
@@ -1676,9 +1698,10 @@ class ScrollAndCollectWorker(BaseWorker):
                 if now >= next_run:
                     try:
                         await self.execute()
+                    except asyncio.CancelledError:
+                        break
                     except Exception:
                         logger.exception("worker %s run failed", self.worker_name)
-                    # complete_execution 覆盖了 next_run_at，用同方法重新计算写入
                     worker = await self.get_worker()
                     await self._update_worker_model({
                         "next_run_at": self._calculate_next_run(worker),
@@ -1694,9 +1717,14 @@ class ScrollAndCollectWorker(BaseWorker):
                     await asyncio.wait_for(self._stopped.wait(), timeout=wait)
             except asyncio.TimeoutError:
                 pass
+            except asyncio.CancelledError:
+                break
             except Exception:
                 logger.exception("worker loop failed: worker=%s", self.worker_name)
-                await asyncio.sleep(60)
+                try:
+                    await asyncio.wait_for(self._stopped.wait(), timeout=60)
+                except asyncio.TimeoutError:
+                    pass
 
 
 class FriendService:
