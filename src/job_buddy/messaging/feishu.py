@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 
 from lark_oapi.channel import FeishuChannel
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -63,7 +64,7 @@ class FeishuChannelManager:
                 {}, {"$set": {"chat_id": chat_id}}
             )
             logger.info("Feishu chat_id saved: %s", chat_id)
-        await self._channel.send(self._chat_id, {"text": "收到"})
+        await self.send("收到")
 
         text = getattr(msg, "content_text", "") or ""
         logger.info("Feishu message received: chat_id=%s text=%s", chat_id, text[:200])
@@ -83,7 +84,8 @@ class FeishuChannelManager:
         if not self._enabled or not self._channel or not self._chat_id:
             return False
         try:
-            await self._channel.send(self._chat_id, {"text": text})
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            await self._channel.send(self._chat_id, {"text": f"[{now}]\n{text}"})
             return True
         except Exception:
             logger.exception("Failed to send Feishu message")
