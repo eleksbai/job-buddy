@@ -57,6 +57,7 @@ class AIConfig(BaseModel):
     criteria_path: str = "templates/matching_criteria.md"
     conversation_style_path: str = "templates/conversation_style.md"
     request_delay_seconds: float = 1.0
+    max_concurrency: int = 5
     temperature: float = 0.1
 
     @property

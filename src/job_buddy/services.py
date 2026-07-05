@@ -2616,26 +2616,31 @@ class AIMatchingService:
         resume_text, criteria_text = await self._load_resume_and_criteria()
         from job_buddy.ai.job_evaluation import build_evaluation_prompt
 
-        success_count = 0
-        failed_count = 0
+        await self._update_step(task.id, f"evaluating_0_of_{len(jobs)}")
 
-        for idx, job in enumerate(jobs):
-            await self._update_step(task.id, f"evaluate_{idx + 1}_of_{len(jobs)}")
+        async def evaluate_one(job: JobLead) -> dict[str, Any]:
             try:
                 prompt = build_evaluation_prompt(job, resume_text, criteria_text)
                 result = await self.client.evaluate(prompt)
                 await self._persist_evaluation(job, result)
-                success_count += 1
+                return {"success": True, "source_job_id": job.source_job_id}
             except Exception as exc:
                 logger.warning(
                     "AI evaluation failed for job %s: %s",
                     job.source_job_id,
                     exc,
                 )
-                failed_count += 1
+                return {"success": False, "source_job_id": job.source_job_id}
 
-            if idx < len(jobs) - 1:
-                await asyncio.sleep(self.settings.ai.request_delay_seconds)
+        sem = asyncio.Semaphore(self.settings.ai.max_concurrency)
+
+        async def limited(job: JobLead) -> dict[str, Any]:
+            async with sem:
+                return await evaluate_one(job)
+
+        results = await asyncio.gather(*[limited(job) for job in jobs])
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = len(jobs) - success_count
 
         final_status = TaskStatus.SUCCEEDED
         if failed_count and success_count:
