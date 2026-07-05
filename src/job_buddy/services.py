@@ -4,6 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 import logging
 import random
+import re
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
 from http.cookiejar import debug
@@ -363,7 +364,28 @@ class JobCollectionService:
             self._auth_service = auth_service
         return auth_service
 
-    async def list_jobs(self, greeted: bool | None, created_today: bool = False, updated_today: bool = False, pre_check: bool | None = None, skip: int = 0, limit: int = 100) -> tuple[list[JobLead], int]:
+    SORT_FIELD_MAP: dict[str, str] = {
+        "last_searched_at": "last_searched_at",
+        "company": "company",
+        "title": "title",
+        "search_count": "search_count",
+        "ai_score": "ai_score",
+    }
+
+    async def list_jobs(
+        self,
+        greeted: bool | None,
+        created_today: bool = False,
+        updated_today: bool = False,
+        ai_match: str | None = None,
+        pre_check: str | None = None,
+        city: str | None = None,
+        keyword: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[JobLead], int]:
         filters: dict[str, Any] = {}
         if created_today or updated_today:
             since_24h = utc_now() - timedelta(hours=24)
@@ -373,10 +395,32 @@ class JobCollectionService:
             filters["updated_at"] = {"$gte": since_24h}
         if greeted is not None:
             filters["greeted"] = greeted
-        if pre_check is not None:
-            filters["pre_check"] = pre_check
+
+        for field, param_val in [("ai_match", ai_match), ("pre_check", pre_check)]:
+            if param_val == "true":
+                filters[field] = True
+            elif param_val == "false":
+                filters[field] = False
+            elif param_val == "null":
+                filters[field] = None
+
+        if city:
+            filters["city"] = {"$regex": re.escape(city), "$options": "i"}
+        if keyword:
+            escaped = re.escape(keyword)
+            filters["$or"] = [
+                {"title": {"$regex": escaped, "$options": "i"}},
+                {"company": {"$regex": escaped, "$options": "i"}},
+            ]
+
+        sort_field = self.SORT_FIELD_MAP.get(sort_by or "", "last_searched_at")
+        direction = -1 if (sort_dir or "desc") == "desc" else 1
+        sort_list: list[tuple[str, int]] = [(sort_field, direction)]
+        if sort_field != "_id":
+            sort_list.append(("_id", -1))
+
         total = await self.jobs.count_documents(filters)
-        cursor = self.jobs.find(filters).sort([("last_searched_at", -1), ("_id", -1)]).skip(skip).limit(limit)
+        cursor = self.jobs.find(filters).sort(sort_list).skip(skip).limit(limit)
         items = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
         return items, total
 
@@ -2420,7 +2464,17 @@ class AIMatchingService:
 
         prompt = build_evaluation_prompt(job, resume_text, criteria_text)
         result = await self.client.evaluate(prompt)
+        await self._persist_evaluation(job, result)
+        return result
 
+    async def _persist_evaluation(self, job: JobLead, result: dict[str, Any]) -> None:
+        logger.info(
+            "AI评估: %s | 预检: %s | 匹配: %s | 评分: %s",
+            job.title,
+            job.pre_check,
+            result["match"],
+            result["score"],
+        )
         await _update_model(
             self.jobs,
             JobLead,
@@ -2436,12 +2490,11 @@ class AIMatchingService:
                 "ai_evaluated_at": utc_now(),
             },
         )
-        return result
 
-    async def clear_all_marks(self) -> int:
-        """Reset AI evaluation fields for all jobs. Returns count of updated documents."""
+    async def clear_all_marks(self, source_job_ids: list[str]) -> int:
+        """Reset AI evaluation fields for the specified jobs. Returns count of updated documents."""
         result = await self.jobs.update_many(
-            {"updated_at": {"$gte": utc_now() - timedelta(weeks=1)}},
+            {"source_job_id": {"$in": source_job_ids}},
             {
                 "$set": {
                     "ai_score": None,
@@ -2578,21 +2631,7 @@ class AIMatchingService:
             try:
                 prompt = build_evaluation_prompt(job, resume_text, criteria_text)
                 result = await self.client.evaluate(prompt)
-                await _update_model(
-                    self.jobs,
-                    JobLead,
-                    job.id,
-                    {
-                        "ai_match": result["match"],
-                        "ai_score": result["score"],
-                        "ai_reasoning": result["reasoning"],
-                        "ai_reasoning_content": result.get("reasoning_content"),
-                        "ai_prompt_tokens": result.get("prompt_tokens"),
-                        "ai_completion_tokens": result.get("completion_tokens"),
-                        "ai_cache_hit_tokens": result.get("cache_hit_tokens"),
-                        "ai_evaluated_at": utc_now(),
-                    },
-                )
+                await self._persist_evaluation(job, result)
                 success_count += 1
             except Exception as exc:
                 logger.warning(

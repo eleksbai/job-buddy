@@ -787,6 +787,18 @@ function renderDashboardTasks(items) {
   );
 }
 
+const JOB_FILTER_URL_KEYS = ["sort", "created_today", "updated_today", "greeted", "ai_match", "pre_check", "city", "keyword"];
+const JOB_FILTER_ELEMENT_MAP = {
+  sort: "jobsSortSelect",
+  created_today: "jobsCreatedTodayFilter",
+  updated_today: "jobsUpdatedTodayFilter",
+  greeted: "jobsGreetedFilter",
+  ai_match: "jobsAiMatchFilter",
+  pre_check: "jobsPreCheckFilter",
+  city: "jobsCityFilter",
+  keyword: "jobsKeywordFilter",
+};
+
 function readJobsPageParams() {
   const params = new URLSearchParams(window.location.search);
   const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
@@ -796,12 +808,38 @@ function readJobsPageParams() {
   return { page, limit };
 }
 
-function updateJobsPageParams(page, limit) {
-  const params = new URLSearchParams(window.location.search);
-  params.set("page", String(page));
-  params.set("limit", String(limit));
+function syncJobsUrl(page, limit) {
+  page = page ?? state.jobsPage ?? 1;
+  limit = limit ?? state.jobsLimit ?? 100;
+  const params = new URLSearchParams();
+  if (page > 1) params.set("page", String(page));
+  if (limit !== 100) params.set("limit", String(limit));
+  for (const key of JOB_FILTER_URL_KEYS) {
+    const el = document.getElementById(JOB_FILTER_ELEMENT_MAP[key]);
+    const val = (el?.value || "").trim();
+    if (val) params.set(key, val);
+  }
   const newUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
   window.history.replaceState(null, "", newUrl);
+}
+
+function updateJobsPageParams(page, limit) {
+  state.jobsPage = page;
+  state.jobsLimit = limit;
+  syncJobsUrl(page, limit);
+}
+
+function restoreFiltersFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  for (const key of JOB_FILTER_URL_KEYS) {
+    if (!params.has(key)) continue;
+    const el = document.getElementById(JOB_FILTER_ELEMENT_MAP[key]);
+    if (el) el.value = params.get(key) || "";
+  }
+  const page = parseInt(params.get("page") || "1", 10) || 1;
+  const limitValues = [20, 50, 100, 200, 500, 1000];
+  const rawLimit = parseInt(params.get("limit") || "100", 10) || 100;
+  const limit = limitValues.includes(rawLimit) ? rawLimit : 100;
   state.jobsPage = page;
   state.jobsLimit = limit;
 }
@@ -811,14 +849,23 @@ async function loadJobs() {
   state.jobsPage = page;
   state.jobsLimit = limit;
 
-  const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
-  const createdToday = document.getElementById("jobsCreatedTodayFilter")?.value || "";
-  const updatedToday = document.getElementById("jobsUpdatedTodayFilter")?.value || "";
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-  if (greeted === "true") params.set("greeted", "true");
-  else if (greeted === "false") params.set("greeted", "false");
-  if (createdToday === "true") params.set("created_today", "true");
-  if (updatedToday === "true") params.set("updated_today", "true");
+  const addFilter = (key, elId) => {
+    const val = (document.getElementById(elId)?.value || "").trim();
+    if (val) params.set(key, val);
+  };
+  addFilter("greeted", "jobsGreetedFilter");
+  addFilter("created_today", "jobsCreatedTodayFilter");
+  addFilter("updated_today", "jobsUpdatedTodayFilter");
+  addFilter("ai_match", "jobsAiMatchFilter");
+  addFilter("pre_check", "jobsPreCheckFilter");
+  addFilter("city", "jobsCityFilter");
+  addFilter("keyword", "jobsKeywordFilter");
+
+  const sortBy = document.getElementById("jobsSortSelect")?.value || "last_searched_at_desc";
+  const [field, dir] = sortBy.split(/_(?=[^_]*$)/);
+  params.set("sort_by", field);
+  params.set("sort_dir", dir || "desc");
 
   const result = await fetchJson(`/boss/jobs?${params.toString()}`);
   state.jobs = result.items || [];
@@ -840,9 +887,9 @@ async function changeJobsLimit(limit) {
 }
 
 function renderJobsTable() {
-  const items = getSortedFilteredJobs();
+  const items = state.jobs;
   const totalPages = Math.max(1, Math.ceil(state.jobsTotal / state.jobsLimit));
-  document.getElementById("jobsCount").textContent = `共 ${items.length} 条（全部 ${state.jobsTotal} 条，第 ${state.jobsPage}/${totalPages} 页）`;
+  document.getElementById("jobsCount").textContent = `共 ${state.jobsTotal} 条（总数 ${state.jobsTotal} 条，第 ${state.jobsPage}/${totalPages} 页）`;
   renderTable(
     "jobsTable",
     [
@@ -895,80 +942,7 @@ function renderJobsPagination() {
 }
 
 function getSortedFilteredJobs() {
-  let items = [...state.jobs];
-
-  // filter
-  const greeted = document.getElementById("jobsGreetedFilter")?.value || "";
-  if (greeted === "true") {
-    items = items.filter((row) => row.greeted);
-  } else if (greeted === "false") {
-    items = items.filter((row) => !row.greeted);
-  }
-  const aiMatch = document.getElementById("jobsAiMatchFilter")?.value || "";
-  if (aiMatch === "true") {
-    items = items.filter((row) => row.ai_match === true);
-  } else if (aiMatch === "false") {
-    items = items.filter((row) => row.ai_match === false);
-  } else if (aiMatch === "null") {
-    items = items.filter((row) => row.ai_match === null || row.ai_match === undefined);
-  }
-  const preCheck = document.getElementById("jobsPreCheckFilter")?.value || "";
-  if (preCheck === "true") {
-    items = items.filter((row) => row.pre_check === true);
-  } else if (preCheck === "false") {
-    items = items.filter((row) => row.pre_check === false);
-  } else if (preCheck === "null") {
-    items = items.filter((row) => row.pre_check === null || row.pre_check === undefined);
-  }
-  const cityFilter = (document.getElementById("jobsCityFilter")?.value || "").trim().toLowerCase();
-  if (cityFilter) {
-    items = items.filter((row) => (row.city || "").toLowerCase().includes(cityFilter));
-  }
-  const keyword = (document.getElementById("jobsKeywordFilter")?.value || "").trim().toLowerCase();
-  if (keyword) {
-    items = items.filter(
-      (row) =>
-        (row.title || "").toLowerCase().includes(keyword) ||
-        (row.company || "").toLowerCase().includes(keyword),
-    );
-  }
-
-  // sort
-  const sortBy = document.getElementById("jobsSortSelect")?.value || "last_searched_at_desc";
-  const [field, dir] = sortBy.split(/_(?=[^_]*$)/);
-  const direction = dir === "asc" ? 1 : -1;
-  items.sort((a, b) => {
-    let va, vb;
-    switch (field) {
-      case "last_searched_at":
-        va = a.last_searched_at || a.last_seen_at || "";
-        vb = b.last_searched_at || b.last_seen_at || "";
-        break;
-      case "company":
-        va = (a.company || "").toLowerCase();
-        vb = (b.company || "").toLowerCase();
-        break;
-      case "title":
-        va = (a.title || "").toLowerCase();
-        vb = (b.title || "").toLowerCase();
-        break;
-      case "search_count":
-        va = a.search_count ?? 0;
-        vb = b.search_count ?? 0;
-        break;
-      case "ai_score":
-        va = a.ai_score ?? -1;
-        vb = b.ai_score ?? -1;
-        break;
-      default:
-        return 0;
-    }
-    if (va < vb) return -1 * direction;
-    if (va > vb) return 1 * direction;
-    return 0;
-  });
-
-  return items;
+  return state.jobs;
 }
 
 function renderJobLinkButton(row) {
@@ -2235,12 +2209,28 @@ async function triggerAiEvaluate() {
 }
 
 async function clearAiMarks() {
-  const confirmed = window.confirm("确认清除所有AI评分和匹配标记？此操作不可恢复。");
+  const jobs = getSortedFilteredJobs();
+  const markedJobs = jobs.filter((row) => row.ai_match !== null && row.ai_match !== undefined);
+  const sourceJobIds = jobs.map((row) => row.source_job_id);
+  if (!sourceJobIds.length) {
+    showNotice("当前页没有职位", 3000);
+    return;
+  }
+  let confirmMsg;
+  if (markedJobs.length === 0) {
+    confirmMsg = `当前页 ${sourceJobIds.length} 条职位均无AI标记，确认清除？此操作不可恢复。`;
+  } else {
+    confirmMsg = `确认清除当前页 ${sourceJobIds.length} 条职位中 ${markedJobs.length} 条有AI标记的评估数据？此操作不可恢复。`;
+  }
+  const confirmed = window.confirm(confirmMsg);
   if (!confirmed) return;
   clearError();
   setButtonBusy("aiClearMarksButton", true, "清除中");
   try {
-    const result = await fetchJson("/boss/jobs/ai/clear", { method: "POST" });
+    const result = await fetchJson("/boss/jobs/ai/clear", {
+      method: "POST",
+      body: JSON.stringify({ source_job_ids: sourceJobIds }),
+    });
     await loadJobs();
     showNotice(`已清除 ${result.cleared_count} 条AI标记`, 5000);
   } finally {
@@ -2903,17 +2893,27 @@ function bindEvents() {
     .getElementById("jobsLimitSelect")
     .addEventListener("change", (event) => changeJobsLimit(event.target.value).catch((error) => showError(error.message)));
 
-  ["jobsSortSelect", "jobsAiMatchFilter", "jobsPreCheckFilter"].forEach((id) => {
-    document.getElementById(id)?.addEventListener("change", renderJobsTable);
-  });
-  ["jobsGreetedFilter", "jobsCreatedTodayFilter", "jobsUpdatedTodayFilter"].forEach((id) => {
+  let jobsInputTimer;
+  const reloadJobsWithReset = () => {
+    updateJobsPageParams(1, state.jobsLimit);
+    loadJobs().catch((error) => showError(error.message));
+  };
+  const debouncedReloadJobs = () => {
+    clearTimeout(jobsInputTimer);
+    jobsInputTimer = setTimeout(reloadJobsWithReset, 300);
+  };
+
+  ["jobsSortSelect", "jobsAiMatchFilter", "jobsPreCheckFilter", "jobsGreetedFilter", "jobsCreatedTodayFilter", "jobsUpdatedTodayFilter"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", () => {
-      updateJobsPageParams(1, state.jobsLimit);
-      loadJobs().catch((error) => showError(error.message));
+      syncJobsUrl();
+      reloadJobsWithReset();
     });
   });
   ["jobsCityFilter", "jobsKeywordFilter"].forEach((id) => {
-    document.getElementById(id)?.addEventListener("input", renderJobsTable);
+    document.getElementById(id)?.addEventListener("input", () => {
+      syncJobsUrl();
+      debouncedReloadJobs();
+    });
   });
   document
     .getElementById("preCheckBatchButton")
@@ -3016,6 +3016,7 @@ function bindEvents() {
 
 bindSearchFormPersistence();
 bindEvents();
+restoreFiltersFromUrl();
 const initialRoute = getViewFromHash();
 setActiveView(initialRoute.view);
 

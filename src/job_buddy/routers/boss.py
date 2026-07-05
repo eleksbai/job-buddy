@@ -56,13 +56,30 @@ async def list_jobs(
     greeted: bool | None = None,
     created_today: bool = False,
     updated_today: bool = False,
-    pre_check: bool | None = None,
+    ai_match: str | None = None,
+    pre_check: str | None = None,
+    city: str | None = None,
+    keyword: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=1000),
     service: JobCollectionService = Depends(get_job_service),
 ) -> JobListResponse:
     skip = (page - 1) * limit
-    jobs, total = await service.list_jobs(greeted=greeted, created_today=created_today, updated_today=updated_today, pre_check=pre_check, skip=skip, limit=limit)
+    jobs, total = await service.list_jobs(
+        greeted=greeted,
+        created_today=created_today,
+        updated_today=updated_today,
+        ai_match=ai_match,
+        pre_check=pre_check,
+        city=city,
+        keyword=keyword,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        skip=skip,
+        limit=limit,
+    )
     return JobListResponse(
         items=[JobLeadRead(**item.model_dump()) for item in jobs],
         total=total,
@@ -138,12 +155,17 @@ async def trigger_ai_evaluation(
     return TaskTriggerResponse(task_id=task.id, status=task.status)
 
 
+class ClearAIMarksRequest(BaseModel):
+    source_job_ids: list[str]
+
+
 @router.post("/jobs/ai/clear", tags=["jobs"], operation_id="clear_ai_marks")
 async def clear_ai_marks(
+    payload: ClearAIMarksRequest,
     service: AIMatchingService = Depends(get_ai_matching_service),
 ) -> dict[str, int]:
-    """Clear all AI evaluation marks and scores."""
-    count = await service.clear_all_marks()
+    """Clear AI evaluation marks and scores for the specified jobs."""
+    count = await service.clear_all_marks(source_job_ids=payload.source_job_ids)
     return {"cleared_count": count}
 
 

@@ -12,8 +12,8 @@ class FakeJobService:
         self.detail_calls: list[tuple[str, str | None, bool]] = []
         self.scroll_search_payloads: list[dict] = []
 
-    async def list_jobs(self, greeted, created_today=False, updated_today=False, skip=0, limit=100):
-        _ = greeted, created_today, updated_today, skip, limit
+    async def list_jobs(self, greeted, created_today=False, updated_today=False, ai_match=None, pre_check=None, city=None, keyword=None, sort_by=None, sort_dir=None, skip=0, limit=100):
+        _ = greeted, created_today, updated_today, ai_match, pre_check, city, keyword, sort_by, sort_dir, skip, limit
         return (
             [
                 JobLead(
