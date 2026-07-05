@@ -853,10 +853,6 @@ class JobCollectionService:
                         raw_payload=item.raw_payload,
                         search_count=1,
                         last_searched_at=utc_now(),
-                        pre_check=compute_pre_check(
-                            item.title,
-                            item.boss_active_text,
-                        ),
                     ),
                     JobLead,
                 )
@@ -883,10 +879,6 @@ class JobCollectionService:
                         "last_seen_at": utc_now(),
                         "last_searched_at": utc_now(),
                         "search_count": max(1, existing.search_count) + 1,
-                        "pre_check": compute_pre_check(
-                            item.title,
-                            item.boss_active_text or existing.boss_active_text,
-                        ),
                     },
                 )
                 dedup_updated += 1
@@ -2469,8 +2461,9 @@ class AIMatchingService:
 
     async def _persist_evaluation(self, job: JobLead, result: dict[str, Any]) -> None:
         logger.info(
-            "AI评估: %s | 预检: %s | 匹配: %s | 评分: %s",
+            "AI评估: %s | %s | 预检: %s | 匹配: %s | 评分: %s",
             job.title,
+            job.company,
             job.pre_check,
             result["match"],
             result["score"],

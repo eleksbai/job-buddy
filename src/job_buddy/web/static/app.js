@@ -521,19 +521,65 @@ function buildAiMatchingPanel(job) {
     </div>`;
 }
 
-function updateJobDetailEvalButton(job) {
+function updateJobDetailButtons(job) {
   const hasDetail = !!(job.detail_text || job.detail_fetched_at);
-  const text = job.ai_evaluated_at ? "重新评估" : "AI评估";
+  const evalText = job.ai_evaluated_at ? "重新评估" : "AI评估";
   ["jobDetailDrawerEvalButton", "jobDetailPageEvalButton"].forEach((id) => {
     const btn = document.getElementById(id);
     if (!btn) return;
     if (hasDetail) {
-      btn.textContent = text;
+      btn.textContent = evalText;
       btn.hidden = false;
     } else {
       btn.hidden = true;
     }
   });
+  ["jobDetailDrawerPreCheckButton", "jobDetailPagePreCheckButton"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.hidden = !hasDetail;
+  });
+}
+
+async function preCheckJobDetail() {
+  const job = state.jobDetail?.job || state.jobDetailPagePayload?.job;
+  const sourceJobId = job?.source_job_id || state.jobDetailSourceJobId || state.jobDetailPageSourceJobId;
+  if (!sourceJobId) return;
+
+  clearError();
+  setButtonBusy("jobDetailDrawerPreCheckButton", true, "预检中");
+  setButtonBusy("jobDetailPagePreCheckButton", true, "预检中");
+  try {
+    await fetchJson("/boss/jobs/pre-check", {
+      method: "POST",
+      body: JSON.stringify({ source_job_ids: [sourceJobId] }),
+    });
+    // Refresh detail to reflect updated pre_check
+    const detailPayload = await fetchJson(`/boss/jobs/${encodeURIComponent(sourceJobId)}/detail`);
+    const jobData = detailPayload?.job || {};
+
+    if (state.jobDetail) {
+      state.jobDetail = detailPayload;
+      const { bodyHtml } = buildJobDetailHtml(detailPayload);
+      document.getElementById("jobDetailContent").innerHTML = buildAiMatchingPanel(jobData) + bodyHtml;
+      updateJobDetailButtons(jobData);
+    }
+    if (state.jobDetailPagePayload) {
+      state.jobDetailPagePayload = detailPayload;
+      const { metaHtml, bodyHtml } = buildJobDetailHtml(detailPayload);
+      document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
+      document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
+      document.getElementById("jobDetailAiPanel").innerHTML = buildAiMatchingPanel(jobData);
+      updateJobDetailButtons(jobData);
+    }
+
+    await loadJobs();
+    showNotice("预检已完成", 3000);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    setButtonBusy("jobDetailDrawerPreCheckButton", false);
+    setButtonBusy("jobDetailPagePreCheckButton", false);
+  }
 }
 
 async function evaluateJobDetail(buttonId) {
@@ -557,14 +603,14 @@ async function evaluateJobDetail(buttonId) {
       state.jobDetail = detailPayload;
       const { bodyHtml } = buildJobDetailHtml(detailPayload);
       document.getElementById("jobDetailContent").innerHTML = buildAiMatchingPanel(jobData) + bodyHtml;
-      updateJobDetailEvalButton(jobData);
+      updateJobDetailButtons(jobData);
     }
 
     // Update full-page view if active
     if (state.jobDetailPagePayload) {
       state.jobDetailPagePayload = detailPayload;
       document.getElementById("jobDetailAiPanel").innerHTML = buildAiMatchingPanel(jobData);
-      updateJobDetailEvalButton(jobData);
+      updateJobDetailButtons(jobData);
     }
 
     await loadJobs();
@@ -593,6 +639,7 @@ function buildJobDetailHtml(payload) {
 
   const metaHtml = [
     cachedBadge,
+    renderPreCheckBadge(job),
     `<span>${escapeHtml(job.source_job_id || "-")}</span>`,
     `<span>${escapeHtml(formatDate(job.detail_fetched_at))}</span>`,
   ].join("");
@@ -657,7 +704,7 @@ function renderJobDetailDrawer(payload) {
   document.getElementById("jobDetailMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailContent").innerHTML =
     buildAiMatchingPanel(job) + bodyHtml;
-  updateJobDetailEvalButton(job);
+  updateJobDetailButtons(job);
 }
 
 async function loadAuthStatus() {
@@ -802,9 +849,7 @@ const JOB_FILTER_ELEMENT_MAP = {
 function readJobsPageParams() {
   const params = new URLSearchParams(window.location.search);
   const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
-  const limitValues = [20, 50, 100, 200, 500, 1000];
-  const rawLimit = parseInt(params.get("limit") || "100", 10) || 100;
-  const limit = limitValues.includes(rawLimit) ? rawLimit : 100;
+  const limit = parseInt(params.get("limit") || "100", 10) || 100;
   return { page, limit };
 }
 
@@ -837,9 +882,7 @@ function restoreFiltersFromUrl() {
     if (el) el.value = params.get(key) || "";
   }
   const page = parseInt(params.get("page") || "1", 10) || 1;
-  const limitValues = [20, 50, 100, 200, 500, 1000];
-  const rawLimit = parseInt(params.get("limit") || "100", 10) || 100;
-  const limit = limitValues.includes(rawLimit) ? rawLimit : 100;
+  const limit = parseInt(params.get("limit") || "100", 10) || 100;
   state.jobsPage = page;
   state.jobsLimit = limit;
 }
@@ -1482,7 +1525,7 @@ function renderJobDetailPageDetail(payload) {
   document.getElementById("jobDetailPageMeta").innerHTML = metaHtml;
   document.getElementById("jobDetailPageContent").innerHTML = bodyHtml;
   document.getElementById("jobDetailAiPanel").innerHTML = buildAiMatchingPanel(job);
-  updateJobDetailEvalButton(job);
+  updateJobDetailButtons(job);
   const contact = job.contact;
   document.getElementById("jobDetailGreetButton").hidden = contact === true;
   document.getElementById("jobDetailSyncChatButton").hidden = contact !== true;
@@ -2994,6 +3037,12 @@ function bindEvents() {
   document
     .getElementById("jobDetailPageEvalButton")
     .addEventListener("click", () => evaluateJobDetail("jobDetailPageEvalButton").catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailDrawerPreCheckButton")
+    .addEventListener("click", () => preCheckJobDetail().catch((error) => showError(error.message)));
+  document
+    .getElementById("jobDetailPagePreCheckButton")
+    .addEventListener("click", () => preCheckJobDetail().catch((error) => showError(error.message)));
   document.getElementById("jobDetailMessageInput").addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       sendMessageForJobDetail().catch((error) => showError(error.message));

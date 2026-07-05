@@ -219,10 +219,6 @@ class JobCollectionRepository:
                 raw_payload=item.raw_payload,
                 search_count=1,
                 last_searched_at=utc_now(),
-                pre_check=compute_pre_check(
-                    item.title,
-                    item.boss_active_text,
-                ),
             )
             payload = record.to_mongo()
             payload.pop("_id", None)
@@ -251,10 +247,6 @@ class JobCollectionRepository:
             "last_searched_at": utc_now(),
             "search_count": max(1, existing.search_count) + 1,
             "updated_at": utc_now(),
-            "pre_check": compute_pre_check(
-                item.title,
-                item.boss_active_text or existing.boss_active_text,
-            ),
         }
         await self.jobs.update_one({"_id": ObjectId(existing.id)}, {"$set": updates})
         stored = await self.jobs.find_one({"_id": ObjectId(existing.id)})
