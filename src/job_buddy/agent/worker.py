@@ -255,18 +255,22 @@ class AgentWorker(BaseWorker):
                 {"source_friend_id": 1},
             )
         ]
-        cursor = self.database["job_leads"].find({
+        job_filter = {
             "updated_at": {"$gte": since_5d},
             "ai_match": True,
             "greeted": False,
             "source_friend_id": {"$nin": existing_boss_ids},
-        }).sort([("ai_score", -1), ("created_at", -1)]).limit(greet_limit)
+        }
+        total_matched = await self.database["job_leads"].count_documents(job_filter)
+        cursor = self.database["job_leads"].find(job_filter).sort(
+            [("ai_score", -1), ("created_at", -1)]
+        ).limit(greet_limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=greet_limit)]
 
         await self._emit("step_end", {
             "step": "find_jobs",
             "count": len(jobs),
-            "text": f"找到 {len(jobs)} 个职位",
+            "text": f"找到 {len(jobs)} 个职位（原始匹配: {total_matched}）",
         })
 
         if not jobs:
@@ -274,7 +278,7 @@ class AgentWorker(BaseWorker):
                 "source": "agent",
                 "text": "近5天内无符合条件的职位需要打招呼",
             })
-            await send_feishu("近5天内无符合条件的职位需要打招呼")
+            await send_feishu(f"近5天内无符合条件的职位需要打招呼（原始匹配: {total_matched}）")
             return
 
         greet_service = GreetingService(self.database, self.boss_client)
@@ -427,7 +431,7 @@ class AgentWorker(BaseWorker):
                 "text": "完成",
             })
 
-        summary = f"自动打招呼完成\n找到: {len(jobs)} | 打招呼: {greeted_count} | 发送消息: {sent_count}"
+        summary = f"自动打招呼完成\n原始匹配: {total_matched} | 本次处理: {len(jobs)} | 打招呼: {greeted_count} | 发送消息: {sent_count}"
         await self._emit("chat", {"source": "agent", "text": summary})
         await send_feishu(summary)
 
@@ -512,17 +516,21 @@ class AgentWorker(BaseWorker):
         })
 
         since_5d = utc_now() - timedelta(days=5)
-        cursor = self.database["job_leads"].find({
+        job_filter = {
             "updated_at": {"$gte": since_5d},
             "ai_match": True,
             "greeted": False,
-        }).sort([("ai_score", -1), ("created_at", -1)]).limit(limit)
+        }
+        total_matched = await self.database["job_leads"].count_documents(job_filter)
+        cursor = self.database["job_leads"].find(job_filter).sort(
+            [("ai_score", -1), ("created_at", -1)]
+        ).limit(limit)
         jobs = [JobLead.from_mongo(item) for item in await cursor.to_list(length=limit)]
 
         await self._emit("step_end", {
             "step": "cmd_greet",
             "count": len(jobs),
-            "text": f"找到 {len(jobs)} 个职位",
+            "text": f"找到 {len(jobs)} 个职位（原始匹配: {total_matched}）",
         })
 
         if not jobs:
@@ -610,7 +618,7 @@ class AgentWorker(BaseWorker):
                 "text": "完成",
             })
 
-        return f"打招呼完成: {greeted_count} 成功 / {len(jobs) - greeted_count} 失败 | 发送消息: {sent_count}"
+        return f"打招呼完成: {greeted_count} 成功 / {len(jobs) - greeted_count} 失败 | 发送消息: {sent_count}（原始匹配: {total_matched}）"
 
     async def _cmd_evaluate(self, args: dict[str, Any]) -> str:
         await self._emit("step_start", {"step": "cmd_evaluate", "text": "触发 AI 评估"})
